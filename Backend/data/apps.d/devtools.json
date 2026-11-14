@@ -1,0 +1,488 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "git",
+      "name": "Git for Windows",
+      "description": "Git 的 Windows 官方移植版，自带 Git Bash 与图形工具。",
+      "long_description": "Git for Windows 把 Git 及其常用工具带到 Windows，包含 Git Bash、Git GUI 和凭据管理器。安装后可在命令行和常见的开发工具中直接使用 Git，并通过 HTTPS 或 SSH 访问远程仓库。",
+      "category": "开发工具",
+      "publisher": "Git for Windows 项目",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（GPL-2.0）",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://git-scm.com/",
+      "download_page_url": "https://github.com/git-for-windows/git/releases",
+      "icon_file": "git.png",
+      "icon_text": "Git",
+      "icon_background": "#F05032",
+      "installation_notes": "下载后运行安装向导，按需选择默认编辑器、PATH 与换行符转换选项。当前版本提供 x64 与 ARM64 安装包，不再提供 32 位安装包。",
+      "features": [
+        "完整的 Git 命令行工具",
+        "内置 Git Bash 与 Git GUI",
+        "支持 HTTPS 与 SSH 访问仓库",
+        "包含 Git 凭据管理器"
+      ],
+      "tags": [
+        "版本控制",
+        "Git",
+        "命令行",
+        "开源"
+      ],
+      "is_recommended": true,
+      "sort_order": 100,
+      "download_provider": "git",
+      "provider_spec": {
+        "repo": "git-for-windows/git",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Git-\\d+(?:\\.\\d+)+-64-bit\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Git-\\d+(?:\\.\\d+)+-arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "powershell",
+      "name": "PowerShell 7",
+      "description": "跨平台的命令行与脚本环境，可与 Windows PowerShell 并存。",
+      "long_description": "PowerShell 7 是微软开源的跨平台命令行与脚本环境，基于 .NET 实现，提供对象化管道、模块和脚本支持。Windows 版以 MSIX 捆绑包分发，可以和系统自带的 Windows PowerShell 5.1 同时安装。",
+      "category": "开发工具",
+      "publisher": "Microsoft",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://learn.microsoft.com/powershell/",
+      "download_page_url": "https://github.com/PowerShell/PowerShell/releases",
+      "icon_file": "powershell.png",
+      "icon_text": "PS",
+      "icon_background": "#012456",
+      "installation_notes": "Windows 安装包为 MSIX 捆绑包，使用系统应用安装程序或 Add-AppxPackage 安装，可与 Windows PowerShell 5.1 并存。",
+      "features": [
+        "对象化管道与脚本",
+        "跨平台，可与 Windows PowerShell 5.1 并存",
+        "支持模块、扩展与远程会话"
+      ],
+      "tags": [
+        "命令行",
+        "脚本",
+        "Shell",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 101,
+      "download_provider": "powershell",
+      "provider_spec": {
+        "repo": "PowerShell/PowerShell",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "PowerShell-{version}\\.msixbundle",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "PowerShell-{version}\\.msixbundle",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "PowerShell-{version}\\.msixbundle",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "neovim",
+      "name": "Neovim",
+      "description": "Vim 衍生的可扩展编辑器，支持 LSP 与 Lua 配置。",
+      "long_description": "Neovim 在 Vim 的基础上重构，保留模态编辑习惯，同时提供异步插件架构、内置 LSP 客户端和 Lua 配置。Windows 版提供 x64 与 ARM64 的 MSI 安装包，也提供免安装压缩包。",
+      "category": "开发工具",
+      "publisher": "Neovim 项目",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（Apache-2.0 / Vim）",
+      "platforms": "Windows 8 / 8.1 / 10 / 11 · x64 / arm64",
+      "website_url": "https://neovim.io/",
+      "download_page_url": "https://github.com/neovim/neovim/releases",
+      "icon_file": "neovim.png",
+      "icon_text": "NV",
+      "icon_background": "#57A143",
+      "installation_notes": "下载 MSI 后按向导安装，安装时可选择加入 PATH；免安装压缩包可在官网下载。",
+      "features": [
+        "兼容 Vim 的模态编辑",
+        "内置 LSP 与 Tree-sitter",
+        "Lua 配置与异步插件"
+      ],
+      "tags": [
+        "编辑器",
+        "Vim",
+        "命令行",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 102,
+      "download_provider": "neovim",
+      "provider_spec": {
+        "repo": "neovim/neovim",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "nvim-win64\\.msi",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "nvim-win-arm64\\.msi",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "8"
+    },
+    {
+      "id": "vscodium",
+      "name": "VSCodium",
+      "description": "基于 VS Code 源码构建的自由开源编辑器，默认关闭遥测。",
+      "long_description": "VSCodium 使用 VS Code 开源代码构建，以 MIT 许可发布，默认关闭微软的遥测和专有扩展市场。界面与操作方式接近 VS Code，适合希望使用纯开源构建的开发者。",
+      "category": "开发工具",
+      "publisher": "VSCodium 项目",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://vscodium.com/",
+      "download_page_url": "https://github.com/VSCodium/vscodium/releases",
+      "icon_file": "vscodium.png",
+      "icon_text": "VC",
+      "icon_background": "#1A5FB4",
+      "installation_notes": "下载用户级安装包（VSCodiumUserSetup）后按向导安装，无需管理员权限；官网同时提供系统级安装包与压缩包。",
+      "features": [
+        "默认关闭遥测",
+        "兼容 VS Code 扩展",
+        "内置终端、Git 与调试"
+      ],
+      "tags": [
+        "编辑器",
+        "VS Code",
+        "代码编辑",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 103,
+      "download_provider": "vscodium",
+      "provider_spec": {
+        "repo": "VSCodium/vscodium",
+        "tag_prefix": "",
+        "assets": [
+          {
+            "pattern": "VSCodiumUserSetup-x64-{version}\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "VSCodiumUserSetup-arm64-{version}\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "dbeaver",
+      "name": "DBeaver Community",
+      "description": "通用数据库客户端，支持 MySQL、PostgreSQL、SQLite 等。",
+      "long_description": "DBeaver Community 是免费开源的通用数据库客户端，可通过 JDBC 连接 MySQL、PostgreSQL、SQLite、SQL Server 等数据库。提供 SQL 编辑器、数据浏览、ER 图和数据导出等功能。",
+      "category": "开发工具",
+      "publisher": "DBeaver Corp",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（Apache-2.0）",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://dbeaver.io/",
+      "download_page_url": "https://github.com/dbeaver/dbeaver/releases",
+      "icon_file": "dbeaver.png",
+      "icon_text": "DB",
+      "icon_background": "#382923",
+      "installation_notes": "下载安装版 EXE 后按向导安装；官网同时提供便携压缩包，目录中只提供安装版。",
+      "features": [
+        "支持多种数据库连接",
+        "SQL 编辑器与结果查看",
+        "ER 图与数据导入导出"
+      ],
+      "tags": [
+        "数据库",
+        "SQL",
+        "数据管理",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 104,
+      "download_provider": "dbeaver",
+      "provider_spec": {
+        "repo": "dbeaver/dbeaver",
+        "tag_prefix": "",
+        "assets": [
+          {
+            "pattern": "dbeaver-ce-{version}-windows-x86_64\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "dbeaver-ce-{version}-windows-aarch64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "ghdesktop",
+      "name": "GitHub Desktop",
+      "description": "GitHub 官方的 Git 图形客户端。",
+      "long_description": "GitHub Desktop 是 GitHub 提供的图形化 Git 客户端，可以克隆仓库、查看差异、提交和同步分支，并处理合并冲突。当前发布只提供 x64 安装包，ARM64 设备通过系统模拟运行。",
+      "category": "开发工具",
+      "publisher": "GitHub",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://desktop.github.com/",
+      "download_page_url": "https://github.com/desktop/desktop/releases",
+      "icon_file": "ghdesktop.png",
+      "icon_text": "GD",
+      "icon_background": "#6E40C9",
+      "installation_notes": "下载后运行 Setup 安装程序，默认安装到当前用户。GitHub 目前只发布 x64 安装包。",
+      "features": [
+        "图形化提交与分支操作",
+        "GitHub 账户与仓库集成",
+        "合并冲突与差异查看"
+      ],
+      "tags": [
+        "Git",
+        "GitHub",
+        "图形客户端",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 105,
+      "download_provider": "ghdesktop",
+      "provider_spec": {
+        "repo": "desktop/desktop",
+        "tag_prefix": "release-",
+        "assets": [
+          {
+            "pattern": "GitHubDesktopSetup-x64\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "zed",
+      "name": "Zed",
+      "description": "GPU 渲染的高性能代码编辑器，支持多人协作。",
+      "long_description": "Zed 是由 Atom 与 Tree-sitter 作者开发的代码编辑器，使用 Rust 和 GPU 渲染以获得更低的输入延迟。支持多人实时协作、内置 AI 助手和 LSP，需要 Windows 10 1903 及以上版本。",
+      "category": "开发工具",
+      "publisher": "Zed Industries",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（GPL-3.0）",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://zed.dev/",
+      "download_page_url": "https://github.com/zed-industries/zed/releases",
+      "icon_file": "zed.png",
+      "icon_text": "Z",
+      "icon_background": "#1F1F1F",
+      "installation_notes": "下载后运行安装程序，默认安装到当前用户；需要 Windows 10 1903 及以上版本。",
+      "features": [
+        "GPU 渲染的低延迟编辑",
+        "多人实时协作",
+        "内置语言服务器与 AI 助手"
+      ],
+      "tags": [
+        "编辑器",
+        "协作",
+        "Rust",
+        "代码编辑"
+      ],
+      "is_recommended": false,
+      "sort_order": 106,
+      "download_provider": "zed",
+      "provider_spec": {
+        "repo": "zed-industries/zed",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Zed-x86_64\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Zed-aarch64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "bruno",
+      "name": "Bruno",
+      "description": "离线优先的 API 调试客户端，请求集合保存在本地。",
+      "long_description": "Bruno 是开源的 API 调试客户端，请求集合以纯文本文件保存在本地目录，便于用 Git 管理版本。支持 REST、GraphQL、环境变量和请求脚本，并附带命令行工具。",
+      "category": "开发工具",
+      "publisher": "Bruno",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://www.usebruno.com/",
+      "download_page_url": "https://github.com/usebruno/bruno/releases",
+      "icon_file": "bruno.png",
+      "icon_text": "B",
+      "icon_background": "#E8A33D",
+      "installation_notes": "下载安装版 EXE 后按向导安装；压缩包与便携版不作为目录安装包提供。",
+      "features": [
+        "离线保存请求集合",
+        "支持 REST 与 GraphQL",
+        "环境变量与请求脚本"
+      ],
+      "tags": [
+        "API 调试",
+        "HTTP",
+        "GraphQL",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 107,
+      "download_provider": "bruno",
+      "provider_spec": {
+        "repo": "usebruno/bruno",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "bruno_{version}_x64_win\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "bruno_{version}_arm64_win\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "ghcli",
+      "name": "GitHub CLI",
+      "description": "GitHub 官方命令行工具，可在终端管理 PR、Issue 与 Actions。",
+      "long_description": "GitHub CLI（gh）把仓库、Issue、拉取请求与 Actions 等 GitHub 功能带到命令行，可以和 Git、脚本以及 CI 流程配合使用。还支持安装扩展和多个账户的认证。",
+      "category": "开发工具",
+      "publisher": "GitHub",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://cli.github.com/",
+      "download_page_url": "https://github.com/cli/cli/releases",
+      "icon_file": "ghcli.png",
+      "icon_text": "gh",
+      "icon_background": "#24292F",
+      "installation_notes": "下载 MSI 后按向导安装，安装完成后在终端运行 gh auth login 登录 GitHub。",
+      "features": [
+        "命令行管理 PR 与 Issue",
+        "与 Git 和脚本集成",
+        "支持扩展与多账户认证"
+      ],
+      "tags": [
+        "GitHub",
+        "命令行",
+        "开发工具",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 108,
+      "download_provider": "ghcli",
+      "provider_spec": {
+        "repo": "cli/cli",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "gh_{version}_windows_amd64\\.msi",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "gh_{version}_windows_386\\.msi",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "gh_{version}_windows_arm64\\.msi",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    }
+  ]
+}

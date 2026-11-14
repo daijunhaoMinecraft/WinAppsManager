@@ -1,0 +1,54 @@
+<Application x:Class="WinAppsManager.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:WinAppsManager"
+             xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ui:ThemeResources/>
+                <ui:XamlControlsResources/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <SolidColorBrush x:Key="Wam.PageBackgroundBrush" Color="#F5F7FA"/>
+            <SolidColorBrush x:Key="Wam.CardBackgroundBrush" Color="#FFFFFF"/>
+            <SolidColorBrush x:Key="Wam.CardBorderBrush" Color="#E0E5ED"/>
+            <SolidColorBrush x:Key="Wam.TextPrimaryBrush" Color="#172238"/>
+            <SolidColorBrush x:Key="Wam.TextSecondaryBrush" Color="#637188"/>
+            <SolidColorBrush x:Key="Wam.AccentBrush" Color="#2563EB"/>
+            <SolidColorBrush x:Key="Wam.AccentSoftBrush" Color="#EAF1FF"/>
+            <SolidColorBrush x:Key="Wam.SubtleBackgroundBrush" Color="#F1F4F9"/>
+            <SolidColorBrush x:Key="Wam.SuccessBrush" Color="#1A7F37"/>
+            <SolidColorBrush x:Key="Wam.DangerBrush" Color="#C42B1C"/>
+            <SolidColorBrush x:Key="Wam.ProgressTrackBrush" Color="#C9D3E0"/>
+
+            <Style x:Key="Wam.PageTitleTextBlockStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="28"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Foreground" Value="{DynamicResource Wam.TextPrimaryBrush}"/>
+            </Style>
+            <Style x:Key="Wam.SectionTitleTextBlockStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="18"/>
+                <Setter Property="FontWeight" Value="SemiBold"/>
+                <Setter Property="Foreground" Value="{DynamicResource Wam.TextPrimaryBrush}"/>
+            </Style>
+            <Style x:Key="Wam.SecondaryTextBlockStyle" TargetType="TextBlock">
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="TextWrapping" Value="Wrap"/>
+                <Setter Property="Foreground" Value="{DynamicResource Wam.TextSecondaryBrush}"/>
+            </Style>
+            <Style x:Key="Wam.CardBorderStyle" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource Wam.CardBackgroundBrush}"/>
+                <Setter Property="BorderBrush" Value="{DynamicResource Wam.CardBorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="CornerRadius" Value="12"/>
+                <Setter Property="Padding" Value="22"/>
+            </Style>
+            <Style x:Key="Wam.AccentButtonStyle" TargetType="Button"
+                   BasedOn="{StaticResource {x:Static ui:ThemeKeys.AccentButtonStyleKey}}">
+                <Setter Property="Padding" Value="18,9"/>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

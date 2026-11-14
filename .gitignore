@@ -1,0 +1,26 @@
+# 生成物 / 本地环境
+Backend/.venv/
+Backend/.cache/
+Backend/config.local.json
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+WinAppsManager/**/bin/
+WinAppsManager/**/obj/
+*.user
+*.suo
+
+# 临时研究产物
+artifacts/platform-matrix/
+artifacts/tmp/
+artifacts/publish/
+
+# IDE / 编辑器
+.idea/
+.vs/
+.vscode/
+
+# 本地临时文件
+*.log
+*.tmp
+*.bak

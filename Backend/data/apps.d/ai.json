@@ -1,0 +1,485 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "ollama",
+      "name": "Ollama",
+      "description": "在本机运行开源大模型的命令行工具，提供本地 API。",
+      "long_description": "Ollama 是在本机运行大语言模型的开源工具，安装后以本机服务的形式在后台运行，默认监听 127.0.0.1:11434。可以用命令行拉取并运行 Llama、Qwen、Gemma、DeepSeek 等模型，也能通过 HTTP API 供其他程序调用。",
+      "category": "AI 助手",
+      "publisher": "Ollama",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10（22H2 及以上）/ 11 · x64",
+      "website_url": "https://ollama.com/",
+      "download_page_url": "https://github.com/ollama/ollama/releases",
+      "icon_file": "ollama.png",
+      "icon_text": "OL",
+      "icon_background": "#111111",
+      "installation_notes": "下载 OllamaSetup.exe 后按安装向导完成安装，安装完成后 Ollama 会在后台运行并监听本机 11434 端口。在终端执行 ollama run <模型名> 即可拉取并运行模型，模型文件保存在用户目录下。",
+      "features": [
+        "一条命令下载并运行开源模型",
+        "内置本机 HTTP API（127.0.0.1:11434）",
+        "支持 Llama、Qwen、Gemma、DeepSeek 等模型",
+        "安装后在后台常驻运行"
+      ],
+      "tags": [
+        "本地大模型",
+        "命令行",
+        "推理",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 200,
+      "download_provider": "ollama",
+      "provider_spec": {
+        "repo": "ollama/ollama",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "OllamaSetup\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "jan",
+      "name": "Jan",
+      "description": "开源的桌面 AI 聊天客户端，可离线运行本地模型。",
+      "long_description": "Jan 是一款开源的桌面 AI 客户端，把模型下载到本地后可以离线对话，也能通过 OpenAI 兼容接口连接云端服务。界面提供多会话、模型切换和参数调整。",
+      "category": "AI 助手",
+      "publisher": "Menlo Research",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://jan.ai/",
+      "download_page_url": "https://github.com/janhq/jan/releases",
+      "icon_file": "jan.png",
+      "icon_text": "J",
+      "icon_background": "#CA8A04",
+      "installation_notes": "客户端按系统架构获取 x64 或 arm64 安装包。安装后首次启动可以下载本地模型，或填写第三方 OpenAI 兼容服务的地址与密钥。",
+      "features": [
+        "本地模型离线对话",
+        "可连接 OpenAI 兼容接口",
+        "模型下载与切换",
+        "开源可自行部署"
+      ],
+      "tags": [
+        "AI 客户端",
+        "本地模型",
+        "离线",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 201,
+      "download_provider": "jan",
+      "provider_spec": {
+        "repo": "janhq/jan",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Jan_{version}_x64-setup\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Jan_{version}_arm64-setup\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "cherrystudio",
+      "name": "Cherry Studio",
+      "description": "支持多家模型服务商的中文 AI 桌面客户端。",
+      "long_description": "Cherry Studio 是一款开源的中文 AI 桌面客户端，可同时接入 OpenAI、Anthropic、Gemini、DeepSeek 等云端服务与本地 Ollama，并提供知识库、助手和 MCP 工具管理。",
+      "category": "AI 助手",
+      "publisher": "CherryHQ",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://cherryai.com/",
+      "download_page_url": "https://github.com/CherryHQ/cherry-studio/releases",
+      "icon_file": "cherrystudio.png",
+      "icon_text": "CS",
+      "icon_background": "#F05252",
+      "installation_notes": "客户端提供安装版，按系统架构选择 x64 或 arm64 安装包。安装后在设置中添加模型服务商的 API Key，或填写本地 Ollama 地址即可开始对话。",
+      "features": [
+        "接入多家云端模型与本地 Ollama",
+        "知识库与文档问答",
+        "助手、提示词与 MCP 工具管理",
+        "支持 Windows x64 与 arm64"
+      ],
+      "tags": [
+        "AI 客户端",
+        "多模型",
+        "知识库",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 202,
+      "download_provider": "cherrystudio",
+      "provider_spec": {
+        "repo": "CherryHQ/cherry-studio",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Cherry-Studio-{version}-win-x64-setup\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Cherry-Studio-{version}-win-arm64-setup\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "anythingllm",
+      "name": "AnythingLLM",
+      "description": "本地优先的 AI 工作区，支持文档知识库与智能体。",
+      "long_description": "AnythingLLM 是 Mintplex Labs 开源的 AI 客户端，重点是把文档放进工作区后做检索问答（RAG）。既可以连接 OpenAI 等云端服务，也可以配合 Ollama、LM Studio 使用本地模型，并提供智能体与工具调用。",
+      "category": "AI 助手",
+      "publisher": "Mintplex Labs",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://anythingllm.com/",
+      "download_page_url": "https://github.com/Mintplex-Labs/anything-llm/releases",
+      "icon_file": "anythingllm.png",
+      "icon_text": "AL",
+      "icon_background": "#334155",
+      "installation_notes": "客户端获取桌面版安装包，按系统架构选择 x64 或 arm64。安装后新建工作区、上传文档，再选择模型服务商即可开始对话。",
+      "features": [
+        "文档工作区与检索问答（RAG）",
+        "支持本地模型与云端 API",
+        "内置智能体与工具调用",
+        "多工作区隔离数据"
+      ],
+      "tags": [
+        "AI 客户端",
+        "知识库",
+        "RAG",
+        "本地优先"
+      ],
+      "is_recommended": false,
+      "sort_order": 203,
+      "download_provider": "anythingllm",
+      "provider_spec": {
+        "repo": "Mintplex-Labs/anything-llm",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "AnythingLLMDesktop\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "AnythingLLMDesktop-Arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "gpt4all",
+      "name": "GPT4All",
+      "description": "可离线运行的本地大模型客户端，附带文档问答。",
+      "long_description": "GPT4All 是 Nomic 推出的开源本地大模型客户端，安装后可以在图形界面里下载并运行适配普通电脑的模型，不联网也能对话。LocalDocs 功能可以把本地文档加入索引后提问。",
+      "category": "AI 助手",
+      "publisher": "Nomic AI",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://nomic.ai/gpt4all",
+      "download_page_url": "https://github.com/nomic-ai/gpt4all/releases",
+      "icon_file": "gpt4all.png",
+      "icon_text": "G4",
+      "icon_background": "#2F6B4F",
+      "installation_notes": "客户端按系统架构获取官方安装包。首次启动需要在模型页面下载模型文件，模型体积较大，建议先确认磁盘空间充足。",
+      "features": [
+        "离线运行本地模型",
+        "LocalDocs 本地文档问答",
+        "内置模型下载与管理",
+        "可在普通 CPU 上运行"
+      ],
+      "tags": [
+        "本地大模型",
+        "离线",
+        "文档问答",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 204,
+      "download_provider": "gpt4all",
+      "provider_spec": {
+        "repo": "nomic-ai/gpt4all",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "gpt4all-installer-win64-v{version}\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "gpt4all-installer-win64-arm-v{version}\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "lobehub",
+      "name": "LobeHub",
+      "description": "支持多模型与智能体的 AI 聊天工作台，提供桌面版。",
+      "long_description": "LobeHub（原 LobeChat）是 AI 聊天客户端与智能体工作台，桌面版可以接入 OpenAI、Anthropic、Google、DeepSeek、Ollama 等模型，支持会话分组、插件与知识库。项目以 LobeHub 社区许可发布，也可以自行部署。",
+      "category": "AI 助手",
+      "publisher": "LobeHub",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费（社区许可）",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://lobehub.com/",
+      "download_page_url": "https://github.com/lobehub/lobehub/releases",
+      "icon_file": "lobehub.png",
+      "icon_text": "LH",
+      "icon_background": "#1E293B",
+      "installation_notes": "客户端获取 LobeHub 官方 Windows 安装包。安装后添加模型服务商的 API Key 或本地 Ollama 地址即可开始对话。",
+      "features": [
+        "多模型服务商与本地模型接入",
+        "会话分组、助手与插件",
+        "桌面版可自行更新",
+        "支持自行部署"
+      ],
+      "tags": [
+        "AI 客户端",
+        "智能体",
+        "多模型",
+        "自托管"
+      ],
+      "is_recommended": false,
+      "sort_order": 205,
+      "download_provider": "lobehub",
+      "provider_spec": {
+        "repo": "lobehub/lobehub",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "LobeHub-{version}-setup\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "description": "可扩展的本地 AI 智能体桌面端，支持多家模型。",
+      "long_description": "Goose 是运行在本机的开源 AI 智能体桌面应用，可连接 Anthropic、OpenAI、Google、Ollama 等多家模型服务，并通过 MCP 扩展执行命令、读写文件和安装依赖等任务。除桌面版外还提供命令行与 API。",
+      "category": "AI 助手",
+      "publisher": "Agentic AI Foundation",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://goose-docs.ai/",
+      "download_page_url": "https://github.com/aaif-goose/goose/releases",
+      "icon_file": "goose.png",
+      "icon_text": "GO",
+      "icon_background": "#0F0F0F",
+      "installation_notes": "下载 Goose-win32-x64-setup.exe 后按安装向导完成安装。首次启动需要选择模型服务商并填写 API Key，或连接本地 Ollama。",
+      "features": [
+        "连接 15 家以上模型服务商",
+        "通过 MCP 扩展执行本机任务",
+        "桌面应用与命令行并存",
+        "以 Apache-2.0 许可开源"
+      ],
+      "tags": [
+        "AI 智能体",
+        "MCP",
+        "本地执行",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 206,
+      "download_provider": "goose",
+      "provider_spec": {
+        "repo": "aaif-goose/goose",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Goose-win32-x64-setup\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "workbuddy",
+      "name": "WorkBuddy",
+      "description": "腾讯云推出的 AI Agent 办公工具，可自主规划并交付多模态任务结果。",
+      "long_description": "WorkBuddy 是腾讯云代码助手推出的 AI Agent 办公工具。用一句话描述要完成的工作，它会自主规划步骤并交付报告、演示文稿、表格等成果，支持多个 Agent 并行处理任务。官网提供 Windows 与 macOS 桌面客户端，免费下载使用。",
+      "category": "AI 助手",
+      "publisher": "腾讯云",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://www.workbuddy.cn/",
+      "download_page_url": "https://www.workbuddy.cn/",
+      "icon_file": "workbuddy.png",
+      "icon_text": "WB",
+      "icon_background": "#12B981",
+      "installation_notes": "官网只提供 Windows x64（win32-x64-user）安装包，体积约 430 MB，下载后按安装向导完成安装。首次启动需要登录账号后使用。",
+      "features": [
+        "一句话描述任务即可交付报告、演示文稿与表格",
+        "支持多个 Agent 并行处理复杂办公任务",
+        "基于本机文件自主规划并执行步骤",
+        "同时提供 Windows 与 macOS 桌面客户端"
+      ],
+      "tags": [
+        "AI 助手",
+        "办公效率",
+        "AI Agent",
+        "腾讯云"
+      ],
+      "is_recommended": false,
+      "sort_order": 207,
+      "download_provider": "workbuddy",
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "deepseekharness",
+      "name": "DeepSeek Harness",
+      "description": "DeepSeek 开源的 AI 智能体运行环境，提供 Windows 桌面客户端。",
+      "long_description": "DeepSeek Harness（简称 dsh）是 DeepSeek 开源的 AI 智能体运行环境，不绑定具体模型：接入 DeepSeek、Anthropic、OpenAI 等模型后，它可以读写文件、执行命令并持续规划多步任务。桌面客户端内置运行时与插件管理，可以登录 DeepSeek 账号或填写 API Key 使用。当前版本仍是开发者预览版，官方提示会有不兼容改动。",
+      "category": "AI 助手",
+      "publisher": "DeepSeek",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "开源（MIT）",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://www.deepseek.com/harness/",
+      "download_page_url": "https://www.deepseek.com/harness/",
+      "icon_file": "deepseekharness.png",
+      "icon_text": "DS",
+      "icon_background": "#4D6BFE",
+      "installation_notes": "官网的 Windows 下载按钮指向 download.deepseek.com 上的 x64 安装包（约 285 MB），该地址是 dsh-latest 别名，升级后同一地址会提供新版本。安装后可以登录 DeepSeek 账号或填写自己的模型 API Key；当前为开发者预览版，官方提示会有不兼容改动。",
+      "features": [
+        "开源（MIT）的 AI 智能体运行环境",
+        "可接入 DeepSeek、Anthropic、OpenAI 等模型",
+        "读写本机文件、执行命令并持续规划多步任务",
+        "桌面端内置 dsh 命令与插件管理"
+      ],
+      "tags": [
+        "AI 智能体",
+        "DeepSeek",
+        "开源",
+        "开发者工具"
+      ],
+      "is_recommended": false,
+      "sort_order": 208,
+      "download_provider": "deepseekharness",
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "doubao",
+      "name": "豆包",
+      "description": "字节跳动的 AI 智能助手桌面客户端，支持对话、办公文档与电脑操作。",
+      "long_description": "豆包是字节跳动旗下的 AI 智能助手，桌面客户端把对话、办公文档处理与电脑操作能力整合在一起：可以写文档、做表格、生成 PPT、图片和视频，也可以在虚拟桌面里操作电脑与浏览器。官网提供的 Windows 安装包是在线安装器，运行后需要联网下载完整程序。",
+      "category": "AI 助手",
+      "publisher": "字节跳动",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://www.doubao.com/",
+      "download_page_url": "https://www.doubao.com/download/desktop",
+      "icon_file": "doubao.png",
+      "icon_text": "DB",
+      "icon_background": "#3B82F6",
+      "installation_notes": "官网下发的是 Windows x64 在线安装器（约 7 MB）：下载后运行需要联网拉取完整程序并完成安装，实际占用以安装完成后为准。下载地址由豆包官网按访问渠道动态生成，版本号取自安装包文件名中的构建号。",
+      "features": [
+        "写文档、做表格、生成 PPT 与图片视频",
+        "在虚拟桌面中操作电脑与浏览器",
+        "选中内容后按位置精准编辑",
+        "可接入飞书，结合企业上下文工作"
+      ],
+      "tags": [
+        "AI 助手",
+        "字节跳动",
+        "办公",
+        "智能体"
+      ],
+      "is_recommended": false,
+      "sort_order": 209,
+      "download_provider": "doubao",
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    }
+  ]
+}

@@ -1,0 +1,322 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "qq",
+      "name": "QQ",
+      "description": "和好友轻松聊天，分享文件与生活。",
+      "long_description": "QQ 是腾讯推出的即时通讯软件，支持文字聊天、语音与视频通话、群聊和文件传输，方便与好友、同事保持联系。",
+      "category": "社交通讯",
+      "publisher": "腾讯",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://im.qq.com/",
+      "download_page_url": "https://im.qq.com/pcqq/index.shtml",
+      "icon_file": "qq.png",
+      "icon_text": "QQ",
+      "icon_background": "#1679C8",
+      "installation_notes": "客户端会根据 Windows 系统架构获取对应的最新安装包。下载完成后按安装向导操作，登录和消息同步需要 QQ 账号。",
+      "features": [
+        "文字、语音与视频聊天",
+        "群聊与多人协作",
+        "文件传输与消息同步"
+      ],
+      "tags": [
+        "聊天",
+        "腾讯",
+        "即时通讯"
+      ],
+      "is_recommended": true,
+      "sort_order": 1,
+      "download_provider": "qq",
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "wechat",
+      "download_provider": "wechat",
+      "name": "微信",
+      "description": "在电脑上处理消息、通话与日常沟通。",
+      "long_description": "微信 Windows 版将日常沟通带到桌面，支持收发消息、发送文件和语音视频通话，适合在电脑工作时保持联系。",
+      "category": "社交通讯",
+      "publisher": "腾讯",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费",
+      "platforms": "Windows 7 / 8 / 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://weixin.qq.com/",
+      "download_page_url": "https://pc.weixin.qq.com/",
+      "icon_file": "wechat.png",
+      "icon_text": "微",
+      "icon_background": "#168A45",
+      "installation_notes": "客户端会读取官网提供的对应架构安装包。64 位使用当前微信版本，32 位使用官网单列的兼容版本，其版本号会独立显示。首次登录通常需要使用手机微信扫码确认。",
+      "features": [
+        "桌面消息与群聊",
+        "便捷发送图片和文件",
+        "语音与视频通话"
+      ],
+      "tags": [
+        "WeChat",
+        "聊天",
+        "腾讯"
+      ],
+      "is_recommended": true,
+      "sort_order": 2,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "7"
+    },
+    {
+      "id": "vscode",
+      "download_provider": "vscode",
+      "name": "Visual Studio Code",
+      "description": "轻量代码编辑器，支持扩展、调试与 Git。",
+      "long_description": "Visual Studio Code 是微软提供的代码编辑器，内置终端、调试和 Git 支持。通过扩展可以配置多种编程语言与开发工具。",
+      "category": "开发工具",
+      "publisher": "Microsoft",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://code.visualstudio.com/",
+      "download_page_url": "https://code.visualstudio.com/Download",
+      "icon_file": "vscode.png",
+      "icon_text": "VS",
+      "icon_background": "#076FB5",
+      "installation_notes": "客户端提供微软稳定版 User Installer，按 Windows 系统架构选择 x64 或 ARM64。当前稳定版不提供 32 位安装器。",
+      "features": [
+        "代码补全与语法高亮",
+        "内置终端、调试与 Git",
+        "丰富的语言和工具扩展"
+      ],
+      "tags": [
+        "VS Code",
+        "编程",
+        "代码编辑",
+        "Git"
+      ],
+      "is_recommended": true,
+      "sort_order": 3,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "7zip",
+      "download_provider": "7zip",
+      "name": "7-Zip",
+      "description": "免费压缩工具，轻松打包和解压常见格式。",
+      "long_description": "7-Zip 是免费且开源的文件压缩工具，支持 7z、ZIP 等压缩格式，并能解压多种常见归档文件。界面简洁，适合日常文件整理。",
+      "category": "实用工具",
+      "publisher": "Igor Pavlov",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 7 / 8 / 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://www.7-zip.org/",
+      "download_page_url": "https://www.7-zip.org/download.html",
+      "icon_file": "7zip.ico",
+      "icon_text": "7z",
+      "icon_background": "#5D6470",
+      "installation_notes": "在官网选择与系统架构一致的安装包。常见的 Intel / AMD 电脑通常使用 x64 版本。",
+      "features": [
+        "创建 7z 和 ZIP 压缩包",
+        "解压多种常见归档格式",
+        "支持压缩包密码保护"
+      ],
+      "tags": [
+        "压缩",
+        "解压",
+        "文件管理",
+        "开源"
+      ],
+      "is_recommended": true,
+      "sort_order": 4,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "7"
+    },
+    {
+      "id": "vlc",
+      "download_provider": "vlc",
+      "name": "VLC media player",
+      "description": "开源媒体播放器，播放多种音视频格式。",
+      "long_description": "VLC 是 VideoLAN 开发的免费开源媒体播放器，支持多种音视频格式、字幕和网络媒体流，适合本地影音播放。",
+      "category": "影音工具",
+      "publisher": "VideoLAN",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 7 / 8 / 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://www.videolan.org/",
+      "download_page_url": "https://www.videolan.org/vlc/",
+      "icon_file": "vlc.png",
+      "icon_text": "VLC",
+      "icon_background": "#B95608",
+      "installation_notes": "从 VideoLAN 官网下载 Windows 安装包，安装时可按需选择文件关联。",
+      "features": [
+        "播放多种音视频格式",
+        "支持字幕和播放列表",
+        "打开网络媒体流"
+      ],
+      "tags": [
+        "播放器",
+        "视频",
+        "音乐",
+        "字幕"
+      ],
+      "is_recommended": false,
+      "sort_order": 5,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "7"
+    },
+    {
+      "id": "firefox",
+      "download_provider": "firefox",
+      "name": "Firefox",
+      "description": "可定制的开源浏览器，支持扩展与同步。",
+      "long_description": "Firefox 是 Mozilla 提供的开源浏览器，支持标签页浏览、扩展、书签与跨设备同步，可根据自己的习惯调整浏览体验。",
+      "category": "网络浏览",
+      "publisher": "Mozilla",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://www.mozilla.org/zh-CN/firefox/",
+      "download_page_url": "https://www.mozilla.org/zh-CN/firefox/windows/",
+      "icon_file": "firefox.png",
+      "icon_text": "Fx",
+      "icon_background": "#B94B14",
+      "installation_notes": "客户端下载 Mozilla 当前稳定版的简体中文完整安装包，按系统架构选择 x64、x86 或 ARM64。安装完成后可自行选择是否设为默认浏览器。",
+      "features": [
+        "标签页与书签管理",
+        "丰富的浏览器扩展",
+        "可选的跨设备同步"
+      ],
+      "tags": [
+        "火狐",
+        "浏览器",
+        "上网",
+        "扩展"
+      ],
+      "is_recommended": false,
+      "sort_order": 6,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "obs",
+      "download_provider": "obs",
+      "name": "OBS Studio",
+      "description": "免费录屏与直播工具，自由组合画面和声音。",
+      "long_description": "OBS Studio 是免费开源的录制和直播软件，可将屏幕、窗口、摄像头和音频组合为多个场景，适合录制教程、演示和直播。",
+      "category": "影音工具",
+      "publisher": "OBS Project",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://obsproject.com/zh-cn",
+      "download_page_url": "https://obsproject.com/zh-cn/download",
+      "icon_file": "obs.png",
+      "icon_text": "OBS",
+      "icon_background": "#555864",
+      "installation_notes": "客户端提供 OBS 官方稳定版 Windows EXE 安装器。目前该安装器仅支持 x64；ARM64 的便携压缩包不作为安装器提供。首次启动可使用自动配置向导。",
+      "features": [
+        "屏幕、窗口与摄像头录制",
+        "多场景切换与音频混音",
+        "自定义录制和直播参数"
+      ],
+      "tags": [
+        "录屏",
+        "直播",
+        "屏幕录制",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 7,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "notepadplusplus",
+      "download_provider": "notepadplusplus",
+      "name": "Notepad++",
+      "description": "轻巧的文本编辑器，适合代码和日常文本处理。",
+      "long_description": "Notepad++ 是 Windows 上的免费开源文本编辑器，支持多标签编辑、语法高亮、查找替换和插件，可用于日常文本处理与代码编辑。",
+      "category": "开发工具",
+      "publisher": "Notepad++ Team",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://notepad-plus-plus.org/",
+      "download_page_url": "https://notepad-plus-plus.org/downloads/",
+      "icon_file": "notepadplusplus.ico",
+      "icon_text": "N+",
+      "icon_background": "#387B3E",
+      "installation_notes": "客户端根据官网 Current Version 获取相同版本的官方安装器，支持 x64、x86 和 ARM64。便携版、MSI、调试包与源码不会作为当前安装器下载。",
+      "features": [
+        "多标签文本编辑",
+        "语法高亮与查找替换",
+        "插件与编辑器自定义"
+      ],
+      "tags": [
+        "记事本",
+        "文本编辑",
+        "代码",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 8,
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "8.1"
+    }
+  ]
+}

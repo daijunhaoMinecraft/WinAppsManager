@@ -1,0 +1,477 @@
+<ui:Page x:Class="WinAppsManager.Pages.AppsInstallPage"
+         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
+         xmlns:models="clr-namespace:WinAppsManager.Models"
+         xmlns:services="clr-namespace:WinAppsManager.Services"
+         mc:Ignorable="d"
+         d:DesignWidth="760"
+         d:DesignHeight="650"
+         Background="{DynamicResource Wam.PageBackgroundBrush}"
+         Loaded="OnPageLoaded" Unloaded="OnPageUnloaded"
+         Title="软件列表">
+    <ui:Page.Resources>
+        <services:CachedIconConverter x:Key="CachedIconConverter"/>
+
+        <Style x:Key="SoftwareCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Wam.CardBackgroundBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Wam.CardBorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="14" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Wam.AccentBrush}" />
+                </Trigger>
+                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                    <Setter Property="BorderBrush" Value="{DynamicResource Wam.AccentBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- The iNKORE ListBox template scrolls with CanContentScroll=false, which silently
+             disables VirtualizingStackPanel: every row got realised. The 联想源目录约有 5000 款，
+             so use an explicit virtualizing template and panel (see AGENTS.md 6.10 §9). -->
+        <Style x:Key="VirtualizedRowListStyle" TargetType="ListBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <ScrollViewer Focusable="False"
+                                      CanContentScroll="True"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto"
+                                      Padding="{TemplateBinding Padding}">
+                            <!-- iNKORE 的滚动条是 WinUI 风格的覆盖式滚动条，会压在列表内容右边缘
+                                 （“查看详情”按钮曾被遮住一部分）。给 ItemsPresenter 预留 14px
+                                 右侧空隙，让滚动条落在卡片外侧，同时不影响行宽/虚拟化。 -->
+                            <ItemsPresenter Margin="0,0,14,0"/>
+                        </ScrollViewer>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="SoftwareListItemStyle" TargetType="ListBoxItem">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="AutomationProperties.Name" Value="{Binding Name}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="FocusBorder" CornerRadius="10" BorderThickness="1"
+                                BorderBrush="Transparent" Padding="1">
+                            <ContentPresenter HorizontalAlignment="Stretch" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="FocusBorder" Property="BorderBrush"
+                                        Value="{DynamicResource Wam.AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ui:Page.Resources>
+
+    <Grid Margin="20,16,20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- Compact command bar: title, count, search, sort and filter in one line. -->
+        <Grid Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="16" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="10" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel MinWidth="150" VerticalAlignment="Center">
+                <!-- Stretch + MaxWidth 会让 WPF 把文本水平居中，标题行因此比统计行缩进；显式左对齐。 -->
+                <TextBlock x:Name="ResultsTitle" Text="全部软件" FontSize="22" FontWeight="SemiBold"
+                           TextTrimming="CharacterEllipsis" MaxWidth="320" HorizontalAlignment="Left"
+                           Foreground="{DynamicResource Wam.TextPrimaryBrush}" />
+                <TextBlock x:Name="SourceStatusText" Margin="0,2,0,0" FontSize="11" FontWeight="SemiBold"
+                           MaxWidth="300" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                           HorizontalAlignment="Left"
+                           ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
+                           Foreground="{DynamicResource Wam.AccentBrush}"
+                           AutomationProperties.Name="当前软件源" />
+                <StackPanel Orientation="Horizontal" Margin="0,1,0,0">
+                    <TextBlock x:Name="ResultsCount" FontSize="11"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               AutomationProperties.LiveSetting="Polite" />
+                    <TextBlock x:Name="CatalogCacheStatusText" Margin="8,0,0,0" MaxWidth="260"
+                               FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                </StackPanel>
+            </StackPanel>
+
+            <Grid Grid.Column="2" MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                <TextBox x:Name="SearchBox" Height="36" Padding="11,0" FontSize="13"
+                         VerticalContentAlignment="Center"
+                         TextChanged="SearchBox_OnTextChanged"
+                         AutomationProperties.Name="搜索软件"
+                         ToolTip="按软件名称、描述、发布者或标签搜索" />
+                <TextBlock Text="搜索软件、描述或标签" Margin="12,0,12,0"
+                           VerticalAlignment="Center" IsHitTestVisible="False" FontSize="13"
+                           Foreground="{DynamicResource Wam.TextSecondaryBrush}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+
+            <!-- 排序/筛选必须与搜索框同高同基线：iNKORE 的 ComboBox 默认贴顶排列，
+                 不显式居中会比同行的 TextBox/Button 高出几像素，看起来像“斜的”。 -->
+            <ComboBox x:Name="SortCombo" Grid.Column="4" Width="122" Height="36" Padding="10,0"
+                      VerticalAlignment="Center"
+                      VerticalContentAlignment="Center" HorizontalContentAlignment="Left"
+                      SelectionChanged="Filter_OnSelectionChanged"
+                      AutomationProperties.Name="软件排序">
+                <ComboBoxItem Content="推荐优先" Tag="recommended" />
+                <ComboBoxItem Content="名称 A–Z" Tag="name" />
+            </ComboBox>
+
+            <Button x:Name="ResetFiltersButton" Grid.Column="6" Content="清空筛选" Height="36"
+                    Padding="12,0" VerticalAlignment="Center"
+                    Visibility="Collapsed" Click="ResetFilters_OnClick" />
+
+            <Button x:Name="ReturnToCatalogButton" Grid.Column="8" Content="返回本地目录" Height="36"
+                    Padding="12,0" VerticalAlignment="Center"
+                    Visibility="Collapsed" Click="ReturnToCatalog_OnClick"
+                    AutomationProperties.Name="返回本地软件目录" />
+        </Grid>
+
+        <StackPanel Grid.Row="1">
+            <Border x:Name="LoadingPanel" Visibility="Collapsed" Margin="0,0,0,8" Padding="12,8"
+                    Background="{DynamicResource Wam.CardBackgroundBrush}" CornerRadius="8">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <ui:ProgressRing IsActive="True" IsIndeterminate="True" Width="26" Height="26"
+                                     Foreground="{DynamicResource Wam.AccentBrush}"
+                                     Background="Transparent" VerticalAlignment="Center" />
+                    <TextBlock x:Name="LoadingStatusText" Grid.Column="1" Margin="10,0,0,0" TextWrapping="Wrap"
+                               VerticalAlignment="Center" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                </Grid>
+            </Border>
+            <Border x:Name="CatalogErrorPanel" Visibility="Collapsed" Margin="0,0,0,8" Padding="12,9"
+                    Background="{DynamicResource Wam.CardBackgroundBrush}" CornerRadius="8"
+                    BorderBrush="{DynamicResource Wam.CardBorderBrush}" BorderThickness="1">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Margin="0,0,12,0">
+                        <TextBlock Text="软件目录加载失败" FontWeight="SemiBold" FontSize="13"
+                                   Foreground="{DynamicResource Wam.TextPrimaryBrush}" />
+                        <TextBlock x:Name="CatalogErrorText" Margin="0,3,0,0" TextWrapping="Wrap" FontSize="11"
+                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="重试" Padding="12,5" VerticalAlignment="Center"
+                            Click="RetryCatalog_OnClick" />
+                </Grid>
+            </Border>
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Grid>
+                <ListBox x:Name="AppsList" ItemsSource="{Binding AppItems}"
+                         Style="{StaticResource VirtualizedRowListStyle}"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         ItemContainerStyle="{StaticResource SoftwareListItemStyle}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         VirtualizingPanel.IsVirtualizing="True"
+                         VirtualizingPanel.VirtualizationMode="Recycling"
+                         VirtualizingPanel.ScrollUnit="Item"
+                         ScrollViewer.CanContentScroll="True"
+                         PreviewKeyDown="AppsList_OnPreviewKeyDown"
+                         AutomationProperties.Name="软件搜索结果">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <VirtualizingStackPanel/>
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type models:AppItem}">
+                            <Border Style="{StaticResource SoftwareCardStyle}"
+                                    Cursor="Hand" Loaded="AppCard_OnLoaded"
+                                    MouseLeftButtonUp="AppCard_OnMouseLeftButtonUp"
+                                    ToolTip="点击查看软件详情">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <Border Width="46" Height="46" CornerRadius="10"
+                                            VerticalAlignment="Center" Margin="0,0,13,0">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <!-- 有真实图标时不再画彩色底，图标直接显示在卡片上；文字徽章保留底色。 -->
+                                                <Setter Property="Background" Value="Transparent" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding DisplayIconSource}" Value="{x:Null}">
+                                                        <Setter Property="Background" Value="{Binding IconBackground}" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding DisplayIconSource}" Value="">
+                                                        <Setter Property="Background" Value="{Binding IconBackground}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <Grid>
+                                            <TextBlock Text="{Binding IconText}" FontSize="17" FontWeight="Bold"
+                                                       Foreground="White" HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DisplayIconSource}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding DisplayIconSource}" Value="">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <Border CornerRadius="10" Background="Transparent"
+                                                    DataContextChanged="SoftwareIconContainer_OnDataContextChanged">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DisplayIconSource}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding DisplayIconSource}" Value="">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <Image Width="46" Height="46" Stretch="Uniform" ImageFailed="SoftwareIcon_OnImageFailed">
+                                                    <Image.Source>
+                                                        <MultiBinding Converter="{StaticResource CachedIconConverter}">
+                                                            <Binding Path="DisplayIconSource"/>
+                                                            <Binding/>
+                                                        </MultiBinding>
+                                                    </Image.Source>
+                                                </Image>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
+
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <WrapPanel>
+                                            <TextBlock Text="{Binding Name}" FontSize="16" FontWeight="SemiBold"
+                                                       Margin="0,0,8,0" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource Wam.TextPrimaryBrush}" />
+                                            <Border CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
+                                                    Background="{DynamicResource Wam.AccentSoftBrush}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsRecommended}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="推荐" FontSize="10"
+                                                           Foreground="{DynamicResource Wam.AccentBrush}" />
+                                            </Border>
+                                        </WrapPanel>
+
+                                        <TextBlock Text="{Binding Description}" Margin="0,3,0,0"
+                                                   TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+
+                                        <WrapPanel Margin="0,6,0,0">
+                                            <Border BorderBrush="{DynamicResource Wam.CardBorderBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,2"
+                                                    Margin="0,0,6,0">
+                                                <TextBlock Text="{Binding Category}" FontSize="10.5"
+                                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                                            </Border>
+                                            <TextBlock Text="{Binding SizeDisplay}" VerticalAlignment="Center"
+                                                       FontSize="10.5" Margin="0,0,8,0"
+                                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                                            <TextBlock Text="{Binding DownloadCount}" VerticalAlignment="Center"
+                                                       FontSize="10.5" Margin="0,0,8,0"
+                                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DownloadCount}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding DownloadCount}" Value="">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Score, StringFormat=评分 {0} 分}"
+                                                       VerticalAlignment="Center" FontSize="10.5" Margin="0,0,8,0"
+                                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Score}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding License}" VerticalAlignment="Center" FontSize="10.5"
+                                                       Margin="0,0,6,0"
+                                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                                            <Border CornerRadius="4" Padding="6,1" Margin="0,0,6,0"
+                                                    VerticalAlignment="Center"
+                                                    Background="{DynamicResource Wam.AccentSoftBrush}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsBeta}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="Beta" FontSize="9.5" FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource Wam.DangerBrush}" />
+                                            </Border>
+                                            <Border BorderBrush="{DynamicResource Wam.CardBorderBrush}"
+                                                    BorderThickness="1" CornerRadius="4" Padding="6,1"
+                                                    VerticalAlignment="Center">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding SourceId}" Value="lenovo">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="联想商店" FontSize="9.5"
+                                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                                            </Border>
+                                        </WrapPanel>
+                                    </StackPanel>
+
+                                    <Button Grid.Column="2" Content="查看详情 ›" Padding="10,5"
+                                            VerticalAlignment="Center" Margin="12,0,0,0"
+                                            Click="DetailsButton_OnClick"
+                                            ToolTip="{Binding Name, StringFormat=查看 {0} 的软件详情}"
+                                            AutomationProperties.Name="{Binding Name, StringFormat=查看 {0} 的软件详情}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <Border x:Name="EmptyState" Visibility="Collapsed" CornerRadius="10"
+                        Background="{DynamicResource Wam.CardBackgroundBrush}"
+                        BorderBrush="{DynamicResource Wam.CardBorderBrush}" BorderThickness="1"
+                        VerticalAlignment="Top" Padding="28,34">
+                    <StackPanel HorizontalAlignment="Center">
+                        <TextBlock x:Name="EmptyTitleText" Text="没有找到匹配的软件" FontSize="18" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource Wam.TextPrimaryBrush}" />
+                        <TextBlock x:Name="EmptyDescriptionText" Text="试试其他关键词，或清空分类和搜索条件。" Margin="0,10,0,18"
+                                   HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                        <Button x:Name="OnlineSearchButton" Content="在联想商店在线搜索" Padding="16,8"
+                                HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12"
+                                Click="OnlineSearch_OnClick"
+                                AutomationProperties.Name="在联想商店在线搜索" />
+                        <StackPanel x:Name="OnlineSearchStatusPanel" Orientation="Horizontal"
+                                    HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12">
+                            <ui:ProgressRing x:Name="OnlineSearchProgress" IsActive="True" IsIndeterminate="True"
+                                             Width="20" Height="20" Margin="0,0,8,0" VerticalAlignment="Center"
+                                             Foreground="{DynamicResource Wam.AccentBrush}"
+                                             Background="Transparent" />
+                            <TextBlock x:Name="OnlineSearchStatusText" FontSize="11" VerticalAlignment="Center"
+                                       MaxWidth="420" TextWrapping="Wrap" TextAlignment="Left"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                        </StackPanel>
+                        <Button x:Name="EmptyResetButton" Content="显示全部软件" Padding="16,8"
+                                HorizontalAlignment="Center" Click="ResetFilters_OnClick" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+
+        <!-- 分页栏：联想目录约 5000 款，列表只渲染当前页，避免一次实例化过多行与图标。 -->
+        <Grid x:Name="PaginationBar" Grid.Row="3" Margin="0,10,0,0" Visibility="Collapsed">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="PaginationInfoText" FontSize="11.5" VerticalAlignment="Center"
+                       Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="每页" FontSize="11.5" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                <ComboBox x:Name="PageSizeCombo" Width="76" Height="30" Margin="6,0,14,0"
+                          VerticalAlignment="Center" VerticalContentAlignment="Center"
+                          HorizontalContentAlignment="Left" Padding="8,0"
+                          SelectionChanged="PageSizeCombo_OnSelectionChanged"
+                          AutomationProperties.Name="每页显示数量">
+                    <ComboBoxItem Content="60" Tag="60" />
+                    <ComboBoxItem Content="120" Tag="120" />
+                    <ComboBoxItem Content="240" Tag="240" />
+                </ComboBox>
+                <Button x:Name="PreviousPageButton" Content="上一页" Height="30" Padding="12,0"
+                        VerticalAlignment="Center" Click="PreviousPage_OnClick"
+                        AutomationProperties.Name="上一页" />
+                <TextBlock x:Name="PageNumberText" Margin="12,0" FontSize="11.5" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                <Button x:Name="NextPageButton" Content="下一页" Height="30" Padding="12,0"
+                        VerticalAlignment="Center" Click="NextPage_OnClick"
+                        AutomationProperties.Name="下一页" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</ui:Page>

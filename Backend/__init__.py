@@ -1,0 +1,1 @@
+"""WinAppsManager local catalog API."""

@@ -1,0 +1,515 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "powertoys",
+      "name": "Microsoft PowerToys",
+      "description": "微软出品的 Windows 效率工具合集，按需启用各个模块。",
+      "long_description": "Microsoft PowerToys 是微软维护的开源工具集，为 Windows 补充窗口布局、快速启动、批量重命名、取色和屏幕标尺等实用功能。每个模块都可以在设置里单独开关，适合按自己的习惯组合使用。",
+      "category": "系统工具",
+      "publisher": "Microsoft",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://learn.microsoft.com/windows/powertoys/",
+      "download_page_url": "https://github.com/microsoft/PowerToys/releases",
+      "icon_file": "powertoys.png",
+      "icon_text": "PT",
+      "icon_background": "#0078D4",
+      "installation_notes": "客户端获取微软官方发布的用户级安装包（PowerToysUserSetup），按系统架构选择 x64 或 ARM64。安装完成后在 PowerToys 设置中按需启用模块，部分模块（如键盘管理器）需要额外确认权限。",
+      "features": [
+        "窗口布局（FancyZones）与窗口置顶",
+        "快速启动器 PowerToys Run",
+        "批量重命名、取色、屏幕标尺等小工具"
+      ],
+      "tags": [
+        "系统增强",
+        "效率",
+        "微软",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 400,
+      "download_provider": "powertoys",
+      "provider_spec": {
+        "repo": "microsoft/PowerToys",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "PowerToysUserSetup-[0-9.]+-x64\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "PowerToysUserSetup-[0-9.]+-arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "sharex",
+      "name": "ShareX",
+      "description": "开源的截图与录屏工具，可自动上传并复制分享链接。",
+      "long_description": "ShareX 是 Windows 上的开源截图和录屏软件，支持区域、窗口、滚动截图以及屏幕录制。截图后可以按预设流程自动保存、上传到图床并复制链接，适合经常需要分享截图的人。",
+      "category": "实用工具",
+      "publisher": "ShareX Team",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://getsharex.com/",
+      "download_page_url": "https://github.com/ShareX/ShareX/releases",
+      "icon_file": "sharex.png",
+      "icon_text": "SX",
+      "icon_background": "#2E9E4F",
+      "installation_notes": "客户端获取 ShareX 官方 x64 安装包。ShareX 目前只发布 x64 安装器和便携压缩包，便携版不作为安装器提供；安装过程中会询问是否随系统启动。",
+      "features": [
+        "区域、窗口与滚动截图",
+        "屏幕录制并导出视频或 GIF",
+        "自动保存、上传并复制分享链接"
+      ],
+      "tags": [
+        "截图",
+        "录屏",
+        "开源",
+        "图床"
+      ],
+      "is_recommended": false,
+      "sort_order": 401,
+      "download_provider": "sharex",
+      "provider_spec": {
+        "repo": "ShareX/ShareX",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "ShareX-{version}-setup-x64\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "rufus",
+      "name": "Rufus",
+      "description": "把 ISO 镜像写入 U 盘，制作可启动安装盘。",
+      "long_description": "Rufus 是轻量的启动盘制作工具，可以把 Windows、Linux 等系统镜像写入 U 盘并设置为可启动。它支持 UEFI 与 BIOS 两种引导方式，适合重装系统或做维护盘。",
+      "category": "实用工具",
+      "publisher": "Pete Batard",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 8 / 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://rufus.ie/",
+      "download_page_url": "https://github.com/pbatard/rufus/releases",
+      "icon_file": "rufus.png",
+      "icon_text": "R",
+      "icon_background": "#1F6FB2",
+      "installation_notes": "Rufus 以单文件程序发布，客户端获取的是官方正式版可执行文件（不带 p 后缀的补丁构建），按系统架构选择 x64、x86 或 ARM64。下载后可直接运行，不需要安装。",
+      "features": [
+        "制作 Windows 与 Linux 启动 U 盘",
+        "支持 UEFI / BIOS 与 GPT / MBR",
+        "可选校验镜像、检查坏块"
+      ],
+      "tags": [
+        "U盘",
+        "启动盘",
+        "系统安装",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 402,
+      "download_provider": "rufus",
+      "provider_spec": {
+        "repo": "pbatard/rufus",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "rufus-{version}\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "rufus-{version}_x86\\.exe",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "rufus-{version}_arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "8"
+    },
+    {
+      "id": "keepassxc",
+      "name": "KeePassXC",
+      "description": "本地离线的密码管理器，密码库保存在自己的电脑上。",
+      "long_description": "KeePassXC 是开源的离线密码管理器，把账号密码保存在本地加密的 KDBX 密码库中，不依赖云端账户。它支持密钥文件与硬件密钥、浏览器扩展自动填充，也可以配合网盘自行同步密码库。",
+      "category": "网络与安全",
+      "publisher": "KeePassXC Team",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://keepassxc.org/",
+      "download_page_url": "https://github.com/keepassxreboot/keepassxc/releases",
+      "icon_file": "keepassxc.png",
+      "icon_text": "KX",
+      "icon_background": "#3C7A33",
+      "installation_notes": "客户端获取官方 MSI 安装包，按系统架构选择 x64 或 ARM64。KeePassXC 的发布标签不带 v 前缀；仓库同时提供便携压缩包，不作为安装器下载。密码库文件请自行备份。",
+      "features": [
+        "本地加密保存密码库（KDBX）",
+        "浏览器扩展自动填充",
+        "支持密钥文件与硬件密钥"
+      ],
+      "tags": [
+        "密码管理",
+        "安全",
+        "加密",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 403,
+      "download_provider": "keepassxc",
+      "provider_spec": {
+        "repo": "keepassxreboot/keepassxc",
+        "tag_prefix": "",
+        "assets": [
+          {
+            "pattern": "KeePassXC-{version}-x64\\.msi",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "KeePassXC-{version}-ARM64\\.msi",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "mpvnet",
+      "name": "mpv.net",
+      "description": "基于 mpv 的 Windows 播放器，带图形界面与右键菜单。",
+      "long_description": "mpv.net 是基于 mpv 的 Windows 视频播放器，在保留 mpv 播放质量与硬件解码能力的同时，提供图形界面、右键菜单和配置编辑器。适合希望开箱即用、又需要精细播放参数的用户。",
+      "category": "影音工具",
+      "publisher": "mpv.net project",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://github.com/mpvnet-player/mpv.net",
+      "download_page_url": "https://github.com/mpvnet-player/mpv.net/releases",
+      "icon_file": "mpvnet.png",
+      "icon_text": "mpv",
+      "icon_background": "#6A1B9A",
+      "installation_notes": "客户端获取官方 x64 安装程序（setup）。mpv.net 的 ARM64 版本只提供便携压缩包，因此不作为安装包提供；安装后可在设置中编辑 mpv 配置。",
+      "features": [
+        "基于 mpv 的高质量视频播放",
+        "硬件解码与自定义渲染参数",
+        "图形化设置与右键菜单"
+      ],
+      "tags": [
+        "播放器",
+        "视频",
+        "mpv",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 404,
+      "download_provider": "mpvnet",
+      "provider_spec": {
+        "repo": "mpvnet-player/mpv.net",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "mpv\\.net-v?{version}-setup-x64\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "clashverge",
+      "name": "Clash Verge Rev",
+      "description": "图形化代理客户端，支持订阅、规则切换与系统代理。",
+      "long_description": "Clash Verge Rev 是基于 Clash 内核的图形化代理客户端，可以导入订阅、切换配置文件和规则模式，并提供系统代理与 TUN 模式。界面较新，适合需要按规则分流的上网场景。",
+      "category": "网络与安全",
+      "publisher": "Clash Verge Rev",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://github.com/clash-verge-rev/clash-verge-rev",
+      "download_page_url": "https://github.com/clash-verge-rev/clash-verge-rev/releases",
+      "icon_file": "clashverge.png",
+      "icon_text": "CV",
+      "icon_background": "#2B5BC7",
+      "installation_notes": "客户端获取官方 Windows 安装程序，按系统架构选择 x64 或 ARM64，且只取常规安装包（不含内置 WebView2 的 fixed_webview2 变体）。若系统缺少 WebView2 运行时，请先安装微软的 WebView2。",
+      "features": [
+        "导入订阅并切换配置文件",
+        "规则模式与系统代理设置",
+        "TUN 模式与流量面板"
+      ],
+      "tags": [
+        "代理",
+        "网络",
+        "订阅",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 405,
+      "download_provider": "clashverge",
+      "provider_spec": {
+        "repo": "clash-verge-rev/clash-verge-rev",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Clash\\.Verge_{version}_x64-setup\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Clash\\.Verge_{version}_arm64-setup\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "localsend",
+      "name": "LocalSend",
+      "description": "在同一局域网内跨设备互传文件，不需要账号和云端。",
+      "long_description": "LocalSend 是开源的文件互传工具，同一局域网内的手机、电脑之间可以直接发送文件和文本，不需要注册账号，也不经过第三方服务器。支持 Windows、macOS、Linux、Android 和 iOS。",
+      "category": "实用工具",
+      "publisher": "LocalSend",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://localsend.org/",
+      "download_page_url": "https://github.com/localsend/localsend/releases",
+      "icon_file": "localsend.png",
+      "icon_text": "LS",
+      "icon_background": "#1E9E8A",
+      "installation_notes": "客户端获取官方已签名的 x64 安装包（不带 unsigned 后缀）。Windows ARM64 目前只有便携压缩包，因此不作为安装器提供；首次使用时两端需要在同一网络并互相确认。",
+      "features": [
+        "局域网内跨设备传输文件与文本",
+        "无需账号，数据不经过云端",
+        "支持 Windows、macOS、Linux 与移动端"
+      ],
+      "tags": [
+        "传文件",
+        "局域网",
+        "跨平台",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 406,
+      "download_provider": "localsend",
+      "provider_spec": {
+        "repo": "localsend/localsend",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "LocalSend-{version}-windows-x86-64\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "quicklook",
+      "name": "QuickLook",
+      "description": "按空格键快速预览文件，无需打开对应软件。",
+      "long_description": "QuickLook 为 Windows 带来类似 macOS 的即按即看预览：选中文件后按空格即可查看图片、文档、压缩包内容等信息。支持安装扩展来增加更多文件格式的预览能力。",
+      "category": "系统工具",
+      "publisher": "QL-Win",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://github.com/QL-Win/QuickLook",
+      "download_page_url": "https://github.com/QL-Win/QuickLook/releases",
+      "icon_file": "quicklook.png",
+      "icon_text": "QL",
+      "icon_background": "#0A84C8",
+      "installation_notes": "客户端获取官方 EXE 安装程序（仓库另有 MSI 与 APPX 分发包，不作为默认下载）。安装后选中文件按空格即可预览，按 Esc 关闭；可在设置中开机启动。",
+      "features": [
+        "空格键即时预览文件",
+        "支持图片、Office 文档、PDF 与压缩包",
+        "可通过扩展增加预览格式"
+      ],
+      "tags": [
+        "预览",
+        "效率",
+        "系统工具",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 407,
+      "download_provider": "quicklook",
+      "provider_spec": {
+        "repo": "QL-Win/QuickLook",
+        "tag_prefix": "",
+        "assets": [
+          {
+            "pattern": "QuickLook-{version}\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "motrix",
+      "name": "Motrix",
+      "description": "界面简洁的下载工具，支持 HTTP、BT 与磁力链接。",
+      "long_description": "Motrix 是开源的下载管理器，支持 HTTP、FTP、BitTorrent 与磁力链接，并提供多线程分段下载和断点续传。任务列表和速度信息展示清晰，适合日常下载大文件。",
+      "category": "实用工具",
+      "publisher": "Motrix",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / arm64",
+      "website_url": "https://motrix.app/",
+      "download_page_url": "https://github.com/agalwood/Motrix/releases",
+      "icon_file": "motrix.png",
+      "icon_text": "M",
+      "icon_background": "#5C6BC0",
+      "installation_notes": "客户端获取官方 Windows 安装包，按系统架构选择 x64 或 ARM64。仓库同时提供便携压缩包和面向 NAS 的套件，均不作为安装器下载。",
+      "features": [
+        "支持 HTTP、BT 与磁力链接下载",
+        "多线程分段下载与断点续传",
+        "任务列表与实时速度显示"
+      ],
+      "tags": [
+        "下载",
+        "BT",
+        "多线程",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 408,
+      "download_provider": "motrix",
+      "provider_spec": {
+        "repo": "agalwood/Motrix",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Motrix-Setup-{version}\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Motrix-Setup-{version}-arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "obsidian",
+      "name": "Obsidian",
+      "description": "基于 Markdown 的本地笔记工具，支持双向链接与插件。",
+      "long_description": "Obsidian 把笔记以 Markdown 文件保存在本地笔记库中，支持双向链接、关系图谱和标签，便于整理相互关联的知识。通过社区插件和主题可以扩展出任务管理、发布等用法。",
+      "category": "办公效率",
+      "publisher": "Obsidian",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费（商用需授权）",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://obsidian.md/",
+      "download_page_url": "https://github.com/obsidianmd/obsidian-releases/releases",
+      "icon_file": "obsidian.png",
+      "icon_text": "Ob",
+      "icon_background": "#483699",
+      "installation_notes": "客户端获取官方 Windows 安装程序。Obsidian 目前只为 Windows 发布 x64 安装器，仓库中的 ARM64 版本是 Linux 用的 AppImage。个人使用免费，商用需按官方条款购买授权。",
+      "features": [
+        "笔记以本地 Markdown 文件保存",
+        "双向链接与关系图谱",
+        "大量社区插件与主题"
+      ],
+      "tags": [
+        "笔记",
+        "Markdown",
+        "知识管理",
+        "效率"
+      ],
+      "is_recommended": false,
+      "sort_order": 409,
+      "download_provider": "obsidian",
+      "provider_spec": {
+        "repo": "obsidianmd/obsidian-releases",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Obsidian-{version}\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    }
+  ]
+}

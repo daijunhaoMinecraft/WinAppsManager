@@ -1,0 +1,32 @@
+# Python 运行时与虚拟环境
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 测试 / 类型检查 / 格式化缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 后端运行时缓存（版本快照、GitHub 条件缓存）
+.cache/
+
+# 机器本地配置（可能含 GitHub 令牌，禁止提交）
+config.local.json
+
+# 日志与临时文件
+*.log
+*.tmp
+
+# IDE 本地状态
+.idea/
+.vscode/
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store

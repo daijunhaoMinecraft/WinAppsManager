@@ -1,0 +1,59 @@
+{
+  "cache": {
+    "enabled": true,
+    "persist": true,
+    "directory": ".cache",
+    "ttl_seconds": 300,
+    "persistent_ttl_seconds": 3600,
+    "max_stale_seconds": 604800,
+    "max_entries": 128
+  },
+  "logging": {
+    "enabled": true,
+    "directory": ".cache/logs",
+    "level": "INFO",
+    "max_bytes": 5242880,
+    "backup_count": 5,
+    "console": true
+  },
+  "providers": {
+    "cache_ttl_seconds": 600,
+    "timeout_seconds": 10
+  },
+  "http": {
+    "timeout_seconds": 5,
+    "connect_timeout_seconds": 3
+  },
+  "refresh": {
+    "on_startup": true,
+    "startup_timeout_seconds": 30,
+    "interval_seconds": 1800,
+    "jitter_seconds": 0,
+    "max_concurrency": 4,
+    "use_stale_cache": true,
+    "drop_unavailable_apps": true
+  },
+  "github": {
+    "token": "",
+    "api_base": "https://api.github.com",
+    "timeout_seconds": 10,
+    "refresh_interval_seconds": 900
+  },
+  "lenovo": {
+    "enabled": true,
+    "catalog_ttl_seconds": 21600,
+    "catalog_refresh_interval_seconds": 300,
+    "catalog_max_stale_seconds": 604800,
+    "details_ttl_seconds": 900,
+    "details_persistent_ttl_seconds": 21600,
+    "search_cache_ttl_seconds": 60,
+    "timeout_seconds": 20,
+    "catalog_concurrency": 3,
+    "image_cache_ttl_seconds": 2592000,
+    "image_cache_max_bytes": 268435456
+  },
+  "builtin": {
+    "enabled": true,
+    "app_ids": ["clashverge", "telegram"]
+  }
+}

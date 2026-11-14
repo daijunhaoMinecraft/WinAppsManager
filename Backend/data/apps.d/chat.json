@@ -1,0 +1,424 @@
+{
+  "schema_version": 1,
+  "apps": [
+    {
+      "id": "telegram",
+      "name": "Telegram Desktop",
+      "description": "快速、安全的云端聊天工具，支持多设备同步与群组。",
+      "long_description": "Telegram Desktop 是 Telegram 的官方桌面客户端，聊天记录保存在云端，可以在手机与电脑之间同步。支持群组、频道、大文件传输，以及端到端加密的秘密聊天。",
+      "category": "社交通讯",
+      "publisher": "Telegram FZ-LLC",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 7 / 8 / 8.1 / 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://telegram.org/",
+      "download_page_url": "https://github.com/telegramdesktop/tdesktop/releases",
+      "icon_file": "telegram.png",
+      "icon_text": "TG",
+      "icon_background": "#2AABEE",
+      "installation_notes": "客户端从 GitHub 最新正式版获取对应架构的安装程序（x64、x86 或 ARM64）。下载后按安装向导操作，首次登录需要用手机号接收验证码。",
+      "features": [
+        "云端消息与多设备同步",
+        "群组、频道与大文件传输",
+        "秘密聊天的端到端加密"
+      ],
+      "tags": [
+        "聊天",
+        "即时通讯",
+        "云端同步",
+        "开源"
+      ],
+      "is_recommended": true,
+      "sort_order": 300,
+      "download_provider": "telegram",
+      "provider_spec": {
+        "repo": "telegramdesktop/tdesktop",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "td-setup-win-x64-{version}\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "td-setup-win-x86-{version}\\.exe",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "td-setup-win-arm-{version}\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "7"
+    },
+    {
+      "id": "jitsi",
+      "name": "Jitsi Meet",
+      "description": "开源的视频会议客户端，无需账号即可创建或加入会议。",
+      "long_description": "Jitsi Meet 是基于 WebRTC 的开源视频会议方案，桌面客户端可以快速创建会议房间或输入房间名加入。支持多人音视频、屏幕共享和会议内聊天，无需注册账号即可开会。",
+      "category": "社交通讯",
+      "publisher": "Jitsi (8x8, Inc.)",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://jitsi.org/",
+      "download_page_url": "https://github.com/jitsi/jitsi-meet-electron/releases",
+      "icon_file": "jitsi.png",
+      "icon_text": "JM",
+      "icon_background": "#1CA3DD",
+      "installation_notes": "客户端从 GitHub 最新正式版获取 Windows x64 安装包。安装后可创建临时会议室，或连接自建的 Jitsi 服务器加入会议。",
+      "features": [
+        "一键创建或加入视频会议",
+        "多人音视频与屏幕共享",
+        "无需注册账号即可开会"
+      ],
+      "tags": [
+        "视频会议",
+        "在线会议",
+        "屏幕共享",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 301,
+      "download_provider": "jitsi",
+      "provider_spec": {
+        "repo": "jitsi/jitsi-meet-electron",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "jitsi-meet\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "mattermost",
+      "name": "Mattermost",
+      "description": "面向团队的协作通讯工具，可按频道组织讨论并自建服务器。",
+      "long_description": "Mattermost 是开源的团队协作平台，桌面客户端可连接自建或云端服务器。对话按团队和频道组织，支持文件共享、消息搜索以及机器人、Webhook 等集成，适合企业内部沟通。",
+      "category": "社交通讯",
+      "publisher": "Mattermost, Inc.",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 11 · x64 / arm64",
+      "website_url": "https://mattermost.com/",
+      "download_page_url": "https://github.com/mattermost/desktop/releases",
+      "icon_file": "mattermost.png",
+      "icon_text": "MM",
+      "icon_background": "#1E325C",
+      "installation_notes": "客户端从 GitHub 最新正式版获取 Windows 安装包，提供 x64 与 ARM64 的 MSI。安装后需要填写服务器地址，再使用组织账号登录。",
+      "features": [
+        "按团队和频道组织讨论",
+        "消息搜索与文件共享",
+        "自建服务器并接入机器人集成"
+      ],
+      "tags": [
+        "团队协作",
+        "聊天",
+        "自建服务器",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 302,
+      "download_provider": "mattermost",
+      "provider_spec": {
+        "repo": "mattermost/desktop",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "mattermost-desktop-{version}-win-x64\\.msi",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "mattermost-desktop-{version}-win-arm64\\.msi",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "arm64"
+      ],
+      "minimum_windows": "11"
+    },
+    {
+      "id": "zulip",
+      "name": "Zulip",
+      "description": "按话题组织对话的团队聊天工具，讨论脉络清晰。",
+      "long_description": "Zulip 是开源的团队聊天工具，把每个频道里的对话拆成独立话题，让讨论按主题延续而不是混在一条时间线里。桌面客户端支持连接 Zulip Cloud 或自建服务器，适合分布式团队和开源社区。",
+      "category": "社交通讯",
+      "publisher": "Kandra Labs, Inc.",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://zulip.com/",
+      "download_page_url": "https://github.com/zulip/zulip-desktop/releases",
+      "icon_file": "zulip.png",
+      "icon_text": "Z",
+      "icon_background": "#6C7BFF",
+      "installation_notes": "客户端从 GitHub 最新正式版获取 Windows x64 的 MSI 安装包。安装后填写组织服务器地址，使用已有账号登录或注册新组织。",
+      "features": [
+        "按话题组织对话，脉络清晰",
+        "频道、私聊与消息搜索",
+        "支持 Zulip Cloud 与自建服务器"
+      ],
+      "tags": [
+        "团队聊天",
+        "话题讨论",
+        "自建服务器",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 303,
+      "download_provider": "zulip",
+      "provider_spec": {
+        "repo": "zulip/zulip-desktop",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Zulip-{version}-x64\\.msi",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "rocketchat",
+      "name": "Rocket.Chat",
+      "description": "开源团队沟通平台，支持频道聊天、音视频与集成扩展。",
+      "long_description": "Rocket.Chat 是开源的团队沟通平台，桌面客户端可连接自建或云端服务器。提供频道、私聊、文件共享、音视频通话，并可通过应用市场安装集成，适合需要数据自主可控的团队。",
+      "category": "社交通讯",
+      "publisher": "Rocket.Chat Technologies Corp.",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://rocket.chat/",
+      "download_page_url": "https://github.com/RocketChat/Rocket.Chat.Electron/releases",
+      "icon_file": "rocketchat.png",
+      "icon_text": "RC",
+      "icon_background": "#F5455C",
+      "installation_notes": "客户端从 GitHub 最新正式版获取对应架构的安装程序（x64、x86 或 ARM64）。安装后填写服务器地址并登录，使用官方云服务或自建实例均可。",
+      "features": [
+        "频道与私聊即时沟通",
+        "音视频通话与屏幕共享",
+        "应用集成与自建部署"
+      ],
+      "tags": [
+        "团队聊天",
+        "自建服务器",
+        "集成",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 304,
+      "download_provider": "rocketchat",
+      "provider_spec": {
+        "repo": "RocketChat/Rocket.Chat.Electron",
+        "tag_prefix": "",
+        "assets": [
+          {
+            "pattern": "rocketchat-{version}-win-x64\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "rocketchat-{version}-win-ia32\\.exe",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "rocketchat-{version}-win-arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "ferdium",
+      "name": "Ferdium",
+      "description": "把常用聊天和协作服务集中到一个桌面窗口。",
+      "long_description": "Ferdium 是开源的多服务聚合客户端，可以把网页版的聊天和协作服务放进同一个窗口，按服务分组管理。支持通知提醒、工作区和自定义服务，适合同时使用多个沟通工具的人。",
+      "category": "社交通讯",
+      "publisher": "Ferdium",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64 / x86 / arm64",
+      "website_url": "https://ferdium.org/",
+      "download_page_url": "https://github.com/ferdium/ferdium-app/releases",
+      "icon_file": "ferdium.png",
+      "icon_text": "F",
+      "icon_background": "#7A5AF8",
+      "installation_notes": "客户端从 GitHub 最新正式版获取对应架构的自动安装包（x64、x86 或 ARM64）。安装后登录各服务账号即可，服务数据保存在本机。",
+      "features": [
+        "集中管理多个聊天服务",
+        "服务分组与通知提醒",
+        "支持自定义服务与工作区"
+      ],
+      "tags": [
+        "多合一",
+        "聊天聚合",
+        "通知提醒",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 305,
+      "download_provider": "ferdium",
+      "provider_spec": {
+        "repo": "ferdium/ferdium-app",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Ferdium-win-AutoSetup-{version}-x64\\.exe",
+            "architecture": "x64"
+          },
+          {
+            "pattern": "Ferdium-win-AutoSetup-{version}-ia32\\.exe",
+            "architecture": "x86"
+          },
+          {
+            "pattern": "Ferdium-win-AutoSetup-{version}-arm64\\.exe",
+            "architecture": "arm64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64",
+        "x86",
+        "arm64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "revolt",
+      "name": "Revolt",
+      "description": "开源聊天平台 Revolt 的桌面客户端，支持服务器与频道聊天。",
+      "long_description": "Revolt 是开源的聊天平台，桌面客户端提供服务器、频道和私聊等常用功能，使用习惯接近 Discord。可以加入官方实例，也可以连接自建实例与社区成员沟通。",
+      "category": "社交通讯",
+      "publisher": "Revolt Platforms Ltd.",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://revolt.chat/",
+      "download_page_url": "https://github.com/revoltchat/desktop/releases",
+      "icon_file": "revolt.png",
+      "icon_text": "R",
+      "icon_background": "#FF4655",
+      "installation_notes": "客户端从 GitHub 最新正式版获取 Windows x64 安装程序。安装后注册或登录 Revolt 账号，再通过邀请链接加入服务器。",
+      "features": [
+        "服务器与频道聊天",
+        "私聊与消息通知",
+        "可连接官方或自建实例"
+      ],
+      "tags": [
+        "聊天",
+        "社区",
+        "自建服务器",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 306,
+      "download_provider": "revolt",
+      "provider_spec": {
+        "repo": "revoltchat/desktop",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "Revolt-Setup-{version}\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    },
+    {
+      "id": "session",
+      "name": "Session",
+      "description": "注重隐私的去中心化加密通讯工具。",
+      "long_description": "Session 是基于去中心化网络的加密通讯应用，不需要手机号或邮箱即可创建账户。消息通过洋葱路由中继传输并端到端加密，支持私聊、群聊和文件发送，适合对隐私要求较高的沟通。",
+      "category": "社交通讯",
+      "publisher": "Oxen Privacy Tech Foundation",
+      "version": "以官网为准",
+      "size_display": "以官网为准",
+      "license": "免费 / 开源",
+      "platforms": "Windows 10 / 11 · x64",
+      "website_url": "https://getsession.org/",
+      "download_page_url": "https://github.com/oxen-io/session-desktop/releases",
+      "icon_file": "session.png",
+      "icon_text": "S",
+      "icon_background": "#00B87A",
+      "installation_notes": "客户端从 GitHub 最新正式版获取 Windows x64 安装程序。安装后创建新账户或恢复已有账户，即可开始加密聊天。",
+      "features": [
+        "无需手机号即可创建账户",
+        "端到端加密的私聊与群聊",
+        "去中心化网络传输消息"
+      ],
+      "tags": [
+        "加密聊天",
+        "隐私保护",
+        "去中心化",
+        "开源"
+      ],
+      "is_recommended": false,
+      "sort_order": 307,
+      "download_provider": "session",
+      "provider_spec": {
+        "repo": "oxen-io/session-desktop",
+        "tag_prefix": "v",
+        "assets": [
+          {
+            "pattern": "session-desktop-win-x64-{version}\\.exe",
+            "architecture": "x64"
+          }
+        ]
+      },
+      "latest_release_id": null,
+      "releases": [],
+      "architectures": [
+        "x64"
+      ],
+      "minimum_windows": "10"
+    }
+  ]
+}

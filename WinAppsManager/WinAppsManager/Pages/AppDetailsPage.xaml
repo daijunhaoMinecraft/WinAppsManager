@@ -1,0 +1,395 @@
+<ui:Page x:Class="WinAppsManager.Pages.AppDetailsPage"
+         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
+         xmlns:services="clr-namespace:WinAppsManager.Services"
+         xmlns:pages="clr-namespace:WinAppsManager.Pages"
+         Title="软件详情"
+         Loaded="Page_OnLoaded" Unloaded="Page_OnUnloaded"
+         Background="{DynamicResource Wam.PageBackgroundBrush}">
+    <ui:Page.Resources>
+        <services:CachedIconConverter x:Key="CachedIconConverter"/>
+        <Style x:Key="DetailCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Wam.CardBackgroundBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Wam.CardBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="22"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+        </Style>
+        <Style x:Key="DetailSectionTitleStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Wam.TextPrimaryBrush}"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
+        <Style x:Key="DetailLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Wam.TextSecondaryBrush}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+        </Style>
+        <Style x:Key="DetailValueStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Wam.TextPrimaryBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+    </ui:Page.Resources>
+    <ScrollViewer x:Name="PageScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,12,0" Margin="28,24,28,20">
+        <StackPanel>
+            <Button Content="← 返回软件列表" HorizontalAlignment="Left" Padding="12,8" Margin="0,0,0,20"
+                    Click="BackButton_OnClick" ToolTip="返回列表（Alt + ← / Esc）"/>
+            <TextBlock x:Name="DetailCacheStatusText" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"
+                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+            <StackPanel x:Name="DetailLoadingPanel" Margin="0,0,0,16" Visibility="Collapsed"
+                        Orientation="Horizontal">
+                <ui:ProgressRing IsActive="True" IsIndeterminate="True" Width="24" Height="24"
+                                 Foreground="{DynamicResource Wam.AccentBrush}"
+                                 Background="Transparent" VerticalAlignment="Center" />
+                <TextBlock Text="正在加载软件详情…" Margin="10,0,0,0" FontSize="12" VerticalAlignment="Center"
+                           Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+            </StackPanel>
+            <Border x:Name="DetailErrorPanel" Style="{StaticResource DetailCardStyle}" Visibility="Collapsed"
+                    Background="{DynamicResource Wam.AccentSoftBrush}">
+                <StackPanel>
+                    <TextBlock x:Name="DetailErrorText" TextWrapping="Wrap" Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                    <Button Content="重试加载" Margin="0,12,0,0" HorizontalAlignment="Left" Padding="14,7" Click="RetryDetailsButton_OnClick"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource DetailCardStyle}">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Width="76" Height="76" CornerRadius="18"
+                                VerticalAlignment="Top" Margin="0,0,18,0">
+                            <Border.Style>
+                                <Style TargetType="Border">
+                                    <!-- 有真实图标时不再画彩色底；文字徽章才使用图标底色。 -->
+                                    <Setter Property="Background" Value="Transparent"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value="{x:Null}">
+                                            <Setter Property="Background" Value="{Binding AppItem.IconBackground}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value="">
+                                            <Setter Property="Background" Value="{Binding AppItem.IconBackground}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Border.Style>
+                            <Grid>
+                                <TextBlock x:Name="IconFallback" Text="{Binding AppItem.IconText}" Foreground="White" FontSize="24" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value="{x:Null}"><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                                <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value=""><Setter Property="Visibility" Value="Visible"/></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <Image x:Name="AppIcon" Width="64" Height="64"
+                                       Stretch="Uniform" ImageFailed="AppIcon_OnImageFailed">
+                                    <Image.Source>
+                                        <MultiBinding Converter="{StaticResource CachedIconConverter}">
+                                            <Binding Path="AppItem.DisplayIconSource"/>
+                                            <Binding Path="AppItem"/>
+                                        </MultiBinding>
+                                    </Image.Source>
+                                    <Image.Style>
+                                        <Style TargetType="Image">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                                <DataTrigger Binding="{Binding AppItem.DisplayIconSource}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Image.Style>
+                                </Image>
+                            </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1">
+                            <TextBlock Text="{Binding AppItem.Name}" FontSize="28" FontWeight="SemiBold" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                            <WrapPanel Margin="0,8,0,0">
+                                <Border BorderBrush="{DynamicResource Wam.CardBorderBrush}" BorderThickness="1"
+                                        CornerRadius="4" Padding="7,1" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AppItem.SourceId}" Value="lenovo">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="联想商店" FontSize="10.5"
+                                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                                </Border>
+                                <Border Background="{DynamicResource Wam.AccentSoftBrush}" CornerRadius="4"
+                                        Padding="7,1" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AppItem.IsBeta}" Value="True">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="Beta" FontSize="10.5" FontWeight="SemiBold"
+                                               Foreground="{DynamicResource Wam.DangerBrush}"/>
+                                </Border>
+                                <TextBlock Text="{Binding AppItem.RankingDescription}" FontSize="12"
+                                           VerticalAlignment="Center" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Wam.AccentBrush}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AppItem.RankingDescription}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding AppItem.RankingDescription}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </WrapPanel>
+                            <TextBlock Text="{Binding AppItem.Description}" FontSize="14" Margin="0,8,0,12" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                            <ItemsControl ItemsSource="{Binding TagChips}">
+                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{DynamicResource Wam.AccentSoftBrush}" CornerRadius="5" Padding="9,4" Margin="0,0,6,6">
+                                            <TextBlock Text="{Binding}" FontSize="12" Foreground="{DynamicResource Wam.AccentBrush}"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </Grid>
+                    <WrapPanel Margin="0,22,0,0">
+                        <Button x:Name="DownloadButton" Content="下载并打开" Padding="18,10" Margin="0,0,10,6" IsEnabled="False"
+                                Style="{DynamicResource {x:Static ui:ThemeKeys.AccentButtonStyleKey}}"
+                                Click="DownloadButton_OnClick"/>
+                        <Button x:Name="WebsiteButton" Content="访问官网 ↗" Padding="16,10" Margin="0,0,10,6"
+                                Click="WebsiteButton_OnClick"/>
+                        <Button Content="复制下载链接" Padding="16,10" Margin="0,0,0,6" Click="CopyLinkButton_OnClick"/>
+                    </WrapPanel>
+                    <TextBlock x:Name="LinkStatusText" Margin="0,8,0,0" FontSize="12" Visibility="Collapsed"
+                               TextWrapping="Wrap" Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                    <Border x:Name="DownloadLinkPanel" Visibility="Collapsed" Margin="0,10,0,0" Padding="12,9"
+                            Background="{DynamicResource Wam.SubtleBackgroundBrush}" CornerRadius="8">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock x:Name="DownloadLinkLabelText" Text="下载链接" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                                <Button x:Name="OpenDownloadLinkButton" Content="打开 ↗" HorizontalAlignment="Right"
+                                        Padding="10,4" FontSize="11" Click="OpenDownloadLinkButton_OnClick"
+                                        ToolTip="在默认浏览器中打开当前显示的下载链接"
+                                        AutomationProperties.Name="打开下载链接" />
+                            </Grid>
+                            <TextBox x:Name="DownloadLinkTextBox" IsReadOnly="True" TextWrapping="Wrap"
+                                     MaxHeight="92" Margin="0,4,0,0" Padding="0" FontSize="12"
+                                     Background="Transparent" BorderThickness="0"
+                                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                     Foreground="{DynamicResource Wam.TextPrimaryBrush}"
+                                     AutomationProperties.Name="下载链接地址" />
+                            <TextBlock x:Name="DownloadLinkHintText" Margin="0,4,0,0" FontSize="10.5"
+                                       TextWrapping="Wrap" Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+            <Border x:Name="ScreenshotCard" Style="{StaticResource DetailCardStyle}" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="应用截图" Style="{StaticResource DetailSectionTitleStyle}"/>
+                    <ScrollViewer x:Name="ScreenshotScrollViewer" HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled" PanningMode="HorizontalOnly"
+                                  Margin="0,0,0,2"
+                                  PreviewMouseWheel="ScreenshotScrollViewer_OnPreviewMouseWheel">
+                        <ItemsControl ItemsSource="{Binding Screenshots}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type pages:ScreenshotViewItem}">
+                                    <Grid Width="236" Height="148" Margin="0,0,10,0" Cursor="Hand"
+                                          Background="Transparent"
+                                          MouseLeftButtonUp="ScreenshotThumb_OnMouseLeftButtonUp"
+                                          AutomationProperties.Name="{Binding AccessibilityName}">
+                                        <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}"
+                                                BorderBrush="{DynamicResource Wam.CardBorderBrush}" BorderThickness="1"
+                                                CornerRadius="8" ClipToBounds="True">
+                                            <Grid>
+                                                <Image Source="{Binding Image}" Stretch="UniformToFill"
+                                                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding HasImage}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <ui:ProgressRing IsActive="{Binding IsLoading, Mode=OneWay}"
+                                                                         IsIndeterminate="True" Width="22" Height="22"
+                                                                         Foreground="{DynamicResource Wam.AccentBrush}"
+                                                                         Background="Transparent"
+                                                                         HorizontalAlignment="Center"/>
+                                                        <TextBlock Text="{Binding PlaceholderText}" FontSize="11"
+                                                                   Margin="0,6,0,0" TextAlignment="Center"
+                                                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <Border HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                        Margin="8" Background="{DynamicResource Wam.CardBackgroundBrush}"
+                                                        CornerRadius="4" Padding="7,2">
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsVideo}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
+                                                    <TextBlock Text="▶ 视频" FontSize="10.5"
+                                                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                                                </Border>
+                                            </Grid>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                    <TextBlock x:Name="ScreenshotHintText" FontSize="11.5" Margin="0,8,0,0" TextWrapping="Wrap"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="ReleaseNotesCard" Style="{StaticResource DetailCardStyle}" Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Text="更新说明" Style="{StaticResource DetailSectionTitleStyle}"/>
+                    <TextBlock Text="{Binding AppItem.ReleaseNotes}" TextWrapping="Wrap" FontSize="14" LineHeight="24"
+                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource DetailCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="软件介绍" Style="{StaticResource DetailSectionTitleStyle}"/>
+                    <TextBlock Text="{Binding AppItem.LongDescription}" TextWrapping="Wrap" FontSize="14" LineHeight="24"
+                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                    <TextBlock Text="功能亮点" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,10"
+                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                    <ItemsControl ItemsSource="{Binding AppItem.Features}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="22"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <TextBlock Text="✓" Foreground="{DynamicResource Wam.AccentBrush}" FontWeight="SemiBold"/>
+                                    <TextBlock Grid.Column="1" Text="{Binding}" TextWrapping="Wrap" FontSize="14"
+                                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource DetailCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="软件信息" Style="{StaticResource DetailSectionTitleStyle}"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <StackPanel Margin="0,0,16,18">
+                            <TextBlock Text="开发者" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.Publisher}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="0,0,0,18">
+                            <TextBlock Text="分类" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.Category}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Margin="0,0,16,18">
+                            <TextBlock Text="适用系统" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.Platforms}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,0,0,18">
+                            <TextBlock Text="许可" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.License}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Margin="0,0,16,18">
+                            <TextBlock Text="版本" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.Version}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="2" Grid.Column="1" Margin="0,0,0,18">
+                            <TextBlock Text="安装包大小" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.SizeDisplay}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="3" Margin="0,0,16,0">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AppItem.DownloadCount}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding AppItem.DownloadCount}" Value="">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="下载量" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.DownloadCount}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Row="3" Grid.Column="1">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding AppItem.Score}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="评分" Style="{StaticResource DetailLabelStyle}"/>
+                            <TextBlock Text="{Binding AppItem.Score, StringFormat={}{0} 分}" Style="{StaticResource DetailValueStyle}"/>
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="版本和安装包大小可能随更新变化，请查看官网下载页面。" FontSize="12" Margin="0,18,0,0"
+                               TextWrapping="Wrap" Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource DetailCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="安装说明" Style="{StaticResource DetailSectionTitleStyle}"/>
+                    <TextBlock Text="{Binding AppItem.InstallationNotes}" FontSize="14" TextWrapping="Wrap" LineHeight="24"
+                               Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                    <TextBlock x:Name="InstallFlowText" Text="点击“下载并打开”后，安装包会下载到本机并打开安装向导。" FontSize="13" Margin="0,12,0,0"
+                               TextWrapping="Wrap" Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</ui:Page>

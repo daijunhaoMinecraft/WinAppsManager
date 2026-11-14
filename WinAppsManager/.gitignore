@@ -1,0 +1,26 @@
+# 构建产物
+bin/
+obj/
+/packages/
+
+# IDE（Rider / Visual Studio）本地状态
+.idea/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.DotSettings.user
+riderModule.iml
+_ReSharper.Caches/
+_ReSharper*/
+
+# 测试与覆盖率
+TestResults/
+*.coverage
+*.trx
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store

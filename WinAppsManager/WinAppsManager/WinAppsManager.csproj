@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <!--
+          net6.0-windows7.0  : 兼容 Windows 7 SP1 / 8 / 8.1 / 10 / 11（不含 MSIX/商店应用功能，
+                               Windows 7 上运行时时由 StoreApplicationProvider.IsSupported 提示不支持）。
+          net8.0-windows10.0.19041.0 : Windows 10 2004 / 11 完整功能，含 WinRT PackageManager 商店应用管理。
+          两个目标共用同一套源码，差异用 STORE_APPS 编译常量与 partial 类隔开。
+        -->
+        <TargetFrameworks>net6.0-windows7.0;net8.0-windows10.0.19041.0</TargetFrameworks>
+        <LangVersion>latest</LangVersion>
+        <CheckEolTargetFramework>false</CheckEolTargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <UseWPF>true</UseWPF>
+        <!-- 32 位（x86）Windows 用户可通过 dotnet publish -r win-x86 获得对应构建。 -->
+        <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
+        <SelfContained>false</SelfContained>
+        <AssemblyName>WinAppsManager</AssemblyName>
+        <RootNamespace>WinAppsManager</RootNamespace>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
+        <DefineConstants>$(DefineConstants);STORE_APPS</DefineConstants>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="iNKORE.UI.WPF" Version="1.2.8" />
+      <PackageReference Include="iNKORE.UI.WPF.Modern" Version="0.11.0" />
+    </ItemGroup>
+
+</Project>
