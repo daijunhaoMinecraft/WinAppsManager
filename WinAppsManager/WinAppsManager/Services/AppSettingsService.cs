@@ -560,6 +560,7 @@ public static class AppSettingsService
             }
 
             // 软件源是后加字段：旧的 settings.json 缺字段或值为非法枚举时都回退为默认的联想应用商店。
+            // 枚举只要在 AppSourcePreference 里追加（内置精选、360 软件管家）就能被识别，未知值仍回退 Lenovo。
             var appSourceElement = settings.AppSource.ValueKind != JsonValueKind.Undefined
                 ? settings.AppSource
                 : settings.AppSourceSnakeCase;

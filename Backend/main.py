@@ -23,6 +23,13 @@ if __package__:
     from .lenovo.media import BROWSER_USER_AGENT
     from .lenovo.models import StoreSourceInfo, StoreSourcesResponse
     from .lenovo.routes import create_lenovo_router
+    from .soft360 import (
+        SOURCE_DESCRIPTION as SOFT360_SOURCE_DESCRIPTION,
+        SOURCE_NAME as SOFT360_SOURCE_NAME,
+        create_soft360_store_service,
+    )
+    from .soft360.media import BROWSER_USER_AGENT as SOFT360_BROWSER_USER_AGENT
+    from .soft360.routes import create_soft360_router
     from .logging_config import configure_logging, current_log_path, get_log_files, shutdown_logging
     from .models import AppCollection, AppDefinition, AppResponse, Architecture, HealthResponse, Release, ReleaseCollection
     from .persistence import PersistentMetadataStore
@@ -40,6 +47,13 @@ else:
     from lenovo.media import BROWSER_USER_AGENT
     from lenovo.models import StoreSourceInfo, StoreSourcesResponse
     from lenovo.routes import create_lenovo_router
+    from soft360 import (
+        SOURCE_DESCRIPTION as SOFT360_SOURCE_DESCRIPTION,
+        SOURCE_NAME as SOFT360_SOURCE_NAME,
+        create_soft360_store_service,
+    )
+    from soft360.media import BROWSER_USER_AGENT as SOFT360_BROWSER_USER_AGENT
+    from soft360.routes import create_soft360_router
     from logging_config import configure_logging, current_log_path, get_log_files, shutdown_logging
     from models import AppCollection, AppDefinition, AppResponse, Architecture, HealthResponse, Release, ReleaseCollection
     from persistence import PersistentMetadataStore
@@ -66,6 +80,8 @@ BUILTIN_SOURCE_DESCRIPTION = "项目内置的精选软件目录。"
 BUILTIN_SOURCE_DISABLED_DETAIL = "内置精选源未启用。"
 # 联想源的专用 HTTP 客户端连接超时（设计文档 3.6 固定 5 秒，总超时用 lenovo.timeout_seconds）。
 LENOVO_CONNECT_TIMEOUT_SECONDS = 5.0
+# 360 源的专用 HTTP 客户端连接超时（总超时用 soft360.timeout_seconds）。
+SOFT360_CONNECT_TIMEOUT_SECONDS = 5.0
 
 
 def _public_settings(settings: BackendSettings) -> dict:
@@ -157,6 +173,7 @@ def create_app(
     settings: BackendSettings | None = None,
     extra_directory: Path | None = None,
     lenovo_service: Any | None = None,
+    soft360_service: Any | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(api: FastAPI):
@@ -170,13 +187,14 @@ def create_app(
         except Exception:  # noqa: BLE001 - 日志初始化不能影响服务启动
             logger.warning("初始化文件日志失败，继续使用默认日志输出。", exc_info=True)
         logger.info(
-            "后端启动：版本 %s，默认监听 %s:%d（uvicorn 启动参数可覆盖），缓存目录 %s，%s，联想应用商店源%s，日志 %s。",
+            "后端启动：版本 %s，默认监听 %s:%d（uvicorn 启动参数可覆盖），缓存目录 %s，%s，联想应用商店源%s，360 软件源%s，日志 %s。",
             APP_VERSION,
             DEFAULT_HOST,
             DEFAULT_PORT,
             configured.cache.directory,
             _builtin_source_log_summary(configured),
             "已启用" if configured.lenovo.enabled else "未启用",
+            "已启用" if configured.soft360.enabled else "未启用",
             _logging_target(configured),
         )
         # Catalog and resource references are validated before accepting requests.
@@ -245,6 +263,53 @@ def create_app(
                             await start_refresher()
                         except Exception:  # noqa: BLE001 - 定时刷新启动失败不阻止启动
                             logger.warning("联想目录定时刷新线程启动失败。", exc_info=True)
+            # 360 软件源：只在 soft360.enabled 时创建服务。启动阶段只预加载本地
+            # soft360/catalog.json（不联网）并启动每 1800 秒的目录刷新；请求路径只读内存/
+            # 磁盘快照，任何 GET 参数都不会触发抓取。
+            api.state.soft360 = None
+            soft360_created = False
+            if configured.soft360.enabled:
+                if soft360_service is not None:
+                    # 测试注入的假服务：生命周期由调用方管理，shutdown 时不要关闭它。
+                    api.state.soft360 = soft360_service
+                else:
+                    soft360_timeout = httpx2.Timeout(
+                        configured.soft360.timeout_seconds,
+                        connect=SOFT360_CONNECT_TIMEOUT_SECONDS,
+                    )
+                    soft360_client = await stack.enter_async_context(httpx2.AsyncClient(
+                        timeout=soft360_timeout,
+                        follow_redirects=True,
+                        headers={"User-Agent": SOFT360_BROWSER_USER_AGENT},
+                    ))
+                    api.state.soft360 = create_soft360_store_service(
+                        soft360_client,
+                        configured.cache.directory,
+                        configured,
+                        cache_enabled=configured.cache.enabled,
+                        cache_persist=configured.cache.persist,
+                    )
+                    soft360_created = True
+                    # 启动失败（例如后续 provider/目录校验抛错）时 AsyncExitStack 也会关闭
+                    # 360 服务，停止后台刷新线程；正常关闭时 finally 已 shutdown，这里是幂等 no-op。
+                    stack.push_async_callback(api.state.soft360.shutdown)
+            if api.state.soft360 is not None:
+                preload_soft360 = getattr(api.state.soft360, "preload_catalog", None)
+                if callable(preload_soft360):
+                    try:
+                        await preload_soft360()
+                    except Exception:  # noqa: BLE001 - 预加载失败不阻止启动
+                        logger.warning("360 目录预加载失败，继续启动并在后台刷新后可用。", exc_info=True)
+                if soft360_created and configured.soft360.catalog_refresh_interval_seconds > 0:
+                    # 启动独立的 daemon 刷新线程（名称 soft360-catalog-refresher）：线程只计时，
+                    # 到点把刷新协程投递回主事件循环执行。首次刷新按快照年龄决定（陈旧快照
+                    # 立即补刷、新鲜快照等剩余时间、没有快照等满一个间隔），启动阶段不联网。
+                    start_soft360_refresher = getattr(api.state.soft360, "start_catalog_refresher", None)
+                    if callable(start_soft360_refresher):
+                        try:
+                            await start_soft360_refresher()
+                        except Exception:  # noqa: BLE001 - 定时刷新启动失败不阻止启动
+                            logger.warning("360 目录定时刷新线程启动失败。", exc_info=True)
             if not builtin_enabled:
                 # 内置源禁用：不创建任何内置 provider，也就不会请求 GitHub/官网。
                 providers = {}
@@ -355,6 +420,8 @@ def create_app(
                 await api.state.releases.shutdown()
                 if lenovo_created and api.state.lenovo is not None:
                     await api.state.lenovo.shutdown()
+                if soft360_created and api.state.soft360 is not None:
+                    await api.state.soft360.shutdown()
                 logger.info("后端已关闭：本次运行 %.2f 秒。", time.monotonic() - started_at)
 
     # /docs 使用仓库内自带的 Swagger UI 静态资源，避免依赖 cdn.jsdelivr.net（离线/国内服务器可用）。
@@ -419,17 +486,19 @@ def create_app(
 
     @router.get("/sources", response_model=StoreSourcesResponse, tags=["Sources"])
     async def list_sources(request: Request, response: Response) -> StoreSourcesResponse:
-        """软件源列表：联想应用商店（默认）与内置精选。
+        """软件源列表：联想应用商店（默认）、内置精选与 360 软件管家。
 
-        联想源的 ``app_count`` 只反映已缓存的数据，不会为了统计触发抓取；目录还没加载时
-        为 ``null``。内置精选源的 ``enabled`` 来自 ``builtin.enabled``，``app_count`` 是
+        联想源与 360 源的 ``app_count`` 只反映已缓存的数据，不会为了统计触发抓取；目录还没
+        加载时为 ``null``。内置精选源的 ``enabled`` 来自 ``builtin.enabled``，``app_count`` 是
         ``builtin.app_ids`` 白名单过滤后的数量（禁用时也照实返回，便于客户端展示）。
         """
 
         response.headers["Cache-Control"] = "no-store"
         configured_builtin = request.app.state.settings.builtin
         configured_lenovo = request.app.state.settings.lenovo
+        configured_soft360 = request.app.state.settings.soft360
         lenovo_service = getattr(request.app.state, "lenovo", None)
+        soft360_service = getattr(request.app.state, "soft360", None)
         items = [
             StoreSourceInfo(
                 id="lenovo",
@@ -449,6 +518,15 @@ def create_app(
                 is_default=False,
                 updated_at=None,
             ),
+            StoreSourceInfo(
+                id="soft360",
+                name=SOFT360_SOURCE_NAME,
+                description=SOFT360_SOURCE_DESCRIPTION,
+                enabled=configured_soft360.enabled,
+                app_count=soft360_service.cached_app_count() if soft360_service is not None else None,
+                is_default=False,
+                updated_at=soft360_service.cached_updated_at() if soft360_service is not None else None,
+            ),
         ]
         return StoreSourcesResponse(items=items, total=len(items))
 
@@ -465,6 +543,15 @@ def create_app(
                 lenovo_catalog = catalog_status()
             except Exception:  # noqa: BLE001 - 诊断接口不能因为状态读取失败而 500
                 logger.warning("读取联想目录状态失败，已跳过。", exc_info=True)
+        # 360 目录状态：同样只读内存/线程状态，不会触发抓取。
+        soft360_service = getattr(request.app.state, "soft360", None)
+        soft360_catalog = None
+        soft360_catalog_status = getattr(soft360_service, "catalog_status", None)
+        if callable(soft360_catalog_status):
+            try:
+                soft360_catalog = soft360_catalog_status()
+            except Exception:  # noqa: BLE001 - 诊断接口不能因为状态读取失败而 500
+                logger.warning("读取 360 目录状态失败，已跳过。", exc_info=True)
         return {
             **request.app.state.releases.cache_info(),
             "warmup": request.app.state.warmup.report(),
@@ -478,6 +565,16 @@ def create_app(
                     lenovo_service.cached_updated_at() if lenovo_service is not None else None
                 ),
                 "catalog": lenovo_catalog,
+            },
+            "soft360": {
+                "enabled": request.app.state.settings.soft360.enabled,
+                "cached_app_count": (
+                    soft360_service.cached_app_count() if soft360_service is not None else None
+                ),
+                "cached_updated_at": (
+                    soft360_service.cached_updated_at() if soft360_service is not None else None
+                ),
+                "catalog": soft360_catalog,
             },
             "logging": _logging_summary(request.app.state.settings),
             "settings": _public_settings(request.app.state.settings),
@@ -500,11 +597,23 @@ def create_app(
                 lenovo_section = {"cleared": False}
             else:
                 lenovo_section = {"cleared": True, **lenovo_results}
+        # 360 源的清理同样是附加段：失败或未启用不能影响前面的清理结果。
+        soft360_service = getattr(request.app.state, "soft360", None)
+        soft360_section: dict | None = None
+        if soft360_service is not None:
+            try:
+                soft360_results = await soft360_service.clear_caches()
+            except Exception:
+                logger.warning("清理 360 软件源缓存失败，已跳过。", exc_info=True)
+                soft360_section = {"cleared": False}
+            else:
+                soft360_section = {"cleared": True, **soft360_results}
         return {
             "cleared": cleared,
             "persistent_cleared": info["persistent"]["last_cleared"],
             **info,
             "lenovo": lenovo_section,
+            "soft360": soft360_section,
             "settings": _public_settings(request.app.state.settings),
         }
 
@@ -655,6 +764,8 @@ def create_app(
     api.include_router(router)
     # 联想应用商店源自带 /api/v1/store/lenovo 前缀，路由从 request.app.state.lenovo 取服务。
     api.include_router(create_lenovo_router())
+    # 360 软件源自带 /api/v1/store/360 前缀，路由从 request.app.state.soft360 取服务。
+    api.include_router(create_soft360_router())
     api.mount("/icon", CachedIconStaticFiles(directory=str(icon_directory), check_dir=False), name="legacy_icons")
 
     swagger_assets = Path(__file__).resolve().parent / "static" / "swagger"

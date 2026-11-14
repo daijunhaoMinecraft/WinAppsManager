@@ -455,3 +455,33 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
 4. **手动刷新与客户端**：客户端已**移除刷新按钮与手动刷新链路**，目录完全由后端线程更新；服务端保留 `POST /api/v1/store/lenovo/refresh`（同步刷新）供运维/调试使用；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记。
 5. **诊断**：`GET /api/v1/cache` 的 `lenovo.catalog` 暴露 apps/fetched_at/age_seconds/refresh_interval_seconds/refresher_running/next_refresh_at/last_error/refreshes 等只读字段；后端日志记录预加载、定时刷新启动与每轮结果。
 6. **测试隔离**：`clear()` 在 `cache.persist=false` 时不再删除磁盘快照，避免既有测试误删开发机真实 `Backend/.cache/lenovo/catalog.json`。
+
+## 8. 增量变更（2026-11）：360 软件管家源
+
+用户要求新增 360 软件源；用浏览器 DevTools MCP 分析 360 应用中心
+（<https://cdn.soft.360.cn/view/home.html#/app/cate>）后确认其目录/详情接口为**明文 JSON、无需 token/签名**，
+最终实现为 `Backend/soft360/` + 客户端 `AppSourcePreference.Soft360`。
+
+1. **目录**：`GET https://cdn-mgr.soft.360.cn/main/cdn_client/v1/soft/list?cate_id={id}&page_size=100&src=web_client&machine=&page={n}`，
+   `page_size` 最大 100，空数组结束；24 个分类 id 通过点击页面分类按钮抓取请求得到。
+2. **规模**：360 全量约 43,731 款，客户端全量加载不可行；默认每分类抓 3 页（100/页），
+   24 分类 ×3 页 = 7200 条原始记录，按 `soft_id` 去重后 **5940 款**（与联想 5111 款同量级），
+   一轮抓取实测约 7–8 秒（并发 4）。`soft360.catalog_pages_per_category`（1–20）可调整。
+3. **详情**：`GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo?scene=1&machine=&soft_id={ids}`，
+   单次最多约 51 个 id；字段含 version、corp、desc、snapshot、logo、baoku_cate、edition_info.default_edition
+   （os.bit/os.ver、down.default.name/size/md5/p2p）。
+4. **下载**：从 `p2p` 的 `pdown://...|https://...|||https://...` 字符串与 `multi_urls` 中正则提取候选 URL，
+   优先 https，扩展名限 `.exe/.msi/.msix/.appx`，文件名清洗；md5 不写入 `sha256`；详情/下载 URL 不缓存。
+5. **图片**：logo/snapshot 在 `*.qhimg.com`/`*.mediav.com`，后端代理缓存（ETag/304，30 天、256MB 上限），
+   http 地址规范化为 https；客户端图标直连 CDN 白名单（qhimg/mediav/qhres2/qhres），失败回退后端。
+6. **搜索**：页面搜索走 `enc_client/v2/search/*` 签名接口，本项目**不逆向**；`/api/v1/store/360/search`
+   只对已缓存目录做名称/描述/分类匹配，因此只覆盖热门子集。
+7. **刷新**：`catalog.json`（内存/磁盘）随服务启动预加载；独立线程 `soft360-catalog-refresher`
+   默认每 1800 秒抓取并原子写盘，失败保留旧快照；无快照冷启动等待一个间隔（不联网），
+   `POST /api/v1/store/360/refresh` 可手动同步刷新。GET 只读缓存，任何查询参数都不会触发抓取。
+8. **客户端**：`AppSourcePreference` 追加 `Soft360`（保持 Lenovo=0/BuiltIn=1 兼容旧设置）；
+   目录/详情/下载/图标/截图复用既有商店数据流；设置页从 `/sources` 映射 `soft360`；缓存按源隔离。
+9. **接口**：`GET /api/v1/store/360/{categories,apps,apps/{soft_id},apps/{soft_id}/download,apps/{soft_id}/icon,apps/{soft_id}/screenshots/{index},search}`，
+   `POST /refresh`；`/sources` 第三项、`/cache` 的 `soft360` 段、`DELETE /cache` 清理同上。
+10. **限制**：目录为热门子集而非全量；无公开搜索 API；`os.ver` 编码按 1..8 推测映射（低于 7 按 7 处理）；
+    部分条目 corp 为空、无 SHA256。详见 `docs/soft360-store-api.md`。

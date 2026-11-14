@@ -485,7 +485,10 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
 
         ScreenshotCard.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         ScreenshotHintText.Text = items.Count == 0
-            ? string.Empty : "点击缩略图打开预览；视频条目可点击播放。";
+            ? string.Empty
+            : (items.Any(item => item.IsVideo)
+                ? "点击缩略图打开预览；视频条目可点击播放。"
+                : "点击缩略图打开预览。");
     }
 
     private async Task LoadScreenshotImageAsync(ScreenshotViewItem item, CancellationToken ct)

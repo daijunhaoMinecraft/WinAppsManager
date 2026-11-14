@@ -24,6 +24,7 @@ public sealed class ClientCacheStore
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
         // 联想 CDN 对缺少/异常 User-Agent 的请求返回 403；固定客户端标识（实测 WinAppsManager/1.0 可用）。
+        // 360 图片 CDN（qhimg.com / mediav.com）对 UA 不敏感，同一个客户端也用于它。
         client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "WinAppsManager/1.0");
         return client;
     }
@@ -35,6 +36,15 @@ public sealed class ClientCacheStore
 
     /// <summary>WPF 原生可解码的图标格式；联想商店的 logo 实际出现 png/jpg/gif/ico/bmp。</summary>
     private static readonly string[] ImageExtensions = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp"];
+
+    /// <summary>360 图片 CDN 域名白名单（logo/icon 直连用，匹配本域或任意子域）。</summary>
+    private static readonly string[] Soft360CdnDomains =
+    [
+        "qhimg.com",
+        "mediav.com",
+        "qhres2.com",
+        "qhres.com"
+    ];
 
     private static readonly Regex ManagedFile = new(
         "^[a-f0-9]{64}(?:\\.(?:json|png|ico|jpg|jpeg|gif|bmp)|\\.meta\\.json|\\.[a-f0-9]{32}\\.tmp)$", RegexOptions.CultureInvariant);
@@ -649,7 +659,16 @@ public sealed class ClientCacheStore
             return true;
         }
 
-        // 内置源图标与联想源的 icon_proxy_url 仍由后端提供，只允许后端自身地址下的已知图标路径。
+        // 360 软件管家目录的 icon_url（兼容旧契约的 logo_url）同样是 360 图片 CDN 的绝对地址
+        // （qhimg.com / mediav.com / qhres2.com 等），客户端直连取图并本地缓存；
+        // 失败时回退后端 icon_proxy_url 代理（下面按后端路径放行）。
+        if (IsSoft360CdnHost(parsed.Host))
+        {
+            uri = parsed;
+            return true;
+        }
+
+        // 内置源图标与商店源的 icon_proxy_url 仍由后端提供，只允许后端自身地址下的已知图标路径。
         if (parsed.Scheme != _backend.Scheme || parsed.Host != _backend.Host || parsed.Port != _backend.Port)
         {
             return false;
@@ -663,7 +682,7 @@ public sealed class ClientCacheStore
             allowed = true;
         }
 
-        // 联想商店的截图/封面仍由后端代理；图标代理路径是 icon_url 直连失败时的兜底。
+        // 联想/360 商店的截图、封面与图标兜底仍由后端代理；图标代理路径是 CDN 直连失败时的兜底。
         if (!allowed && parsed.AbsolutePath.StartsWith(root + "/api/v1/store/", StringComparison.Ordinal))
         {
             allowed = parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal)
@@ -683,6 +702,21 @@ public sealed class ClientCacheStore
         || host.Equals("pc1.gtimg.com", StringComparison.OrdinalIgnoreCase)
         || host.EndsWith(".lenovomm.cn", StringComparison.OrdinalIgnoreCase)
         || host.EndsWith(".lenovo.com.cn", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>360 软件管家图标 CDN 的主机白名单（qhimg.com / mediav.com / qhres2.com 等子域）。</summary>
+    private static bool IsSoft360CdnHost(string host)
+    {
+        foreach (string domain in Soft360CdnDomains)
+        {
+            if (host.Equals(domain, StringComparison.OrdinalIgnoreCase)
+                || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     private static string? ImageExtension(ReadOnlySpan<byte> bytes)
     {

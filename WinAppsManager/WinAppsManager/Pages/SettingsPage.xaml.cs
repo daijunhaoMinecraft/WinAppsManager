@@ -201,10 +201,12 @@ public partial class SettingsPage : Page
             ? $"已加载 {AppCatalogService.Apps.Count} 款软件" : "目录尚未加载";
     }
 
-    private static string SourceIdOf(AppSourcePreference source) =>
-        source == AppSourcePreference.BuiltIn
-            ? StoreCatalogMapper.BuiltinSourceId
-            : StoreCatalogMapper.LenovoSourceId;
+    private static string SourceIdOf(AppSourcePreference source) => source switch
+    {
+        AppSourcePreference.BuiltIn => StoreCatalogMapper.BuiltinSourceId,
+        AppSourcePreference.Soft360 => Soft360CatalogMapper.SourceId,
+        _ => StoreCatalogMapper.LenovoSourceId
+    };
 
     private static bool TryMapSourceId(string? id, out AppSourcePreference source)
     {
@@ -218,6 +220,12 @@ public partial class SettingsPage : Page
         if (string.Equals(id, StoreCatalogMapper.BuiltinSourceId, StringComparison.OrdinalIgnoreCase))
         {
             source = AppSourcePreference.BuiltIn;
+            return true;
+        }
+
+        if (string.Equals(id, Soft360CatalogMapper.SourceId, StringComparison.OrdinalIgnoreCase))
+        {
+            source = AppSourcePreference.Soft360;
             return true;
         }
 

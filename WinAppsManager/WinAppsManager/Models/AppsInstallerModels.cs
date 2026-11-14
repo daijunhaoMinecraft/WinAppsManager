@@ -38,7 +38,7 @@ public class AppItem : INotifyPropertyChanged
     public string DownloadPageUrl { get; set; } = string.Empty;
     public string? IconUrl { get; set; }
 
-    /// <summary>图标兜底地址（联想源的后端代理路径）；直连 <see cref="IconUrl"/> 失败时使用。</summary>
+    /// <summary>图标兜底地址（联想应用商店 / 360 软件管家的后端代理路径）；直连 <see cref="IconUrl"/> 失败时使用。</summary>
     public string? IconFallbackUrl { get; set; }
 
     public string IconText { get; set; } = string.Empty;
@@ -50,18 +50,18 @@ public class AppItem : INotifyPropertyChanged
     public int SortOrder { get; set; }
     public AppRelease? LatestRelease { get; set; }
 
-    // ---- 联想应用商店（lenovo）源补充字段：全部可选，内置精选源保持空值/默认值，不影响旧缓存与旧接口。 ----
+    // ---- 商店源（联想应用商店 lenovo / 360 软件管家 soft360）补充字段：全部可选，内置精选源保持空值/默认值，不影响旧缓存与旧接口。 ----
 
-    /// <summary>软件源标识：<c>lenovo</c> 或 <c>builtin</c>；内置精选旧缓存缺省为空。</summary>
+    /// <summary>软件源标识：<c>lenovo</c>、<c>builtin</c> 或 <c>soft360</c>；内置精选旧缓存缺省为空。</summary>
     public string? SourceId { get; set; }
 
-    /// <summary>源内原始应用 ID（联想的 <c>soft_id</c>，区分大小写），用于详情/下载/图标请求。</summary>
+    /// <summary>源内原始应用 ID（联想的 <c>soft_id</c>、360 的 <c>soft_id</c>，区分大小写），用于详情/下载/图标请求。</summary>
     public string? SourceAppId { get; set; }
 
-    /// <summary>源显示名，例如“联想应用商店”。</summary>
+    /// <summary>源显示名，例如“联想应用商店”“360软件管家”。</summary>
     public string? SourceName { get; set; }
 
-    /// <summary>安装包大小（字节）。联想的 <c>installFileSize</c> 解析值，仅用于展示。</summary>
+    /// <summary>安装包大小（字节）。联想的 <c>installFileSize</c> / 360 的 <c>soft_size</c> 解析值，仅用于展示。</summary>
     public long? SizeBytes { get; set; }
 
     /// <summary>下载量文案，例如“1.01亿次”。</summary>
@@ -85,14 +85,14 @@ public class AppItem : INotifyPropertyChanged
     /// <summary>截图/视频缩略图列表，内置精选源为空。</summary>
     public IReadOnlyList<AppScreenshot> Screenshots { get; set; } = Array.Empty<AppScreenshot>();
 
-    /// <summary>详情标签（联想 <c>appLabelList</c>），内置精选源为空。</summary>
+    /// <summary>详情标签（联想 <c>appLabelList</c> 等），内置精选源为空。</summary>
     public IReadOnlyList<string> Labels { get; set; } = Array.Empty<string>();
 
-    /// <summary>详情徽章（联想 <c>detailsTag</c>，带提示文案），内置精选源为空。</summary>
+    /// <summary>详情徽章（联想 <c>detailsTag</c> 等，带提示文案），内置精选源为空。</summary>
     public IReadOnlyList<AppDetailTag> DetailTags { get; set; } = Array.Empty<AppDetailTag>();
 }
 
-/// <summary>联想应用商店的一张截图：<see cref="Kind"/> 为 <c>image</c> 或 <c>video</c>（视频只提供缩略图）。</summary>
+/// <summary>商店源（联想应用商店 / 360 软件管家）的一张截图：<see cref="Kind"/> 为 <c>image</c> 或 <c>video</c>（视频只提供缩略图）。</summary>
 public sealed class AppScreenshot
 {
     public int Index { get; set; }
@@ -107,7 +107,7 @@ public sealed class AppScreenshot
     public bool IsVideo => string.Equals(Kind, "video", StringComparison.OrdinalIgnoreCase);
 }
 
-/// <summary>联想应用商店详情的详情徽章，例如“安全认证”及其说明。</summary>
+/// <summary>商店源详情的详情徽章，例如“安全认证”及其说明。</summary>
 public sealed class AppDetailTag
 {
     public string Name { get; set; } = string.Empty;

@@ -346,6 +346,65 @@ class LenovoConfig(_ConfigModel):
         return self
 
 
+class Soft360Config(_ConfigModel):
+    """360 软件源（``Backend/soft360``）的抓取与缓存参数。
+
+    ``enabled`` 为 ``false`` 时不创建 360 服务，``/api/v1/store/360/*`` 返回 503，
+    ``/api/v1/sources`` 把 360 源标记为未启用。其余字段的单位都是秒，只有
+    ``catalog_pages_per_category``、``catalog_concurrency`` 与 ``image_cache_max_bytes`` 是整数；
+    ``timeout_seconds`` 是单次 360 请求的总超时，连接超时固定为 5 秒。
+
+    360 目录总量约 43731 款，全部抓取不现实：``catalog_pages_per_category`` 控制每个分类抓
+    前几页（100 条/页，默认 3 页，1–20），默认得到约 7200 条原始记录、去重后约 5940 条，
+    属于**各分类热门条目子集**。``catalog_ttl_seconds`` 只决定响应里的 ``stale`` 标记；
+    ``catalog_refresh_interval_seconds`` 是后台定时刷新间隔（默认 1800 秒 = 每 30 分钟更新
+    一次 ``soft360/catalog.json``），``0`` 关闭定时刷新。请求路径只读内存/磁盘快照，绝不联网。
+
+    这些值由 ``Soft360StoreService`` 按鸭子类型读取，所以只影响 360 源，不影响其他软件源。
+    """
+
+    enabled: bool = True
+    catalog_pages_per_category: int = 3
+    catalog_ttl_seconds: float = 21600.0
+    catalog_max_stale_seconds: float = 604800.0
+    catalog_refresh_interval_seconds: float = 1800.0
+    details_ttl_seconds: float = 900.0
+    details_persistent_ttl_seconds: float = 21600.0
+    timeout_seconds: float = 20.0
+    catalog_concurrency: int = 4
+    image_cache_ttl_seconds: float = 2592000.0
+    image_cache_max_bytes: int = 268435456
+
+    @model_validator(mode="after")
+    def validate_limits(self) -> "Soft360Config":
+        for name, value in (
+            ("catalog_ttl_seconds", self.catalog_ttl_seconds),
+            ("catalog_max_stale_seconds", self.catalog_max_stale_seconds),
+            ("catalog_refresh_interval_seconds", self.catalog_refresh_interval_seconds),
+            ("details_ttl_seconds", self.details_ttl_seconds),
+            ("details_persistent_ttl_seconds", self.details_persistent_ttl_seconds),
+            ("image_cache_ttl_seconds", self.image_cache_ttl_seconds),
+        ):
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"soft360.{name} 必须是有限且非负的数字")
+        if (
+            type(self.timeout_seconds) not in (int, float)
+            or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0
+        ):
+            raise ValueError("soft360.timeout_seconds 必须是有限正数")
+        if (
+            type(self.catalog_pages_per_category) is not int
+            or not 1 <= self.catalog_pages_per_category <= 20
+        ):
+            raise ValueError("soft360.catalog_pages_per_category 必须是 1 到 20 之间的整数")
+        if type(self.catalog_concurrency) is not int or not 1 <= self.catalog_concurrency <= 16:
+            raise ValueError("soft360.catalog_concurrency 必须是 1 到 16 之间的整数")
+        if type(self.image_cache_max_bytes) is not int or self.image_cache_max_bytes <= 0:
+            raise ValueError("soft360.image_cache_max_bytes 必须是正整数")
+        return self
+
+
 class BuiltinConfig(_ConfigModel):
     """内置精选源（``data/apps.json`` + ``data/apps.d/*.json``）的启用范围。
 
@@ -374,6 +433,7 @@ class BackendSettings(_ConfigModel):
     refresh: RefreshConfig = Field(default_factory=RefreshConfig)
     github: GithubConfig = Field(default_factory=GithubConfig)
     lenovo: LenovoConfig = Field(default_factory=LenovoConfig)
+    soft360: Soft360Config = Field(default_factory=Soft360Config)
     builtin: BuiltinConfig = Field(default_factory=BuiltinConfig)
 
     @classmethod
@@ -473,6 +533,7 @@ def _apply_environment(raw: dict[str, Any], env: Mapping[str, str]) -> dict[str,
     refresh: dict[str, Any] = {}
     github: dict[str, Any] = {}
     lenovo: dict[str, Any] = {}
+    soft360: dict[str, Any] = {}
     builtin: dict[str, Any] = {}
 
     value = _environment_value(env, "CACHE_ENABLED")
@@ -579,6 +640,29 @@ def _apply_environment(raw: dict[str, Any], env: Mapping[str, str]) -> dict[str,
         if value is not None:
             lenovo[key] = parser(value, name)
 
+    value = _environment_value(env, "SOFT360_ENABLED")
+    if value is not None:
+        soft360["enabled"] = _parse_bool(value, "SOFT360_ENABLED")
+    for name, key, parser in (
+        ("SOFT360_CATALOG_PAGES_PER_CATEGORY", "catalog_pages_per_category", _parse_integer),
+        ("SOFT360_CATALOG_TTL_SECONDS", "catalog_ttl_seconds", _parse_number),
+        ("SOFT360_CATALOG_MAX_STALE_SECONDS", "catalog_max_stale_seconds", _parse_number),
+        (
+            "SOFT360_CATALOG_REFRESH_INTERVAL_SECONDS",
+            "catalog_refresh_interval_seconds",
+            _parse_number,
+        ),
+        ("SOFT360_DETAILS_TTL_SECONDS", "details_ttl_seconds", _parse_number),
+        ("SOFT360_DETAILS_PERSISTENT_TTL_SECONDS", "details_persistent_ttl_seconds", _parse_number),
+        ("SOFT360_TIMEOUT_SECONDS", "timeout_seconds", _parse_number),
+        ("SOFT360_CATALOG_CONCURRENCY", "catalog_concurrency", _parse_integer),
+        ("SOFT360_IMAGE_CACHE_TTL_SECONDS", "image_cache_ttl_seconds", _parse_number),
+        ("SOFT360_IMAGE_CACHE_MAX_BYTES", "image_cache_max_bytes", _parse_integer),
+    ):
+        value = _environment_value(env, name)
+        if value is not None:
+            soft360[key] = parser(value, name)
+
     value = _environment_value(env, "BUILTIN_ENABLED")
     if value is not None:
         builtin["enabled"] = _parse_bool(value, "BUILTIN_ENABLED")
@@ -596,6 +680,7 @@ def _apply_environment(raw: dict[str, Any], env: Mapping[str, str]) -> dict[str,
         ("refresh", refresh),
         ("github", github),
         ("lenovo", lenovo),
+        ("soft360", soft360),
         ("builtin", builtin),
     ):
         if not values:

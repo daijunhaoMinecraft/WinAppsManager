@@ -10,17 +10,19 @@ using WinAppsManager.Models;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// 软件目录客户端：同时支持“联想应用商店（lenovo，默认）”与“内置精选（builtin）”两个软件源。
+/// 软件目录客户端：同时支持“联想应用商店（lenovo，默认）”“内置精选（builtin）”与“360 软件管家（soft360）”三个软件源。
 /// <para>
 /// 内置源沿用原有 <c>/api/v1/apps</c> 接口、图标预热与离线缓存行为；联想源调用
-/// <c>/api/v1/store/lenovo/*</c>，目录约 5000 款，因此不预热全部图标，由列表行按需调用
-/// <see cref="EnsureIconAsync"/>。切换源用 <see cref="SwitchSourceAsync"/>，切换后目录缓存按源隔离。
+/// <c>/api/v1/store/lenovo/*</c>、360 源调用 <c>/api/v1/store/360/*</c>，目录都是 5000~6000 款，
+/// 因此不预热全部图标，由列表行按需调用 <see cref="EnsureIconAsync"/>。切换源用
+/// <see cref="SwitchSourceAsync"/>，切换后目录缓存按源隔离（缓存 key 含源标识）。
 /// </para>
 /// </summary>
 public static class AppCatalogService
 {
     private const string BuiltinSourceId = StoreCatalogMapper.BuiltinSourceId;
     private const string LenovoSourceId = StoreCatalogMapper.LenovoSourceId;
+    private const string Soft360SourceId = Soft360CatalogMapper.SourceId;
     private const int StoreSearchLimit = 30;
 
     /// <summary>当前后端服务地址（设置中可自定义，始终以 / 结尾）。</summary>
@@ -124,7 +126,7 @@ public static class AppCatalogService
         }
     }
 
-    /// <summary>当前软件源偏好（联想应用商店 / 内置精选），已持久化到设置。</summary>
+    /// <summary>当前软件源偏好（联想应用商店 / 内置精选 / 360 软件管家），已持久化到设置。</summary>
     public static AppSourcePreference CurrentSource
     {
         get
@@ -137,11 +139,24 @@ public static class AppCatalogService
     /// <summary>当前软件源是否为联想应用商店。</summary>
     public static bool IsLenovoSource => CurrentSource == AppSourcePreference.Lenovo;
 
+    /// <summary>当前软件源是否为 360 软件管家。</summary>
+    public static bool IsSoft360Source => CurrentSource == AppSourcePreference.Soft360;
+
+    /// <summary>
+    /// 当前软件源是否为“后端目录型”商店源（联想应用商店 / 360 软件管家）：
+    /// 目录全量拉取、不预热全部图标（列表行按需加载），且状态行可显示目录更新时间。
+    /// </summary>
+    public static bool IsStoreCatalogSource => IsLenovoSource || IsSoft360Source;
+
     /// <summary>当前软件源显示名，例如“联想应用商店”。</summary>
     public static string SourceDisplayName => GetSourceDisplayName(CurrentSource);
 
-    public static string GetSourceDisplayName(AppSourcePreference source) =>
-        source == AppSourcePreference.Lenovo ? StoreCatalogMapper.LenovoSourceName : StoreCatalogMapper.BuiltinSourceName;
+    public static string GetSourceDisplayName(AppSourcePreference source) => source switch
+    {
+        AppSourcePreference.Lenovo => StoreCatalogMapper.LenovoSourceName,
+        AppSourcePreference.Soft360 => Soft360CatalogMapper.SourceName,
+        _ => StoreCatalogMapper.BuiltinSourceName
+    };
 
     /// <summary>本地缓存根目录（图标/目录/商店图片都在其下）。</summary>
     public static string CacheDirectory
@@ -385,9 +400,19 @@ public static class AppCatalogService
         await CatalogGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var apps = _currentSource == AppSourcePreference.Lenovo
-                ? await GetLenovoAppsAsync(ct).ConfigureAwait(false)
-                : await GetBuiltinAppsAsync(ct).ConfigureAwait(false);
+            IReadOnlyList<AppItem> apps;
+            if (_currentSource == AppSourcePreference.Lenovo)
+            {
+                apps = await GetLenovoAppsAsync(ct).ConfigureAwait(false);
+            }
+            else if (_currentSource == AppSourcePreference.Soft360)
+            {
+                apps = await GetSoft360AppsAsync(ct).ConfigureAwait(false);
+            }
+            else
+            {
+                apps = await GetBuiltinAppsAsync(ct).ConfigureAwait(false);
+            }
             AppLogService.Info(
                 $"软件目录加载完成：源={sourceName}，{apps.Count} 款软件，缓存={CacheState.Source}，耗时 {stopwatch.ElapsedMilliseconds} ms。");
             return apps;
@@ -473,12 +498,18 @@ public static class AppCatalogService
         }
     }
 
-    private static async Task<IReadOnlyList<AppItem>> GetLenovoAppsAsync(CancellationToken ct)
+    /// <summary>
+    /// 后端目录型商店源（联想应用商店 / 360 软件管家）的通用目录加载流程：
+    /// 5 分钟内存缓存 → 磁盘缓存 → 普通 GET 拉取快照并落盘；失败时按 24 小时窗口回退内存/磁盘缓存。
+    /// 两种源都不预热全部图标（目录约 5000~6000 款），由列表行按需调用 <see cref="EnsureIconAsync"/>。
+    /// <paramref name="request"/> 负责发请求并把响应映射为 <see cref="AppItem"/>（内部校验 items/total/来源）。
+    /// </summary>
+    private static async Task<IReadOnlyList<AppItem>> GetStoreSourceAppsAsync(string sourceName, string staleWarning,
+        Func<CancellationToken, Task<StoreCatalogSnapshot>> request, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
         if (HasLoaded && IsFresh(_catalogUpdatedAt, now))
         {
-            // 联想目录约 5000 款：不预热图标，列表行按需调用 EnsureIconAsync。
             SetCacheState(_lastNetworkError is null ? CatalogCacheSource.Memory : CatalogCacheSource.Offline,
                 CatalogUpdatedAtUtc ?? _catalogUpdatedAt, Store.LastError, _lastNetworkError);
             return Apps;
@@ -493,39 +524,21 @@ public static class AppCatalogService
 
         try
         {
-            // 联想目录请求永远走普通 GET：后端只读本地 catalog.json，目录由后端定时线程每 5 分钟自动更新；
-            // 客户端已移除手动刷新入口，不再拼任何 refresh 查询参数。
-            var response = await GetAsync<StoreCatalogResponse>("store/lenovo/apps", ct, CatalogRequestTimeout).ConfigureAwait(false);
-            if (response.Items is null || response.Total is null || response.Total < response.Items.Count)
-            {
-                throw new JsonException("联想商店目录响应缺少有效的 items 或 total 字段。");
-            }
-
-            if (!string.IsNullOrWhiteSpace(response.Source)
-                && !string.Equals(response.Source, LenovoSourceId, StringComparison.Ordinal))
-            {
-                throw new JsonException("联想商店目录响应的来源与请求不一致。");
-            }
-
-            var normalized = MapStoreSummaries(response.Items, response.SourceName);
-            if (normalized.Length == 0 && response.Items.Count > 0)
-            {
-                throw new JsonException("联想商店目录响应中没有可用的软件条目。");
-            }
-
+            // 目录请求永远走普通 GET：后端只读本地快照、由后端定时线程自动更新；客户端已移除手动刷新入口，
+            // 不再拼任何 refresh 查询参数。
+            var snapshot = await request(ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
             _lastNetworkError = null;
             Details.Clear();
             DateTimeOffset fetchedAt = DateTimeOffset.UtcNow;
-            await PublishCatalogAsync(normalized, fetchedAt, CatalogCacheSource.Network, ct).ConfigureAwait(false);
-            // 联想目录同样落盘（key 含源标识），离线时仍可浏览；目录很大，写入耗时但只在目录更新时发生。
-            await Store.WriteCatalogAsync(normalized, fetchedAt, ct).ConfigureAwait(false);
-            // 记录服务端 catalog.json 的更新时间：普通请求可能直接拿到几分钟/几小时前的缓存，
+            await PublishCatalogAsync(snapshot.Items, fetchedAt, CatalogCacheSource.Network, ct).ConfigureAwait(false);
+            // 目录同样落盘（key 含源标识），离线时仍可浏览；目录很大，写入耗时但只在目录更新时发生。
+            await Store.WriteCatalogAsync(snapshot.Items, fetchedAt, ct).ConfigureAwait(false);
+            // 记录服务端快照的 updated_at：普通请求可能直接拿到几分钟/几小时前的缓存，
             // 不能把本地加载时间当成“目录更新于”。stale 仍然写入 CacheState.Warning（沿用现有提示）。
-            SetCatalogUpdatedAt(response.UpdatedAt);
-            bool stale = response.Stale;
+            SetCatalogUpdatedAt(snapshot.ServerUpdatedAt);
             SetCacheState(CatalogCacheSource.Network, CatalogUpdatedAtUtc ?? fetchedAt,
-                stale ? "联想应用商店目录当前为服务端缓存数据，可能不是最新。" : Store.LastError);
+                snapshot.Stale ? staleWarning : Store.LastError);
             return Apps;
         }
         catch (Exception error) when (IsMetadataFailure(error) && !ct.IsCancellationRequested)
@@ -534,19 +547,19 @@ public static class AppCatalogService
             if (HasLoaded && CanUseOffline(_catalogUpdatedAt, now))
             {
                 AppLogService.Warn(
-                    $"联想应用商店目录更新失败，正在使用内存缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
+                    $"{sourceName}目录更新失败，正在使用内存缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
                 SetCacheState(CatalogCacheSource.Offline, CatalogUpdatedAtUtc ?? _catalogUpdatedAt, Store.LastError, _lastNetworkError);
                 return Apps;
             }
             if (disk is not null)
             {
                 AppLogService.Warn(
-                    $"联想应用商店目录更新失败，已回退本地目录缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
+                    $"{sourceName}目录更新失败，已回退本地目录缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
                 await PublishCatalogAsync(disk.Items!, disk.UpdatedAtUtc, CatalogCacheSource.Offline, ct).ConfigureAwait(false);
                 return Apps;
             }
             AppLogService.Warn(
-                $"联想应用商店目录更新失败且没有可用缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
+                $"{sourceName}目录更新失败且没有可用缓存：{_lastNetworkError}（{error.GetType().Name}：{error.Message}）");
             Volatile.Write(ref _apps, Array.Empty<AppItem>());
             Volatile.Write(ref _hasLoaded, false);
             _catalogUpdatedAt = null;
@@ -555,6 +568,60 @@ public static class AppCatalogService
             CatalogChanged?.Invoke(null, EventArgs.Empty);
             throw;
         }
+    }
+
+    private static Task<IReadOnlyList<AppItem>> GetLenovoAppsAsync(CancellationToken ct) =>
+        GetStoreSourceAppsAsync(StoreCatalogMapper.LenovoSourceName,
+            "联想应用商店目录当前为服务端缓存数据，可能不是最新。", LoadLenovoCatalogSnapshotAsync, ct);
+
+    private static async Task<StoreCatalogSnapshot> LoadLenovoCatalogSnapshotAsync(CancellationToken ct)
+    {
+        var response = await GetAsync<StoreCatalogResponse>("store/lenovo/apps", ct, CatalogRequestTimeout).ConfigureAwait(false);
+        if (response.Items is null || response.Total is null || response.Total < response.Items.Count)
+        {
+            throw new JsonException("联想商店目录响应缺少有效的 items 或 total 字段。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Source)
+            && !string.Equals(response.Source, LenovoSourceId, StringComparison.Ordinal))
+        {
+            throw new JsonException("联想商店目录响应的来源与请求不一致。");
+        }
+
+        var normalized = MapStoreSummaries(response.Items, response.SourceName);
+        if (normalized.Length == 0 && response.Items.Count > 0)
+        {
+            throw new JsonException("联想商店目录响应中没有可用的软件条目。");
+        }
+
+        return new StoreCatalogSnapshot(normalized, response.UpdatedAt, response.Stale);
+    }
+
+    private static Task<IReadOnlyList<AppItem>> GetSoft360AppsAsync(CancellationToken ct) =>
+        GetStoreSourceAppsAsync(Soft360CatalogMapper.SourceName,
+            "360软件管家目录当前为服务端缓存数据，可能不是最新。", LoadSoft360CatalogSnapshotAsync, ct);
+
+    private static async Task<StoreCatalogSnapshot> LoadSoft360CatalogSnapshotAsync(CancellationToken ct)
+    {
+        var response = await GetAsync<Soft360CatalogResponse>("store/360/apps", ct, CatalogRequestTimeout).ConfigureAwait(false);
+        if (response.Items is null || response.Total is null || response.Total < response.Items.Count)
+        {
+            throw new JsonException("360软件管家目录响应缺少有效的 items 或 total 字段。");
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Source)
+            && !string.Equals(response.Source, Soft360SourceId, StringComparison.Ordinal))
+        {
+            throw new JsonException("360软件管家目录响应的来源与请求不一致。");
+        }
+
+        var normalized = MapSoft360Summaries(response.Items, response.SourceName);
+        if (normalized.Length == 0 && response.Items.Count > 0)
+        {
+            throw new JsonException("360软件管家目录响应中没有可用的软件条目。");
+        }
+
+        return new StoreCatalogSnapshot(normalized, response.UpdatedAt, response.Stale);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -568,9 +635,17 @@ public static class AppCatalogService
         await CatalogGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return _currentSource == AppSourcePreference.Lenovo
-                ? await GetLenovoAppAsync(id, forceRefresh, ct).ConfigureAwait(false)
-                : await GetBuiltinAppAsync(id, forceRefresh, ct).ConfigureAwait(false);
+            if (_currentSource == AppSourcePreference.Lenovo)
+            {
+                return await GetLenovoAppAsync(id, forceRefresh, ct).ConfigureAwait(false);
+            }
+
+            if (_currentSource == AppSourcePreference.Soft360)
+            {
+                return await GetSoft360AppAsync(id, forceRefresh, ct).ConfigureAwait(false);
+            }
+
+            return await GetBuiltinAppAsync(id, forceRefresh, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -711,6 +786,81 @@ public static class AppCatalogService
         }
     }
 
+    private static async Task<AppItem> GetSoft360AppAsync(string id, bool forceRefresh, CancellationToken ct)
+    {
+        var now = DateTimeOffset.UtcNow;
+        // 只有真正拉取过的详情才算新鲜缓存；目录摘要没有版本/截图/介绍，不能当成详情。
+        (AppItem App, DateTimeOffset Updated)? cached = Details.TryGetValue(id, out var detail) ? detail : null;
+        var known = FindKnownApp(id);
+        if (!forceRefresh && cached is { } hit && IsFresh(hit.Updated, now))
+        {
+            SetCacheState(_lastNetworkError is null ? CatalogCacheSource.Memory : CatalogCacheSource.Offline,
+                hit.Updated, Store.LastError, _lastNetworkError);
+            // 详情页的通用下载路径依赖 LatestRelease 非空，详情缓存里不保存临时下载地址，这里现解析一次。
+            return await AttachSoft360PresentationReleaseAsync(hit.App, ct).ConfigureAwait(false);
+        }
+
+        string? softId = ResolveSoftId(id, cached?.App ?? known);
+        if (string.IsNullOrWhiteSpace(softId))
+        {
+            throw new InvalidDataException("未找到该应用对应的360软件管家条目，请稍后重新加载软件列表后重试。");
+        }
+
+        try
+        {
+            var details = await GetAsync<Soft360AppDetails>(
+                $"store/360/apps/{Uri.EscapeDataString(softId)}", ct, StoreRequestTimeout).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(details.Id) && !string.Equals(details.Id, id, StringComparison.Ordinal))
+            {
+                throw new JsonException("360软件管家详情响应与请求的应用 ID 不一致。");
+            }
+            if (!string.IsNullOrWhiteSpace(details.SoftId)
+                && !string.Equals(details.SoftId, softId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new JsonException("360软件管家详情响应与请求的应用 soft_id 不一致。");
+            }
+            if (string.IsNullOrWhiteSpace(details.Id)) details.Id = id;
+            if (string.IsNullOrWhiteSpace(details.SoftId)) details.SoftId = softId;
+
+            var app = NormalizeApp(details.ToAppItem());
+            app.DisplayIconSource = (cached?.App ?? known)?.DisplayIconSource;
+            ct.ThrowIfCancellationRequested();
+            _lastNetworkError = null;
+            Details[id] = (app, DateTimeOffset.UtcNow);
+            RegisterKnownApp(app);
+            // 单款详情只加载这一张图标，避免 360 目录整体预热。
+            await EnsureIconAsync(app, ct).ConfigureAwait(false);
+            if (Apps.FirstOrDefault(item => item.Id == id) is not null)
+            {
+                Volatile.Write(ref _apps, Array.AsReadOnly(Apps.Select(item => item.Id == id ? app : item).ToArray()));
+                if (_catalogUpdatedAt.HasValue) await Store.WriteCatalogAsync(Apps, _catalogUpdatedAt.Value, ct).ConfigureAwait(false);
+                CatalogChanged?.Invoke(null, EventArgs.Empty);
+            }
+
+            // 详情页没有 360 源分支：它的“开始下载”按钮在 LatestRelease 非空时走通用下载路径。
+            // 返回给页面的副本附带一次实时解析的下载地址；详情缓存与目录保持无地址状态，
+            // 临时下载地址绝不写入内存目录或磁盘缓存。解析失败只影响详情页直链展示，
+            // 下载中心开始下载时会重新解析。
+            SetCacheState(CatalogCacheSource.Network, Details[id].Updated, Store.LastError);
+            return await AttachSoft360PresentationReleaseAsync(app, ct).ConfigureAwait(false);
+        }
+        catch (Exception error) when (IsMetadataFailure(error) && !ct.IsCancellationRequested
+            && (error is not HttpRequestException request || request.StatusCode is null || (int)request.StatusCode >= 500))
+        {
+            _lastNetworkError = FriendlyMetadataError(error);
+            // 详情拉取失败时退回已缓存的详情或目录 summary，界面至少还能显示基本信息。
+            var fallback = cached?.App ?? known;
+            var fallbackUpdated = cached?.Updated ?? _catalogUpdatedAt;
+            if (fallback is not null && CanUseOffline(fallbackUpdated, now))
+            {
+                SetCacheState(CatalogCacheSource.Offline, fallbackUpdated, Store.LastError, _lastNetworkError);
+                return fallback;
+            }
+            SetCacheState(CacheState.Source, CacheState.UpdatedAtUtc, Store.LastError, _lastNetworkError);
+            throw;
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // 缓存清理
     // ---------------------------------------------------------------------------------------------
@@ -748,7 +898,7 @@ public static class AppCatalogService
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeout.CancelAfter(TimeSpan.FromSeconds(12));
-                // 后端 DELETE /cache 会同时清理内置源版本缓存与联想源目录/详情/图片缓存（不会清 token）。
+                // 后端 DELETE /cache 会同时清理内置源版本缓存与联想/360 源目录、详情、图片缓存（不会清 token）。
                 using var response = await Client.DeleteAsync(BuildApiUri("cache"), timeout.Token).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
                 backendCleared = true;
@@ -777,8 +927,8 @@ public static class AppCatalogService
     }
 
     /// <summary>
-    /// 按需加载一款软件的图标（联想源列表行使用）：先查磁盘缓存，未命中再请求后端。
-    /// 内部并发上限 6；失败静默返回 <see langword="false"/>，UI 继续显示文字徽章。
+    /// 按需加载一款软件的图标（联想应用商店 / 360 软件管家的列表行使用）：先查磁盘缓存，未命中再直连 CDN，
+    /// 失败回退后端代理；内部并发上限 6，失败静默返回 <see langword="false"/>，UI 继续显示文字徽章。
     /// </summary>
     public static async Task<bool> EnsureIconAsync(AppItem app, CancellationToken ct = default)
     {
@@ -791,11 +941,11 @@ public static class AppCatalogService
         try
         {
             if (!string.IsNullOrWhiteSpace(app.DisplayIconSource)) return true;
-            // 联想源的 icon_url 是联想 CDN 绝对地址（直连），后端代理 icon_proxy_url 作为兜底；
+            // 联想 / 360 商店源的 icon_url/logo_url 是 CDN 绝对地址（直连），后端代理路径（icon_proxy_url）作为兜底；
             // 内置源只有后端 /icon 地址，EnumerateIconUrls 只会返回一项。
             foreach (string candidate in EnumerateIconUrls(app))
             {
-                // 联想 CDN 单条失败（404/超时/坏图）不能阻止后端代理兜底，因此逐个候选单独捕获。
+                // CDN 单条失败（404/超时/坏图）不能阻止后端代理兜底，因此逐个候选单独捕获。
                 try
                 {
                     var cached = await Store.FindIconAsync(candidate, ct).ConfigureAwait(false);
@@ -875,7 +1025,10 @@ public static class AppCatalogService
     // 下载地址 / 在线搜索
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>按软件 ID 获取最新版下载地址。联想源需要能根据 ID 找到 <c>soft_id</c>（目录/详情/在线搜索结果）。</summary>
+    /// <summary>
+    /// 按软件 ID 获取最新版下载地址。联想应用商店与 360 软件管家需要能根据 ID 找到源内 soft_id
+    /// （目录/详情/在线搜索结果），内置精选源直接请求版本接口。
+    /// </summary>
     public static async Task<AppRelease> GetLatestReleaseAsync(string appId, CancellationToken ct = default)
     {
         EnsureInitialized();
@@ -885,6 +1038,14 @@ public static class AppCatalogService
             var known = FindKnownApp(appId)
                         ?? throw new InvalidDataException("未找到该应用对应的联想商店条目，请稍后重新加载软件列表后重试。");
             return await GetLenovoLatestReleaseAsync(known, ct).ConfigureAwait(false);
+        }
+
+        if (_currentSource == AppSourcePreference.Soft360)
+        {
+            BclCompat.ThrowIfNullOrWhiteSpace(appId);
+            var known = FindKnownApp(appId)
+                        ?? throw new InvalidDataException("未找到该应用对应的360软件管家条目，请稍后重新加载软件列表后重试。");
+            return await GetSoft360LatestReleaseAsync(known, ct).ConfigureAwait(false);
         }
 
         var release = await GetAsync<AppRelease>(
@@ -898,7 +1059,7 @@ public static class AppCatalogService
     }
 
     /// <summary>
-    /// 按软件对象获取最新版下载地址。联想源直接用已知应用表里的 <c>soft_id</c> 请求后端实时解析，
+    /// 按软件对象获取最新版下载地址。联想应用商店 / 360 软件管家直接用已知应用表里的 <c>soft_id</c> 请求后端实时解析，
     /// 因此列表/详情里的 <see cref="AppItem.LatestRelease"/> 为空也能开始下载。
     /// </summary>
     public static async Task<AppRelease> GetLatestReleaseAsync(AppItem app, CancellationToken ct = default)
@@ -906,13 +1067,24 @@ public static class AppCatalogService
         ArgumentNullException.ThrowIfNull(app);
         EnsureInitialized();
         bool lenovoSource = _currentSource == AppSourcePreference.Lenovo;
+        bool soft360Source = _currentSource == AppSourcePreference.Soft360;
         string sourceName = GetSourceDisplayName(_currentSource);
         string appName = string.IsNullOrWhiteSpace(app.Name) ? app.Id : app.Name;
         try
         {
-            AppRelease release = lenovoSource
-                ? await GetLenovoLatestReleaseAsync(app, ct).ConfigureAwait(false)
-                : await GetLatestReleaseAsync(app.Id, ct).ConfigureAwait(false);
+            AppRelease release;
+            if (lenovoSource)
+            {
+                release = await GetLenovoLatestReleaseAsync(app, ct).ConfigureAwait(false);
+            }
+            else if (soft360Source)
+            {
+                release = await GetSoft360LatestReleaseAsync(app, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                release = await GetLatestReleaseAsync(app.Id, ct).ConfigureAwait(false);
+            }
             AppLogService.Info(
                 $"获取最新版本完成：{appName}（{app.Id}），版本={release.Version}，源={sourceName}。");
             return release;
@@ -963,13 +1135,100 @@ public static class AppCatalogService
         return release;
     }
 
-    /// <summary>按版本 ID 获取下载地址。联想源只提供最新版本，因此不支持该操作。</summary>
+    private static async Task<AppRelease> GetSoft360LatestReleaseAsync(AppItem app, CancellationToken ct)
+    {
+        BclCompat.ThrowIfNullOrWhiteSpace(app.Id);
+        string? softId = ResolveSoftId(app.Id, app);
+        if (string.IsNullOrWhiteSpace(softId))
+        {
+            throw new InvalidDataException("未找到该应用对应的360软件管家条目，无法获取下载地址；请稍后重新加载软件列表后重试。");
+        }
+
+        // 360 下载地址是后端实时解析的（不缓存、no-store），这里只带 architecture 查询参数。
+        var path = $"store/360/apps/{Uri.EscapeDataString(softId)}/download" +
+                   $"?architecture={Uri.EscapeDataString(RuntimeArchitecture)}";
+        var release = await GetAsync<AppRelease>(path, ct, StoreRequestTimeout).ConfigureAwait(false);
+        release = NormalizeRelease(release);
+        if (!string.Equals(release.Platform, "windows", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new JsonException("360软件管家返回的安装包平台不是 Windows。");
+        }
+
+        // 360 的部分软件只提供 32 位安装包：x64 Windows 允许下载 x86 包（WOW64），其余按不兼容处理。
+        if (!IsReleaseArchitectureCompatible(release.Architecture))
+        {
+            throw new JsonException($"安装包架构（{release.Architecture}）与当前 Windows 系统（{RuntimeArchitecture}）不一致。");
+        }
+
+        // 360 的 size 来自安装包大小（down.size / soft_size），可以作为下载器期望大小保留。
+        return release;
+    }
+
+    /// <summary>详情加载时顺带解析下载地址：失败只记日志并返回 <see langword="null"/>，不影响详情展示。</summary>
+    private static async Task<AppRelease?> TryGetSoft360LatestReleaseAsync(AppItem app, CancellationToken ct)
+    {
+        try
+        {
+            return await GetSoft360LatestReleaseAsync(app, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception error) when (IsMetadataFailure(error))
+        {
+            AppLogService.Verbose(
+                $"360软件管家下载地址暂时无法解析：{app.Name}（{app.Id}），{error.GetType().Name}：{error.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 返回带 <see cref="AppItem.LatestRelease"/> 的详情副本，供详情页复用通用下载流程。
+    /// 只在副本上挂临时下载地址，避免它进入目录集合、详情缓存或磁盘缓存；解析失败时返回原对象。
+    /// </summary>
+    private static async Task<AppItem> AttachSoft360PresentationReleaseAsync(AppItem app, CancellationToken ct)
+    {
+        AppRelease? release = await TryGetSoft360LatestReleaseAsync(app, ct).ConfigureAwait(false);
+        if (release is null)
+        {
+            return app;
+        }
+
+        AppItem? presented;
+        try
+        {
+            presented = JsonSerializer.Deserialize<AppItem>(
+                JsonSerializer.Serialize(app, JsonOptions), JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return app;
+        }
+
+        if (presented is null)
+        {
+            return app;
+        }
+
+        // DisplayIconSource 带 [JsonIgnore]（它不是可持久化字段），复制时手动带过去。
+        presented.DisplayIconSource = app.DisplayIconSource;
+        presented.LatestRelease = release;
+        return presented;
+    }
+
+    /// <summary>按版本 ID 获取下载地址。联想应用商店 / 360 软件管家只提供最新版本，因此不支持该操作。</summary>
     public static async Task<AppRelease> GetReleaseAsync(string appId, string releaseId, CancellationToken ct = default)
     {
         EnsureInitialized();
         if (_currentSource == AppSourcePreference.Lenovo)
         {
             throw new NotSupportedException("联想应用商店源只提供最新版本下载地址，请使用最新版本下载。");
+        }
+
+        if (_currentSource == AppSourcePreference.Soft360)
+        {
+            throw new NotSupportedException("360软件管家源只提供最新版本下载地址，请使用最新版本下载。");
         }
 
         var release = await GetAsync<AppRelease>(
@@ -985,7 +1244,8 @@ public static class AppCatalogService
     /// <summary>
     /// 联想商店在线搜索（目录之外的补充结果）。返回应用摘要并登记“已知应用表”，
     /// 后续详情/下载仍能按 <see cref="AppItem.Id"/> 找到 <c>soft_id</c>。
-    /// 内置精选源没有在线搜索，返回空列表。
+    /// 只有联想应用商店提供在线搜索入口：内置精选源没有该能力，360 软件管家的目录已全量缓存、
+    /// 由列表页本地筛选（在线搜索按钮仍只对联想源显示），两者都返回空列表。
     /// </summary>
     public static async Task<IReadOnlyList<AppItem>> SearchStoreAsync(string query, CancellationToken ct = default)
     {
@@ -1044,8 +1304,20 @@ public static class AppCatalogService
     /// <summary>把 <c>api/v1/</c> 相对路径拼成当前服务端的绝对地址。</summary>
     private static Uri BuildApiUri(string path) => new(BackendUri, "api/v1/" + path.TrimStart('/'));
 
+    /// <summary>
+    /// 按当前软件源重建本地缓存：目录缓存 key 含源标识（lenovo / soft360 / builtin），
+    /// 同一个后端在三个源之间切换时不会串用对方的目录缓存；图标按 URL 哈希共用同一目录。
+    /// </summary>
     private static ClientCacheStore CreateStore(AppSourcePreference source) =>
-        new(CacheRootPath, BackendBaseUrl, RuntimeArchitecture, source == AppSourcePreference.Lenovo ? LenovoSourceId : BuiltinSourceId);
+        new(CacheRootPath, BackendBaseUrl, RuntimeArchitecture, SourceIdOf(source));
+
+    /// <summary>软件源标识（与后端 <c>/api/v1/sources</c> 的 id 一致），用于隔离目录缓存。</summary>
+    private static string SourceIdOf(AppSourcePreference source) => source switch
+    {
+        AppSourcePreference.Lenovo => LenovoSourceId,
+        AppSourcePreference.Soft360 => Soft360SourceId,
+        _ => BuiltinSourceId
+    };
 
     private static ClientCacheStore Store
     {
@@ -1100,6 +1372,34 @@ public static class AppCatalogService
         return result.ToArray();
     }
 
+    private static AppItem[] MapSoft360Summaries(IEnumerable<Soft360AppSummary> items, string? sourceName)
+    {
+        string resolvedSourceName = string.IsNullOrWhiteSpace(sourceName)
+            ? Soft360CatalogMapper.SourceName : sourceName.Trim();
+        var result = new List<AppItem>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var summary in items)
+        {
+            AppItem app;
+            try
+            {
+                app = NormalizeApp(summary.ToAppItem());
+            }
+            catch (JsonException)
+            {
+                // 单条脏数据不能拖垮整份约 6000 条的目录。
+                continue;
+            }
+
+            app.SourceName = resolvedSourceName;
+            if (!ids.Add(app.Id)) continue;
+            RegisterKnownApp(app);
+            result.Add(app);
+        }
+
+        return result.ToArray();
+    }
+
     private static async Task PublishCatalogAsync(IEnumerable<AppItem> items, DateTimeOffset updated,
         CatalogCacheSource source, CancellationToken ct)
     {
@@ -1118,12 +1418,12 @@ public static class AppCatalogService
             }
         }
 
-        bool lenovo = _currentSource == AppSourcePreference.Lenovo;
+        // 联想应用商店 / 360 软件管家都是几千款的大目录：跳过批量磁盘图标分配与预热，由列表行按需加载图标。
+        bool storeCatalog = IsStoreCatalogSource;
         Volatile.Write(ref _hiddenIncompatible, hidden);
         var snapshot = Array.AsReadOnly(compatible.ToArray());
-        if (lenovo)
+        if (storeCatalog)
         {
-            // 联想目录约 5000 款：跳过批量磁盘图标分配与预热，由列表行调用 EnsureIconAsync。
             foreach (var app in snapshot) RegisterKnownApp(app);
         }
         else
@@ -1136,7 +1436,7 @@ public static class AppCatalogService
         Volatile.Write(ref _hasLoaded, true);
         SetCacheState(source, updated, Store.LastError, source == CatalogCacheSource.Offline ? _lastNetworkError : null);
         CatalogChanged?.Invoke(null, EventArgs.Empty);
-        if (!lenovo) QueueIcons(snapshot, source != CatalogCacheSource.Offline);
+        if (!storeCatalog) QueueIcons(snapshot, source != CatalogCacheSource.Offline);
     }
 
     private static async Task<CatalogCacheDocument?> ReadUsableDiskAsync(DateTimeOffset now, CancellationToken ct)
@@ -1351,6 +1651,9 @@ public static class AppCatalogService
 
         return Uri.EscapeDataString(id);
     }
+
+    /// <summary>一次目录拉取结果：映射后的条目、服务端快照的 updated_at、以及服务端 stale 标记。</summary>
+    private readonly record struct StoreCatalogSnapshot(AppItem[] Items, DateTimeOffset? ServerUpdatedAt, bool Stale);
 
     private sealed class CatalogResponse
     {

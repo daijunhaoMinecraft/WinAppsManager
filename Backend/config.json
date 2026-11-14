@@ -52,6 +52,19 @@
     "image_cache_ttl_seconds": 2592000,
     "image_cache_max_bytes": 268435456
   },
+  "soft360": {
+    "enabled": true,
+    "catalog_pages_per_category": 3,
+    "catalog_ttl_seconds": 21600,
+    "catalog_max_stale_seconds": 604800,
+    "catalog_refresh_interval_seconds": 1800,
+    "details_ttl_seconds": 900,
+    "details_persistent_ttl_seconds": 21600,
+    "timeout_seconds": 20,
+    "catalog_concurrency": 4,
+    "image_cache_ttl_seconds": 2592000,
+    "image_cache_max_bytes": 268435456
+  },
   "builtin": {
     "enabled": true,
     "app_ids": ["clashverge", "telegram"]

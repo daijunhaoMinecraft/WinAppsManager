@@ -89,7 +89,7 @@ public partial class AppsInstallPage : Page
         _onlineSearchCancellation?.Cancel();
     }
 
-    /// <summary>联想源按需图标加载的取消令牌：页面重新显示时重建，避免取消过的令牌复用。</summary>
+    /// <summary>商店源（联想应用商店 / 360 软件管家）按需图标加载的取消令牌：页面重新显示时重建，避免取消过的令牌复用。</summary>
     private CancellationToken IconLoadToken
     {
         get
@@ -179,7 +179,8 @@ public partial class AppsInstallPage : Page
 
         try
         {
-            // 普通加载：联想目录在后端只读本地缓存并由定时线程自动更新，客户端已无手动刷新入口。
+            // 普通加载：联想应用商店 / 360 软件管家的目录在后端只读本地快照并由定时线程自动更新，
+            // 客户端已无手动刷新入口。
             IReadOnlyList<AppItem> apps = await AppCatalogService.GetAppsAsync(cancellation.Token);
             if (cancellation.IsCancellationRequested || !_isPageActive)
             {
@@ -502,12 +503,12 @@ public partial class AppsInstallPage : Page
         }
 
         string status = $"{sourceName} · 共 {_catalogApps.Count} 款应用";
-        if (!AppCatalogService.IsLenovoSource)
+        if (!AppCatalogService.IsStoreCatalogSource)
         {
             return status;
         }
 
-        // 联想目录请求只读服务端 catalog.json：显示目录自身更新时间，便于确认自动更新进度。
+        // 联想应用商店与 360 软件管家的目录请求只读服务端快照：显示目录自身更新时间，便于确认自动更新进度。
         // 该函数会在加载/缓存变化/筛选等多条路径重复调用，因此每次都从基础文案重建，不做字符串追加。
         DateTimeOffset? updatedAt = AppCatalogService.CatalogUpdatedAtUtc
                                     ?? AppCatalogService.CacheState.UpdatedAtUtc;
@@ -698,10 +699,13 @@ public partial class AppsInstallPage : Page
         }
     }
 
-    /// <summary>联想源约有 5000 款软件，图标只在行容器显示时按需加载，内置源继续使用原有预热逻辑。</summary>
+    /// <summary>
+    /// 联想应用商店 / 360 软件管家约有 5000~6000 款软件，图标只在行容器显示时按需加载；
+    /// 内置源继续使用原有预热逻辑。
+    /// </summary>
     private void QueueIconLoad(AppItem app)
     {
-        if (!_isPageActive || !AppCatalogService.IsLenovoSource) return;
+        if (!_isPageActive || !AppCatalogService.IsStoreCatalogSource) return;
         if (!string.IsNullOrWhiteSpace(app.DisplayIconSource)) return;
         if (!_iconLoads.Add(app.Id)) return;
         _ = EnsureRowIconAsync(app);
@@ -768,7 +772,7 @@ public partial class AppsInstallPage : Page
     {
         // Recycling a failed image container for a different app must allow the new app's image to load.
         if (sender is Border imageContainer) imageContainer.ClearValue(VisibilityProperty);
-        // 回收容器换到新行时也要触发联想源的按需图标加载。
+        // 回收容器换到新行时也要触发商店源的按需图标加载。
         if (args.NewValue is AppItem app) QueueIconLoad(app);
     }
 

@@ -12,7 +12,7 @@ using System.Windows.Media.Imaging;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// 把后端代理的联想商店图片（截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
+/// 把后端代理的商店图片（联想应用商店 / 360 软件管家的截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
 /// <para>
 /// 线程模型：解码在后台线程完成并 <see cref="Freezable.Freeze"/> 后返回，UI 线程只做绑定。
 /// 缓存分两层：内存 LRU（按**解码后的像素字节**计，默认 64 张 / 32 MB）与磁盘缓存

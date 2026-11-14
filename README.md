@@ -1,10 +1,10 @@
 # WinAppsManager
 
-Windows 软件管理器，使用 WPF 桌面前端和 FastAPI 后端。目前收录 45 款 Windows 软件，支持软件目录、搜索与分类、软件详情、软件图标、可保存的浅色/深色/跟随系统主题、安装包的并发下载、下载中心、实时进度和下载后打开，以及从 Windows 卸载注册表和当前用户 Microsoft Store/MSIX 包中读取已安装软件并批量卸载。客户端提供 Windows 7 SP1 兼容构建（不含商店应用）与 Windows 10 2004+ 完整版；目录中的软件按 `minimum_windows` 与 `architectures` 声明兼容范围，列表会按当前系统过滤。客户端支持两个软件源：**默认的联想应用商店**（由后端代理联想官方 PC 商店，目录约 5000 款，带截图相册、更新说明、评分与下载量）和**内置精选**（项目维护的 45 款软件资料；当前配置只启用 Clash Verge Rev 与 Telegram 两款，可用 `builtin.app_ids` 调整）。软件源可在设置页随时切换，服务端地址也可在设置页自定义（默认 `http://127.0.0.1:8080/`），软件源列表由服务端 `GET /api/v1/sources` 动态提供。
+Windows 软件管理器，使用 WPF 桌面前端和 FastAPI 后端。目前收录 45 款 Windows 软件，支持软件目录、搜索与分类、软件详情、软件图标、可保存的浅色/深色/跟随系统主题、安装包的并发下载、下载中心、实时进度和下载后打开，以及从 Windows 卸载注册表和当前用户 Microsoft Store/MSIX 包中读取已安装软件并批量卸载。客户端提供 Windows 7 SP1 兼容构建（不含商店应用）与 Windows 10 2004+ 完整版；目录中的软件按 `minimum_windows` 与 `architectures` 声明兼容范围，列表会按当前系统过滤。客户端支持三个软件源：**默认的联想应用商店**（由后端代理联想官方 PC 商店，目录约 5000 款，带截图相册、更新说明、评分与下载量）、**360 软件管家**（后端代理 360 应用中心，默认各分类热门子集约 5900 款）和**内置精选**（项目维护的 45 款软件资料；当前配置只启用 Clash Verge Rev 与 Telegram 两款，可用 `builtin.app_ids` 调整）。软件源可在设置页随时切换，服务端地址也可在设置页自定义（默认 `http://127.0.0.1:8080/`），软件源列表由服务端 `GET /api/v1/sources` 动态提供。
 
 软件按分类为：开发工具 11、社交通讯 10、AI 助手 10、实用工具 5、影音工具 3、系统工具 2、网络与安全 2、办公效率 1、网络浏览 1。11 款使用专用来源解析器（原有 8 款，加上 WorkBuddy、DeepSeek Harness、豆包 3 款国内 AI 客户端），其余 34 款由后端的通用 GitHub Releases provider 读取官方仓库的正式发布；客户端看到的数据结构和下载流程对所有软件完全一致。
 
-后端同时提供两个软件源：**内置精选**（目录里保留 45 款资料，默认配置只启用 Clash Verge Rev 与 Telegram 两款，走 `/api/v1/apps` 等既有接口）和**联想应用商店**（约 5111 款软件与游戏，由后端代理联想 PC 商店接口，`/api/v1/store/lenovo/*`），客户端默认使用联想源并可在设置中切换；`GET /api/v1/sources` 返回两个源的启用状态与已缓存数量，联想目录未加载时数量为 `null`（不会为统计触发抓取）。内置精选只对 `builtin.app_ids` 里的软件创建 provider 并参与启动预热与定时刷新，其余条目不请求 GitHub/官网；`builtin.enabled=false` 可整体关闭内置源（`/api/v1/apps*` 返回 503）。联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](docs/lenovo-store-api.md)，后端接线说明见 `Backend/README.md`。
+后端同时提供三个软件源：**内置精选**（目录里保留 45 款资料，默认配置只启用 Clash Verge Rev 与 Telegram 两款，走 `/api/v1/apps` 等既有接口）、**联想应用商店**（约 5111 款软件与游戏，由后端代理联想 PC 商店接口，`/api/v1/store/lenovo/*`）和**360 软件管家**（默认各分类热门子集约 5940 款，由后端代理 360 应用中心，`/api/v1/store/360/*`），客户端默认使用联想源并可在设置中切换；`GET /api/v1/sources` 返回三个源的启用状态与已缓存数量，联想目录未加载时数量为 `null`（不会为统计触发抓取）。内置精选只对 `builtin.app_ids` 里的软件创建 provider 并参与启动预热与定时刷新，其余条目不请求 GitHub/官网；`builtin.enabled=false` 可整体关闭内置源（`/api/v1/apps*` 返回 503）。联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](docs/lenovo-store-api.md)，360 应用中心接口（明文 JSON、无 token、目录为各分类前 N 页子集）见 [`docs/soft360-store-api.md`](docs/soft360-store-api.md)，后端接线说明见 `Backend/README.md`。
 
 软件列表页采用紧凑布局：左侧导航在“软件列表”下直接列出“全部”和各个分类，顶部一行完成搜索与排序/筛选（目录由后端每 5 分钟自动更新，客户端不提供刷新按钮）；右侧列表占满内容区。下载任务统一进入“下载中心”，离开详情页后仍继续显示进度。
 
@@ -15,6 +15,10 @@ Windows 软件管理器，使用 WPF 桌面前端和 FastAPI 后端。目前收�
 | 软件列表 | 软件详情 |
 | --- | --- |
 | ![软件列表](docs/screenshots/01-apps-list.png) | ![软件详情](docs/screenshots/02-app-details.png) |
+
+| 360 软件源 | 360 应用详情 |
+| --- | --- |
+| ![360 软件源](docs/screenshots/07-360-source.png) | ![360 应用详情](docs/screenshots/08-360-detail.png) |
 
 | 下载中心 | 设置与软件源 |
 | --- | --- |
@@ -45,6 +49,7 @@ Backend/
   releases.py             提供器调用与版本解析
   providers/              获取官方版本及下载签名的插件，github.py 为通用 GitHub Releases 来源，_github_cache.py 保存 GitHub 条件请求缓存
   lenovo/                 联想应用商店源：token/目录/详情/图片/服务门面，routes.py 是对客户端暴露的 /store/lenovo 路由
+  soft360/                360 软件管家源：分类目录/详情/下载解析/图片代理，routes.py 暴露 /store/360 路由
   data/apps.json          原有 8 款软件资料
   data/apps.d/*.json      37 款扩展软件（同一 schema，按文件名合并）
   icon/                   45 个固定图标与来源说明
@@ -95,18 +100,19 @@ WorkBuddy、DeepSeek Harness 和豆包不在 GitHub 发布，由后端专用提�
 
 ## 软件源
 
-客户端支持两个软件源，可在**设置 → 软件源**中切换，默认使用联想应用商店：
+客户端支持三个软件源，可在**设置 → 软件源**中切换，默认使用联想应用商店：
 
 | 软件源 | 内容 | 说明 |
 | --- | --- | --- |
 | 联想应用商店（默认） | 联想官方 PC 商店目录，约 5000 款软件与游戏，含安装大小、下载量、评分、榜单、Beta 标记、标签、更新说明、封面与截图 | 由本机后端代理联想接口并缓存，客户端不直连联想业务接口；图标由客户端按后端给出的联想 CDN 地址直连取图（失败回退后端代理），截图与封面仍经后端代理 |
 | 内置精选 | 项目维护的 45 款软件资料，当前配置只启用 Clash Verge Rev 与 Telegram 两款（`builtin.app_ids`） | 后端解析官网/GitHub 版本与下载地址；其余条目保留但不创建 provider、不参与预热/定时刷新 |
+| 360 软件管家 | 360 应用中心目录，默认抓取 24 个分类各前 3 页（约 5900 款热门子集，可通过 `soft360.catalog_pages_per_category` 扩大）；含安装大小、评分、分类与截图 | 后端代理 360 明文 JSON 接口并缓存；目录/详情/下载/图片全部经后端；360 没有公开搜索 API，搜索仅覆盖已缓存子集 |
 
-切换软件源会保存到 `settings.json`、清空按源隔离的本地目录缓存并重新加载软件目录，已经开始的下载任务不受影响；切换失败时界面会提示并保留原来的软件源。设置页的软件源下拉框从当前服务端的 `GET /api/v1/sources` 加载：服务端标记为不可用的源会显示“（不可用）”且不能选择，若已保存的源在服务端不可用，客户端会自动回退到服务端默认的可用源；服务端不可达时回退到本地静态的两项。联想源目录较大，因此列表图标**按行按需加载**（滚动到可见行才请求），不会一次性预热全部图标；本地目录搜索不到结果时，空状态会提供“在联想商店在线搜索”，在线结果会在状态行标注并可“返回本地目录”。
+切换软件源会保存到 `settings.json`、清空按源隔离的本地目录缓存并重新加载软件目录，已经开始的下载任务不受影响；切换失败时界面会提示并保留原来的软件源。设置页的软件源下拉框从当前服务端的 `GET /api/v1/sources` 加载：服务端标记为不可用的源会显示“（不可用）”且不能选择，若已保存的源在服务端不可用，客户端会自动回退到服务端默认的可用源；服务端不可达时回退到本地静态的三项。联想源目录较大，因此列表图标**按行按需加载**（滚动到可见行才请求），不会一次性预热全部图标；本地目录搜索不到结果时，空状态会提供“在联想商店在线搜索”，在线结果会在状态行标注并可“返回本地目录”。
 
 后端地址可以在**设置 → 服务端地址**中自定义（默认 `http://127.0.0.1:8080/`，可配合反向代理/远程部署）：保存前会校验 http(s) 绝对地址并可选“测试连接”（请求 `GET /api/v1/health`，5 秒超时），切换后会清空内存目录和按服务端隔离的本地缓存、重新连接新的服务端；已经开始的下载任务不受影响，之后的任务使用新服务端返回的地址。
 
-联想源的列表与详情由后端 `/api/v1/store/lenovo/*` 提供：联想接口、缓存与字段映射见 [docs/lenovo-store-api.md](docs/lenovo-store-api.md)，客户端与服务端的整体设计见 [docs/store-source-design.md](docs/store-source-design.md)。后端的 `GET /api/v1/sources` 会返回两个源的启用状态与软件数量。
+联想源的列表与详情由后端 `/api/v1/store/lenovo/*` 提供：联想接口、缓存与字段映射见 [docs/lenovo-store-api.md](docs/lenovo-store-api.md)，客户端与服务端的整体设计见 [docs/store-source-design.md](docs/store-source-design.md)。后端的 `GET /api/v1/sources` 会返回三个源的启用状态与软件数量。360 源目录为各分类热门子集（默认 5940 款），接口与限制见 [`docs/soft360-store-api.md`](docs/soft360-store-api.md)。
 
 ## 启动
 
@@ -167,7 +173,7 @@ API 文档：<http://127.0.0.1:8080/docs>（Swagger UI 静态资源随后端一�
 | 方法 | 资源路径 | 用途 |
 | --- | --- | --- |
 | GET | `/api/v1/health` | 服务状态 |
-| GET | `/api/v1/sources` | 软件源列表：联想应用商店（默认）与内置精选的启用状态、已缓存数量与更新时间 |
+| GET | `/api/v1/sources` | 软件源列表：联想应用商店（默认）、360 软件管家与内置精选的启用状态、已缓存数量与更新时间 |
 | GET | `/api/v1/status` | 预热/可用性状态与定时刷新诊断 |
 | POST | `/api/v1/refresh` | 立即触发一轮版本刷新，并发调用合并 |
 | GET | `/api/v1/apps` | 软件集合，支持搜索、分类、排序与按 `architecture` 过滤 |
@@ -186,10 +192,19 @@ API 文档：<http://127.0.0.1:8080/docs>（Swagger UI 静态资源随后端一�
 | GET | `/api/v1/store/lenovo/apps/{soft_id}/screenshots/{index}` | 联想截图/视频缩略图代理（长 TTL + ETag/304） |
 | GET | `/api/v1/store/lenovo/apps/{soft_id}/screenshots/{index}/video` | 联想视频播放代理：实时解析带时效的视频地址并流式转发，支持 Range/206 拖动进度，`no-store`、不缓存签名 URL |
 | GET | `/api/v1/store/lenovo/apps/{soft_id}/cover` | 联想横版封面代理（长 TTL + ETag/304） |
+| GET | `/api/v1/store/360/categories` | 360 分类（24 个固定分类 + 当前快照内计数） |
+| GET | `/api/v1/store/360/apps` | 360 缓存目录（默认各分类热门子集约 5940 款，GET 只读缓存） |
+| POST | `/api/v1/store/360/refresh` | 同步刷新 360 目录（服务端手动接口） |
+| GET | `/api/v1/store/360/apps/{soft_id}` | 360 应用详情（截图/版本/发布者） |
+| GET | `/api/v1/store/360/apps/{soft_id}/download` | 实时解析 360 下载地址（`no-store`，`architecture` 可选） |
+| GET | `/api/v1/store/360/apps/{soft_id}/icon`、`/screenshots/{index}` | 360 图标/截图代理（ETag/304） |
+| GET | `/api/v1/store/360/search` | 在 360 缓存目录内本地搜索（`q`、`limit`） |
 
 集合响应采用 `{"items": [...], "total": n}`，`total` 是实际返回的条目数。列表会按目录声明的 `architectures` 过滤（未声明的旧条目视为兼容所有架构），详情与版本接口不隐藏软件、只按架构选择安装包；`minimum_windows` 不参与后端过滤，由客户端按本机系统隐藏。列表逐个软件解析，单个软件抓取失败只会从本次响应中略过，接口整体仍返回 200；既抓取失败又没有可用快照的软件不会出现在列表里（`refresh.drop_unavailable_apps` 默认开启），其详情返回 503。非强制刷新的列表与详情在插件暂时不可用时会回退到持久化旧快照；`refresh=true` 时列表对失败的软件会再按非强制刷新回退一次（有快照就不会消失），而详情与 latest 的上游故障仍返回 502、超时仍返回 504。未知资源返回 404，不合法的查询参数返回 422，`architecture` 可选 `x64`、`x86` 或 `arm64`，列表、详情与 latest 默认使用 x64。详细字段与添加软件插件的方法见 `Backend/README.md`。
 
 联想应用商店源使用独立前缀 `/api/v1/store/lenovo`：分类树、完整目录（GET 只读缓存，不提供强制刷新）、应用详情、实时下载地址（`Cache-Control: no-store`，地址从不缓存）、在线搜索、图标/截图/封面代理（长 TTL + ETag，命中 `If-None-Match` 返回 304）以及 `POST /refresh` 手动刷新目录。目录与搜索条目里的 `icon_url` 是联想 CDN 的绝对地址（客户端直连取图并本地缓存），`icon_proxy_url` 是后端代理的相对兜底路径；截图与封面仍是后端代理相对路径。联想源未启用（`lenovo.enabled=false`）时这些路由返回 503，应用不存在或已下架返回 404，联想上游协议/网络错误返回 502、超时返回 504；`/sources` 与联想目录/详情/搜索/下载/刷新响应都是 `no-store`。联想的原始接口与字段说明见 [`docs/lenovo-store-api.md`](docs/lenovo-store-api.md)。
+
+360 软件管家源使用 `/api/v1/store/360` 前缀：`GET /apps` 只读后端缓存（各分类前 N 页热门子集，默认 5940 款），`POST /refresh` 同步刷新；详情/下载/图标/截图均经后端代理，搜索只覆盖缓存子集（360 未公开搜索 API，本项目不逆向签名接口）。配置在 `Backend/config.json` 的 `soft360` 段，缓存位于 `Backend\.cache\soft360\`。
 
 内置精选源的启用范围由 `Backend/config.json` 的 `builtin` 段控制：`enabled`（总开关，`false` 时 `/api/v1/apps*` 与 `POST /api/v1/refresh` 返回 503、不创建 provider/不预热/不启动定时刷新）与 `app_ids`（启用白名单，空列表表示全部 45 款；默认只启用 `clashverge` 与 `telegram`，白名单里出现未知 id 会让后端启动失败）。`GET /api/v1/sources` 的 `builtin.app_count` 是过滤后的数量。
 
@@ -261,6 +276,8 @@ Windows 7 兼容构建（`net6.0-windows7.0`）不包含 WinRT 商店应用管�
 
 联想应用商店源有独立缓存，位于同一缓存目录下的 `lenovo/`（默认 `Backend\.cache\lenovo\`）：`catalog.json` 目录快照、`details/` 详情、`media/` 图片、`token.json` 设备指纹与 token。目录的请求路径**只读缓存**：后端启动时把 `catalog.json` 预加载到内存（不联网），所有 `GET /api/v1/store/lenovo/apps` 直接返回内存/磁盘快照，不会因为请求去抓联想；后端由**随服务启动的独立后台线程**（`lenovo-catalog-refresher`）按 `lenovo.catalog_refresh_interval_seconds`（默认 **300 秒 = 5 分钟**）定时重新抓取并原子写回 `catalog.json`，失败保留旧快照；启动时若快照已超过该间隔会立即补刷一次。需要立即更新时仍可调用 `POST /api/v1/store/lenovo/refresh`（服务端接口；客户端已移除刷新按钮，目录完全由后端线程更新），`catalog_ttl_seconds` 只用于响应里的 `stale` 标记。详情内存 15 分钟/磁盘 6 小时，搜索 60 秒，图片磁盘 30 天、总容量上限 256 MB（超出按最旧淘汰）；下载地址从不缓存，长期缓存不保存带时效的视频地址；视频播放通过后端代理实时解析并流式转发（`Content-Range`/`Range` 透传，`no-store`，不落盘）。`GET /api/v1/cache` 的 `lenovo` 段给出启用状态、已缓存数量/时间以及 `catalog` 的年龄、下次刷新时间和定时器状态（不会触发抓取），`DELETE /api/v1/cache` 会追加清理联想目录/详情/图片/搜索缓存并保留 token，清理失败或源禁用不影响内置精选的清理结果。
 
+360 软件管家源缓存位于同一缓存目录的 `soft360/`（默认 `Backend\.cache\soft360\`）：`catalog.json` 目录快照、`details/` 详情、`media/` 图片。`GET /store/360/apps` 只读快照；后台 `soft360-catalog-refresher` 线程按 `catalog_refresh_interval_seconds`（默认 1800 秒）抓取 24 个分类各前 N 页并原子写盘，失败保留旧快照；`POST /store/360/refresh` 可手动同步刷新。图片代理带 ETag/304 与 30 天磁盘缓存；360 没有公开搜索 API，`/store/360/search` 只在已缓存子集中匹配。全量约 43,731 款，默认只收各分类前 3 页（约 5940 款）。
+
 后端在启动时先抓取一轮全部 45 款软件的官网/仓库版本再对外服务（默认并发 4，整轮实测十余秒），并默认每 30 分钟重跑一次。抓取失败的软件在非强制刷新时回退到磁盘上的旧快照（最长保留 7 天），既没有新数据也没有快照的软件会从列表隐藏、详情返回 503；`GET /api/v1/status` 可查看每个软件的 `ok`/`cached`/`unavailable` 状态和定时刷新统计，`POST /api/v1/refresh` 立即触发一轮刷新。
 
 启动与刷新相关配置（`Backend/config.json`，可用 `WINAPPSMANAGER_*` 环境变量覆盖，修改后重启生效）：
@@ -292,6 +309,19 @@ Windows 7 兼容构建（`net6.0-windows7.0`）不包含 WinRT 商店应用管�
 | `lenovo.catalog_concurrency` | `3` | 分类抓取并发（1–6） |
 | `lenovo.image_cache_ttl_seconds` | `2592000` | 图片磁盘缓存 TTL（秒，30 天） |
 | `lenovo.image_cache_max_bytes` | `268435456` | 图片磁盘缓存上限（字节，256 MB，超出按最旧淘汰） |
+
+360 软件管家源配置（`Backend/config.json` 的 `soft360` 段，可用 `WINAPPSMANAGER_SOFT360_*` 环境变量覆盖，修改后重启生效）：
+
+| 配置 | 默认 | 说明 |
+| --- | --- | --- |
+| `soft360.enabled` | `true` | 360 源总开关；`false` 时不创建服务、`/store/360/*` 返回 503 |
+| `soft360.catalog_pages_per_category` | `3` | 每个分类抓取页数（1–20，100 条/页），默认约 5940 款热门子集 |
+| `soft360.catalog_refresh_interval_seconds` | `1800` | 后台刷新间隔（秒，30 分钟；`0` 关闭） |
+| `soft360.catalog_ttl_seconds` | `21600` | 快照 `stale` 标记阈值（秒，不再触发请求路径抓取） |
+| `soft360.catalog_max_stale_seconds` | `604800` | 抓取失败时允许使用的最旧快照（秒，7 天） |
+| `soft360.details_ttl_seconds` / `details_persistent_ttl_seconds` | `900` / `21600` | 详情内存/磁盘缓存 TTL（秒） |
+| `soft360.timeout_seconds` / `catalog_concurrency` | `20` / `4` | 单次请求超时 / 分类抓取并发 |
+| `soft360.image_cache_ttl_seconds` / `image_cache_max_bytes` | `2592000` / `268435456` | 图片磁盘缓存 TTL / 容量上限 |
 
 内置精选源配置（`Backend/config.json` 的 `builtin` 段，可用 `WINAPPSMANAGER_BUILTIN_*` 环境变量覆盖，修改后重启生效）：
 

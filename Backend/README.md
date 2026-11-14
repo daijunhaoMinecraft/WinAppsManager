@@ -2,7 +2,7 @@
 
 FastAPI 为桌面前端提供软件目录、软件详情、版本资源和图标。软件目录由 `data/apps.json`（原有 8 款精选软件）和 `data/apps.d/*.json`（37 款扩展软件，同一 schema，按文件名顺序合并）组成，共 45 款；版本和安装包全部由 `providers/` 从官方来源获取：11 款使用内置专用 provider（原有 8 款 + WorkBuddy、DeepSeek Harness、豆包 3 款非 GitHub 来源），其余 34 款使用通用的 GitHub Releases provider。前端调用 `http://127.0.0.1:8080/api/v1`。
 
-后端同时提供两个软件源：默认的**联想应用商店**（`lenovo`，后端代理联想 PC 商店接口，约 5111 款软件与游戏，`/api/v1/store/lenovo/*`）和原有的**内置精选**（`builtin`，仓库内 45 款，`/api/v1/apps` 等既有接口，行为不变）。内置精选默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`）两款（其余数据条目原样保留、不抓取），也可用 `builtin.enabled=false` 整体关闭。`GET /api/v1/sources` 列出两个源的启用状态与软件数量；联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](../docs/lenovo-store-api.md)。
+后端同时提供三个软件源：默认的**联想应用商店**（`lenovo`，后端代理联想 PC 商店接口，约 5111 款软件与游戏，`/api/v1/store/lenovo/*`）、**360软件管家**（`soft360`，后端代理 360 应用中心接口，24 分类热门子集约 5940 款，`/api/v1/store/360/*`）和原有的**内置精选**（`builtin`，仓库内 45 款，`/api/v1/apps` 等既有接口，行为不变）。内置精选默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`）两款（其余数据条目原样保留、不抓取），也可用 `builtin.enabled=false` 整体关闭。`GET /api/v1/sources` 列出三个源的启用状态与软件数量；联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](../docs/lenovo-store-api.md)，360 接口的结论见下文“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节。
 
 目录条目用 `minimum_windows`（`7`/`8`/`8.1`/`10`/`11`）与 `architectures`（`x64`/`x86`/`arm64`）声明兼容范围，45 款均已按官方系统要求核实回填；`platforms` 是展示文案，统一写成「系统版本 · 架构」。`/api/v1/apps` 的 `architecture` 参数按 `architectures` 过滤列表。
 
@@ -71,6 +71,17 @@ python -m venv .venv
 | `lenovo.catalog_concurrency` | `3` | 联想分类列表抓取并发，取值 1–6 | `WINAPPSMANAGER_LENOVO_CATALOG_CONCURRENCY` |
 | `lenovo.image_cache_ttl_seconds` | `2592000` | 联想图片磁盘缓存 TTL（秒，默认 30 天） | `WINAPPSMANAGER_LENOVO_IMAGE_CACHE_TTL_SECONDS` |
 | `lenovo.image_cache_max_bytes` | `268435456` | 联想图片磁盘缓存上限（字节，默认 256 MB，超出按最旧淘汰），必须是正整数 | `WINAPPSMANAGER_LENOVO_IMAGE_CACHE_MAX_BYTES` |
+| `soft360.enabled` | `true` | 360 软件源总开关；`false` 时不创建服务、`/api/v1/sources` 把 360 源标记为未启用、所有 `/store/360/*` 路由返回 503 | `WINAPPSMANAGER_SOFT360_ENABLED` |
+| `soft360.catalog_pages_per_category` | `3` | 每个分类抓取的页数（100 条/页，取值 1–20）。默认 3 页 = 24 分类约 7200 条原始记录、按 `soft_id` 去重后约 5940 条；360 目录全量约 43731 条，本项目只抓**各分类热门条目子集** | `WINAPPSMANAGER_SOFT360_CATALOG_PAGES_PER_CATEGORY` |
+| `soft360.catalog_ttl_seconds` | `21600` | 360 目录响应的 `stale` 标记阈值（秒，默认 6 小时）：快照年龄超过该值时 `stale=true`，**不触发请求路径抓取** | `WINAPPSMANAGER_SOFT360_CATALOG_TTL_SECONDS` |
+| `soft360.catalog_max_stale_seconds` | `604800` | 360 磁盘目录快照的最旧可用年龄（秒，默认 7 天），超过视为损坏并删除 | `WINAPPSMANAGER_SOFT360_CATALOG_MAX_STALE_SECONDS` |
+| `soft360.catalog_refresh_interval_seconds` | `1800` | 360 目录独立后台刷新线程的唤醒间隔（秒，默认每 30 分钟刷新一次 `soft360/catalog.json`），`0` 关闭线程；首次刷新按快照年龄决定 | `WINAPPSMANAGER_SOFT360_CATALOG_REFRESH_INTERVAL_SECONDS` |
+| `soft360.details_ttl_seconds` | `900` | 360 软件详情内存缓存 TTL（秒） | `WINAPPSMANAGER_SOFT360_DETAILS_TTL_SECONDS` |
+| `soft360.details_persistent_ttl_seconds` | `21600` | 360 软件详情磁盘缓存 TTL（秒） | `WINAPPSMANAGER_SOFT360_DETAILS_PERSISTENT_TTL_SECONDS` |
+| `soft360.timeout_seconds` | `20` | 单次 360 请求总超时（秒，连接超时固定 5 秒），必须是正数 | `WINAPPSMANAGER_SOFT360_TIMEOUT_SECONDS` |
+| `soft360.catalog_concurrency` | `4` | 360 分类分页抓取并发，取值 1–16 | `WINAPPSMANAGER_SOFT360_CATALOG_CONCURRENCY` |
+| `soft360.image_cache_ttl_seconds` | `2592000` | 360 图片磁盘缓存 TTL（秒，默认 30 天） | `WINAPPSMANAGER_SOFT360_IMAGE_CACHE_TTL_SECONDS` |
+| `soft360.image_cache_max_bytes` | `268435456` | 360 图片磁盘缓存上限（字节，默认 256 MB，超出按最旧淘汰），必须是正整数 | `WINAPPSMANAGER_SOFT360_IMAGE_CACHE_MAX_BYTES` |
 | `builtin.enabled` | `true` | 内置精选源总开关；`false` 时不创建内置 provider、不预热、不启动定时刷新，`/api/v1/apps*` 与 `/api/v1/refresh` 返回 503 | `WINAPPSMANAGER_BUILTIN_ENABLED` |
 | `builtin.app_ids` | `["clashverge","telegram"]`（提交的 `config.json`） | 内置精选源白名单，为空表示目录里的全部软件；元素必须匹配 `^[a-z0-9][a-z0-9.-]*$`、最多 200 个且不可重复。目录数据仍完整加载校验，未知 id 让启动失败 | `WINAPPSMANAGER_BUILTIN_APP_IDS`（逗号分隔，空串=空列表） |
 
@@ -78,7 +89,7 @@ python -m venv .venv
 
 把 `WINAPPSMANAGER_CONFIG` 指向其他 JSON 文件可改用另一份配置。`ttl_seconds` 设为 `0` 会关闭内存命中，`persistent_ttl_seconds` 设为 `0` 会关闭磁盘命中；`persist` 为 `false` 时不创建持久缓存目录。`cache.max_stale_seconds` 只影响过期快照的保留时长，超出的快照会被删除；`refresh.interval_seconds` 为 `0` 时不启动定时刷新，`refresh.jitter_seconds` 不能大于间隔，`refresh.max_concurrency` 只能是 1–16 的整数，`github.refresh_interval_seconds` 只能是非负数。
 
-配置校验失败（未知字段、负数 TTL、非正数上限、格式错误的 JSON 等）会让后端启动失败，而不是带病运行。`lenovo.*` 段同样严格：TTL 与 `catalog_refresh_interval_seconds` 必须是非负有限数、`timeout_seconds` 必须是正数、`catalog_concurrency` 只能是 1–6 的整数、`image_cache_max_bytes` 必须是正整数，非法值同样让启动失败。`builtin.app_ids` 的元素必须是合法 app id、最多 200 个且不可重复；白名单里出现目录中不存在的 id 时，后端启动阶段直接报 `ValueError`。`logging.*` 段同样严格：`level` 只能是 `DEBUG`/`INFO`/`WARNING`/`ERROR`，`max_bytes` 必须是不小于 1024 的整数，`backup_count` 只能是 1–50 的整数，`enabled`/`console` 必须是布尔值，非法值让启动失败。
+配置校验失败（未知字段、负数 TTL、非正数上限、格式错误的 JSON 等）会让后端启动失败，而不是带病运行。`lenovo.*` 段同样严格：TTL 与 `catalog_refresh_interval_seconds` 必须是非负有限数、`timeout_seconds` 必须是正数、`catalog_concurrency` 只能是 1–6 的整数、`image_cache_max_bytes` 必须是正整数，非法值同样让启动失败。`soft360.*` 段同样严格：TTL 与 `catalog_refresh_interval_seconds` 必须是非负有限数、`timeout_seconds` 必须是正数、`catalog_pages_per_category` 只能是 1–20 的整数、`catalog_concurrency` 只能是 1–16 的整数、`image_cache_max_bytes` 必须是正整数，非法值同样让启动失败。`builtin.app_ids` 的元素必须是合法 app id、最多 200 个且不可重复；白名单里出现目录中不存在的 id 时，后端启动阶段直接报 `ValueError`。`logging.*` 段同样严格：`level` 只能是 `DEBUG`/`INFO`/`WARNING`/`ERROR`，`max_bytes` 必须是不小于 1024 的整数，`backup_count` 只能是 1–50 的整数，`enabled`/`console` 必须是布尔值，非法值让启动失败。
 
 ## 日志
 
@@ -88,19 +99,20 @@ python -m venv .venv
 - 轮转：单文件写满 `logging.max_bytes`（默认 5 MB）后改名为 `backend.log.1`，保留 `logging.backup_count`（默认 5）个备份，更旧的删除。
 - 格式：`时间 级别 logger: 消息`，例如 `2026-11-14 19:30:38 INFO winappsmanager.main: 后端启动：…`；root 级别取 `logging.level`（默认 `INFO`）。`logging.enabled=false` 时不写文件，`logging.console=false` 时不再输出控制台。
 - uvicorn 的 `uvicorn` / `uvicorn.error` / `uvicorn.access` 三个 logger 由后端统一接管，启动/关闭消息和访问日志写进同一个 `backend.log`，同时保持 `propagate=False` 并替换 uvicorn 自己的 handler，避免同一条日志重复出现。`python main.py` 启动时使用 `log_config=None`，由本模块作为唯一日志出口；用 `uvicorn main:app` 启动时也会在 lifespan 中接管这三个 logger。
-- 启动与关闭各记一条 INFO 摘要：后端版本、默认监听地址（`127.0.0.1:8080`）、缓存目录、内置精选源/联想应用商店源的启用状态、日志文件位置与级别。**不记录** GitHub 令牌、签名下载地址、代理认证信息或任何请求头；第三方 HTTP 客户端（httpx2）的逐请求 INFO 日志压到 `WARNING`，避免把带临时参数的上游 URL 写进日志文件。
+- 启动与关闭各记一条 INFO 摘要：后端版本、默认监听地址（`127.0.0.1:8080`）、缓存目录、内置精选源/联想应用商店源/360 软件源的启用状态、日志文件位置与级别。**不记录** GitHub 令牌、签名下载地址、代理认证信息或任何请求头；第三方 HTTP 客户端（httpx2）的逐请求 INFO 日志压到 `WARNING`，避免把带临时参数的上游 URL 写进日志文件。
 - `GET /api/v1/cache` 新增 `logging` 段：`enabled`、`level`、`console`、`directory`、`current_path`、`file_count`、`total_bytes`。该段是只读统计，不会创建目录、写文件或触发轮转。`Backend/logging_config.py` 还提供 `shutdown_logging()` 关闭 handler、`get_log_files()` 统计日志文件（供诊断与测试使用）。
 
-## 软件源（内置精选 / 联想应用商店）
+## 软件源（内置精选 / 联想应用商店 / 360 软件管家）
 
-后端提供两个软件源，客户端可在设置里切换，默认使用联想应用商店：
+后端提供三个软件源，客户端可在设置里切换，默认使用联想应用商店：
 
 | 源 id | 名称 | 接口 | 说明 |
 | --- | --- | --- | --- |
 | `lenovo` | 联想应用商店 | `/api/v1/store/lenovo/*` | 后端代理联想 PC 商店的 token 注册、分类/目录、详情、搜索、下载地址解析与图片；目录约 5111 款（软件 + 游戏） |
 | `builtin` | 内置精选 | `/api/v1/apps` 等既有接口 | 仓库内的 45 款精选软件；默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`） |
+| `soft360` | 360软件管家 | `/api/v1/store/360/*` | 后端代理 360 应用中心的分类/目录、详情、下载地址解析与图片；目录是**各分类热门子集**，默认约 5940 款（24 分类 × 前 3 页） |
 
-`GET /api/v1/sources` 返回两个源的 `enabled`、`app_count`、`is_default`、`updated_at`；联想源目录还没加载时 `app_count` 是 `null`（统计不会触发抓取）。内置精选的 `app_count` 是 `builtin.app_ids` 白名单过滤后的数量（默认 2），`enabled` 取 `builtin.enabled`。联想源未启用（`lenovo.enabled=false`）时 `/sources` 仍会列出它但 `enabled=false`，所有 `/store/lenovo/*` 路由返回 503 `{"detail":"联想应用商店源未启用。"}`。
+`GET /api/v1/sources` 返回三个源的 `enabled`、`app_count`、`is_default`、`updated_at`；联想源与 360 源目录还没加载时 `app_count` 是 `null`（统计不会触发抓取）。内置精选的 `app_count` 是 `builtin.app_ids` 白名单过滤后的数量（默认 2），`enabled` 取 `builtin.enabled`。联想源未启用（`lenovo.enabled=false`）时 `/sources` 仍会列出它但 `enabled=false`，所有 `/store/lenovo/*` 路由返回 503 `{"detail":"联想应用商店源未启用。"}`；360 源未启用（`soft360.enabled=false`）时同理，`/store/360/*` 返回 503 `{"detail":"360 软件源未启用。"}`。
 
 内置精选源的启用范围：
 
@@ -130,6 +142,20 @@ python -m venv .venv
 
 联想的原始接口、设备 token、分类列表分页、搜索、详情、下载地址与图片 CDN 的调研结论见 [`docs/lenovo-store-api.md`](../docs/lenovo-store-api.md)。
 
+360 软件源（`Backend/soft360/`）的行为要点：
+
+- **接口都是明文 JSON，无需 token/签名**。目录：`GET https://cdn-mgr.soft.360.cn/main/cdn_client/v1/soft/list?cate_id={id}&page_size=100&src=web_client&machine=&page={n}`，包络 `{"errno":0,"data":[...]}`，`data` 空数组表示没有更多页，`page_size` 最大 100；详情：`GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo?scene=1&machine=&soft_id={id1,id2,...}`，`data` 是 `{soft_id: {...}}`，单次最多 50 个 ID。图片 CDN 为 `qhimg.com` / `mediav.com` / `qhres2.com` 子域，http/https 均可访问。
+- **24 个固定分类**（接口不提供分类树）：聊天工具(149)、视频软件(150)、浏览器(157)、办公软件(159)、输入法(156)、音乐软件(151)、游戏娱乐(153)、网络游戏(100000409)、手游电脑版(1900000002)、下载工具(152)、安全杀毒(155)、图形图像(154)、系统工具(162)、手机数码(165)、股票网银(158)、压缩刻录(161)、阅读翻译(100000186)、网络应用(168)、主题壁纸(100000376)、教育学习(167)、编程开发(163)、其它软件(169)、XP专区(1900000001)、win7专区(1900000010)。同一软件出现在多个分类时，按上述顺序的第一个分类作为归属分类。
+- **目录是“热门子集”而不是全量**：360 目录总量约 43731 款，全量抓取不现实。默认每分类抓前 3 页（100 条/页）≈ 7200 条原始记录，按 `soft_id` 去重后 **5940 款**（与联想源 5111 款规模相当）；实测一轮抓取（24 分类 × 至多 3 页、并发 4）约 **7.1 秒**。`soft360.catalog_pages_per_category` 可调 1–20，调大后请求数与耗时近似线性增长。客户端与本文档都把这批数据表述为“各分类热门条目子集”。
+- **请求路径只读缓存、绝不联网**：启动时 `preload` 只把 `<cache.directory>/soft360/catalog.json` 读进内存（不联网）；`GET /store/360/apps`、`/categories`、`/search` 只读内存/磁盘快照，**任何查询参数（包括 `?refresh=true`）都不会触发抓取**；内存和磁盘都没有快照时返回 `total=0`、`stale=true` 的空目录，而不是同步抓取。目录更新只由独立 daemon 线程 `soft360-catalog-refresher`（默认每 `soft360.catalog_refresh_interval_seconds`=1800 秒一轮，线程把刷新协程投递回主事件循环执行并原子写回 `catalog.json`，失败保留旧快照）与 `POST /store/360/refresh` 完成。首次刷新策略与联想源一致：已有陈旧快照 → 启动后立即补刷；快照新鲜 → 等到剩余间隔；**完全没有快照 → 等满一个间隔，启动阶段不联网**。
+- **详情**：`GET /store/360/apps/{soft_id}` 实时请求 `getinfo` 并缓存（内存 15 分钟 / 磁盘 6 小时，失败可回退陈旧详情），把 `edition_info.default_edition` 的 `version`、`os.bit`（32→`x86`、64→`x64`）与 `os.ver`（映射最低 Windows 版本，低于 7 的一律按 7 处理）以及 `snapshot[]` 截图（统一转 https）映射成模型；`soft360-{soft_id}` 形式的主键也可直接访问。详情缓存只保存展示字段，**不保存下载地址**。
+- **下载**：`GET /store/360/apps/{soft_id}/download?architecture=x64` 每轮实时请求 `getinfo`（不读也不写详情缓存），从 `down.default.p2p`（`|||` 分隔，且 `pdown://` 描述串里也内嵌 `https://cdn-download.soft.360.cn/...exe` 兜底地址）以及 `multi_urls` / `multi_down` 里提取 http(s) 地址，优先 https，扩展名只允许 `.exe/.msi/.msix/.appx`；文件名用 `down.default.name` 清洗，缺失或不安全时回退 `{软件名}_{版本}.exe`；大小用 `down.default.size` 或 `soft_size`。`md5` 不是 sha256，因此 `Release.sha256` 恒为 `null`；响应 `Cache-Control: no-store`。
+- **搜索**：360 页面搜索走 `enc_client` 签名接口，本项目**不逆向签名**；`GET /store/360/search?q=&limit=` 只对已缓存的热门子集做本地匹配（名称 / 别名 / 描述 / 分类），`q` 1–100 字符、`limit` 1–50（默认 30）。
+- **图片**：`/icon`、`/screenshots/{index}` 由后端代理并在磁盘缓存（30 天、上限 256 MB，按最旧淘汰），http 统一转 https，响应 `Cache-Control: public, max-age=86400` 与 `ETag`，`If-None-Match` 命中返回 304；图片 host 只允许 `*.qhimg.com` / `*.mediav.com` / `*.qhres2.com` / `*.qhres.com` 白名单，避免 SSRF。
+- **错误映射**：360 上游协议/网络错误 502、超时 504（沿用全局 `ProviderError` 处理器）、软件不存在或已下架 404、源未启用 503；目录/分类/详情/搜索/下载地址/刷新响应都是 `Cache-Control: no-store`。
+- 360 缓存位于 `<cache.directory>/soft360/`（默认 `Backend/.cache/soft360/`）：`catalog.json` 目录快照、`details/` 详情、`media/` 图片。`DELETE /api/v1/cache` 会追加清理并在响应 `soft360` 段报告结果；清理后 **不会**在请求路径重新抓取，等后台线程或 `POST /store/360/refresh` 重新填充。`GET /api/v1/cache` 的 `soft360` 段返回启用状态、已缓存数量/时间与只读的 `catalog` 状态对象。
+- 配置见上一节 `soft360.*`；全部测试离线（`httpx2.MockTransport` + 临时目录），不访问真实 360 接口。
+
 ## 启动预热与定时刷新
 
 后端在 lifespan 中先加载并校验软件目录（先读 `data/apps.json`，再按文件名顺序合并同目录 `apps.d/*.json`），创建 HTTP 客户端、provider 注册表、持久缓存和 `ReleaseService`，再对每个由 provider 管理版本的内置精选软件执行一次 `get_releases(force_refresh=True)`，完成后才开始接受请求；定时刷新任务在同一阶段启动。内置精选目录共 45 款，但默认 `builtin.app_ids` 只启用 `clashverge` 与 `telegram`，因此启动预热和定时刷新只抓这两款；`builtin.enabled=false` 时跳过预热与定时刷新且不创建内置 provider。关闭时先停定时刷新，再关闭缓存并等待在途读取。
@@ -141,7 +167,8 @@ python -m venv .venv
 - GitHub 来源启用条件缓存后，强制刷新会先在 `github.refresh_interval_seconds`（默认 900 秒）内复用磁盘缓存：模拟 34 个 GitHub 来源时冷启动各请求一次，900 秒内重启 0 次请求，超过 900 秒重发 34 次条件请求且全部返回 304（不消耗配额），304 后再次重启又回到 0 次请求。
 - 单次抓取受 `providers.timeout_seconds` 限制，同时进行的软件抓取数受 `refresh.max_concurrency` 限制。
 - 定时刷新由 `PeriodicRefresher` 执行：按 `refresh.interval_seconds`（默认 1800 秒）加可选抖动重跑一次全量抓取，成功结果写入持久化缓存。单轮失败只记录日志与统计，不影响后续轮次；同一时间只跑一轮，重复触发会合并。`interval_seconds=0` 关闭定时刷新。
-- 联想应用商店目录的刷新是**另一套机制**：由独立 daemon 线程 `lenovo-catalog-refresher`（lifespan 创建联想服务时启动，`lenovo.catalog_refresh_interval_seconds`，默认 300 秒）通过 `asyncio.run_coroutine_threadsafe` 把刷新协程投递回主事件循环执行，`POST /store/lenovo/refresh` 仍可手动同步刷新；详见“软件源（联想应用商店）”一节。
+- 联想应用商店目录的刷新是**另一套机制**：由独立 daemon 线程 `lenovo-catalog-refresher`（lifespan 创建联想服务时启动，`lenovo.catalog_refresh_interval_seconds`，默认 300 秒）通过 `asyncio.run_coroutine_threadsafe` 把刷新协程投递回主事件循环执行，`POST /store/lenovo/refresh` 仍可手动同步刷新；详见“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节。
+- 360 软件源目录的刷新与联想源同构但间隔不同：独立 daemon 线程 `soft360-catalog-refresher`（lifespan 创建 360 服务时启动，`soft360.catalog_refresh_interval_seconds`，默认 **1800 秒**）定时刷新 24 个分类的「前 N 页」并原子写回 `soft360/catalog.json`；默认每分类 3 页、一轮约 7 秒，`POST /store/360/refresh` 可手动同步刷新。首次刷新与无快照启动策略同联想源（启动阶段不联网）。
 - 非强制刷新的列表与详情读取在 provider 暂时不可用时回退到持久化缓存中的旧快照（`refresh.use_stale_cache`）；显式 `refresh=true` 和 `/releases/latest` 仍然强制访问官网，详情与 `/releases/latest` 失败时保持 502/504。列表是唯一例外：某个软件强制刷新失败时会再按非强制刷新重试一次，避免它从列表里凭空消失。
 
 `GET /api/v1/status` 返回诊断信息，`POST /api/v1/refresh` 可立即触发一轮刷新（并发调用合并为一轮），两者的响应结构见下节。
@@ -153,10 +180,10 @@ python -m venv .venv
 | 方法 | 路径 | 返回内容 |
 | --- | --- | --- |
 | GET | `/health` | `{"status":"ok"}` |
-| GET | `/sources` | 软件源列表：联想应用商店（默认）与内置精选的启用状态、软件数量与更新时间（内置精选数量受 `builtin.app_ids` 过滤） |
+| GET | `/sources` | 软件源列表：联想应用商店（默认）、内置精选与 360软件管家的启用状态、软件数量与更新时间（内置精选数量受 `builtin.app_ids` 过滤） |
 | GET | `/status` | 诊断信息：每个软件的预热/可用性状态与定时刷新统计 |
-| GET | `/cache` | 内存/磁盘缓存统计、预热与定时刷新状态、日志文件统计和本次启动生效的配置 |
-| DELETE | `/cache` | 清理内存和磁盘版本缓存并重置统计 |
+| GET | `/cache` | 内存/磁盘缓存统计、预热与定时刷新状态、`lenovo`/`soft360` 目录缓存状态、日志文件统计和本次启动生效的配置 |
+| DELETE | `/cache` | 清理内存和磁盘版本缓存，并追加清理联想与 360 源的目录/详情/图片缓存 |
 | POST | `/refresh` | 立即触发一轮全量刷新；并发调用合并为一轮 |
 | GET | `/apps` | 软件列表 `{"items":[...],"total":N}`（默认白名单下 2 款），逐软件隔离失败，并按 `architecture` 过滤声明的架构 |
 | GET | `/apps/{app_id}` | 一款软件的完整资料；无缓存兜底时返回 503 |
@@ -174,6 +201,14 @@ python -m venv .venv
 | GET / HEAD | `/store/lenovo/apps/{soft_id}/screenshots/{index}/video` | 联想视频流代理：实时解析临时地址（不缓存）并按块转发，透传 `Range`、返回上游 200/206/416 与内容头，`Cache-Control: no-store`；HEAD 只返回响应头；403 等过期状态会重新解析一次并重试一次 |
 | GET | `/store/lenovo/apps/{soft_id}/cover` | 联想横版封面代理，带 `ETag`，支持 304 |
 | POST | `/store/lenovo/refresh` | 同步强制刷新联想目录（等待抓取完成并写 `catalog.json`），并发调用合并为一轮，返回 `refreshed`/`total`/`updated_at`/`duration_seconds` |
+| GET | `/store/360/categories` | 360 软件管家 24 个分类与当前快照内的条目数（`source`/`updated_at`/`total`/`categories`），只读缓存，`Cache-Control: no-store` |
+| GET | `/store/360/apps` | 360 目录 `{"source","source_name","updated_at","stale","total","items"}`（默认约 5940 款热门子集）；**只读内存/磁盘 `catalog.json`**，绝不访问 360，任何查询参数都不会触发抓取；手动刷新只用 `POST /store/360/refresh` |
+| GET | `/store/360/apps/{soft_id}` | 360 软件详情（版本、发布者、长描述、截图代理路径；`soft360-` 前缀主键也接受），详情缓存 15 分钟内存 / 6 小时磁盘 |
+| GET | `/store/360/apps/{soft_id}/download` | 实时解析 360 下载地址，返回 `Release`，`architecture` 可选（默认 `x64`，按 `os.bit` 回退），`sha256` 恒为 `null`，`Cache-Control: no-store` |
+| GET | `/store/360/search` | 对已缓存 360 目录做**本地**搜索（360 无公开搜索 API），`q` 1–100 字符、`limit` 1–50（默认 30） |
+| GET | `/store/360/apps/{soft_id}/icon` | 360 图标代理（图片 CDN 白名单 + 磁盘缓存），带 `ETag` 与长 TTL，支持 304 |
+| GET | `/store/360/apps/{soft_id}/screenshots/{index}` | 360 截图代理（`index` ≥ 0），带 `ETag`，支持 304 |
+| POST | `/store/360/refresh` | 同步强制刷新 360 目录（等待 24 分类抓取完成并写 `soft360/catalog.json`），返回 `refreshed`/`total`/`categories`/`updated_at`/`duration_seconds` |
 
 `builtin.enabled=false` 时 `/api/v1/apps*` 全部返回 503 `{"detail":"内置精选源未启用。"}`，`POST /api/v1/refresh` 同样返回 503；`GET /health`、`/status`、`/cache` 与 `DELETE /cache` 仍正常（返回空统计）。内置精选默认只启用 `clashverge` 与 `telegram`，列表、搜索、分类、详情和版本接口都只涉及这两款，`/sources` 的 builtin `app_count` 为过滤后的数量（默认 2）。
 
@@ -187,7 +222,7 @@ python -m venv .venv
 
 版本集合 `/apps/{app_id}/releases` 默认返回全部可用架构，也可用 `architecture` 筛选。不支持的架构值返回 422，某个软件没有对应架构时，集合为空，latest 资源返回 404。`latest` 是当前版本的资源别名，响应中的 `id` 仍是实际版本 ID，例如 `9.9.37-windows-x64`。
 
-`total` 表示本次实际返回的条目数：列表逐个软件解析，单个软件抓取失败只会把它从本次响应中略过（记 warning 日志），接口整体仍返回 200；非强制刷新的列表与详情在 provider 暂时不可用时会回退到持久化缓存中的旧快照，带 `refresh=true` 时先强制刷新，失败的软件再按非强制刷新回退一次（有旧快照就不会被略过）；详情与 `/releases/latest` 的强制刷新失败仍会报错（502/504）。预热阶段既抓取失败又没有可用快照的软件不会出现在列表里（`refresh.drop_unavailable_apps` 默认开启），其详情返回 503。缺失的软件、版本或未配置的图标返回 404，查询参数不合法返回 422。上游 HTTP 或数据协议异常返回 502，超时返回 504。旧图标地址 `/icon/qq.png` 保留兼容。联想商店使用独立前缀 `/api/v1/store/lenovo`，源未启用时返回 503，其接口与错误映射见“软件源（联想应用商店）”一节；`/sources`、联想目录/详情/搜索/下载/刷新/视频代理响应都是 `Cache-Control: no-store`，只有图片使用长 TTL + ETag。
+`total` 表示本次实际返回的条目数：列表逐个软件解析，单个软件抓取失败只会把它从本次响应中略过（记 warning 日志），接口整体仍返回 200；非强制刷新的列表与详情在 provider 暂时不可用时会回退到持久化缓存中的旧快照，带 `refresh=true` 时先强制刷新，失败的软件再按非强制刷新回退一次（有旧快照就不会被略过）；详情与 `/releases/latest` 的强制刷新失败仍会报错（502/504）。预热阶段既抓取失败又没有可用快照的软件不会出现在列表里（`refresh.drop_unavailable_apps` 默认开启），其详情返回 503。缺失的软件、版本或未配置的图标返回 404，查询参数不合法返回 422。上游 HTTP 或数据协议异常返回 502，超时返回 504。旧图标地址 `/icon/qq.png` 保留兼容。联想商店使用独立前缀 `/api/v1/store/lenovo`，360 软件管家使用 `/api/v1/store/360`，源未启用时返回 503，其接口与错误映射见“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节；`/sources`、联想与 360 的目录/分类/详情/搜索/下载/刷新（以及联想视频代理）响应都是 `Cache-Control: no-store`，只有图片使用长 TTL + ETag。
 
 `GET /api/v1/status` 的 `warmup` 段列出每个软件的抓取状态（`ok`/`cached`/`unavailable`）、错误信息和检查时间，`refresh` 段给出定时刷新统计（`runs`、`failures`、`last_run_at`、`last_error` 等）。`POST /api/v1/refresh` 立即跑一轮全量刷新；已有一轮在运行时本次调用不排队，返回 `{"started":false,"reason":...}`，否则返回 `{"started":true,...}` 和本轮汇总。
 
@@ -327,7 +362,7 @@ Microsoft 与 GitHub 提供的有效 SHA256、精确文件大小会写入版本�
 
 `persistence.py` 在磁盘上保存每个提供器最近一次成功读取的未签名版本资料，默认目录为 后端目录下的 `Backend/.cache`（运行时生成、已加入 `.gitignore`，可用 `cache.directory` / `WINAPPSMANAGER_CACHE_DIR` 改到别处），默认有效期 3600 秒。快照使用临时文件加原子替换写入；单个 JSON 损坏或 schema 版本不符时会被忽略并删除。过期快照不会立刻删除：只要过期时间不超过 `cache.max_stale_seconds`（默认 604800 秒，即 7 天）就保留下来，作为抓取失败时的兜底（`refresh.use_stale_cache`），超过才删除。磁盘读写失败只会退化为普通缓存 miss，不影响 API 返回。内存 TTL 与磁盘 TTL 相互独立：内存过期后会先尝试磁盘快照，磁盘也过期才重新访问官网。
 
-`GET /api/v1/cache` 返回内存统计（`entries`、`hits`、`misses`、`persistent_hits`、`stale_hits` 等）、`persistent` 子对象（目录、条目、`stale_entries`、`max_stale_seconds`、写入、错误、最近清理数量）、`warmup` 与 `refresh` 两段（结构同 `/api/v1/status`）、`logging` 段（`enabled`/`level`/`console`/`directory`/`current_path`/`file_count`/`total_bytes`，只读统计）以及 `settings` 中本次启动实际生效的配置。`settings.github.token` 会被替换成 `***`（未配置时为 `""`）并附带 `token_configured`，不会泄露令牌。`DELETE /api/v1/cache` 同时清理内存和磁盘快照，响应中的 `cleared` 是内存条目数，`persistent_cleared` 是删除的磁盘文件数。清理后的下一次读取会更新官方资料。两份缓存都只保存 `get_releases()` 返回的未签名资料，`resolve_download()` 不经过缓存，`releases/latest` 始终重新读取最新数据。GitHub 条件缓存另存于 `<cache.directory>/github`，只包含公开响应和校验头，不计入上述版本缓存统计，也不包含令牌。联想应用商店源另有自己的缓存（见“软件源（联想应用商店）”一节）：`GET /api/v1/cache` 的 `lenovo` 段给出启用状态、已缓存数量/时间，以及只读的 `catalog` 状态对象——`apps`、`fetched_at`、`age_seconds`、`refresh_interval_seconds`、`refresher_running`、`next_refresh_at`、`last_refresh_at`、`last_error`、`refreshes`、`background_refreshes`、`stale_served`（目录未加载时 `apps`/`fetched_at`/`age_seconds` 为 `null`，未配置/未启动定时刷新时 `refresh_interval_seconds` 为 `0`、`refresher_running` 为 `false`）。`DELETE /api/v1/cache` 在原有 `cleared`/`persistent_cleared` 之外追加 `lenovo` 清理结果（未启用时为 `null`，清理失败时为 `{"cleared":false}`，且不影响内置精选的清理结果），同时保留联想 token；清理联想目录后下一个请求走冷启动同步抓取一次并重新写 `catalog.json`，后台定时刷新继续按间隔更新。
+`GET /api/v1/cache` 返回内存统计（`entries`、`hits`、`misses`、`persistent_hits`、`stale_hits` 等）、`persistent` 子对象（目录、条目、`stale_entries`、`max_stale_seconds`、写入、错误、最近清理数量）、`warmup` 与 `refresh` 两段（结构同 `/api/v1/status`）、`logging` 段（`enabled`/`level`/`console`/`directory`/`current_path`/`file_count`/`total_bytes`，只读统计）以及 `settings` 中本次启动实际生效的配置。`settings.github.token` 会被替换成 `***`（未配置时为 `""`）并附带 `token_configured`，不会泄露令牌。`DELETE /api/v1/cache` 同时清理内存和磁盘快照，响应中的 `cleared` 是内存条目数，`persistent_cleared` 是删除的磁盘文件数。清理后的下一次读取会更新官方资料。两份缓存都只保存 `get_releases()` 返回的未签名资料，`resolve_download()` 不经过缓存，`releases/latest` 始终重新读取最新数据。GitHub 条件缓存另存于 `<cache.directory>/github`，只包含公开响应和校验头，不计入上述版本缓存统计，也不包含令牌。联想应用商店源另有自己的缓存（见“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节）：`GET /api/v1/cache` 的 `lenovo` 段给出启用状态、已缓存数量/时间，以及只读的 `catalog` 状态对象——`apps`、`fetched_at`、`age_seconds`、`refresh_interval_seconds`、`refresher_running`、`next_refresh_at`、`last_refresh_at`、`last_error`、`refreshes`、`background_refreshes`、`stale_served`（目录未加载时 `apps`/`fetched_at`/`age_seconds` 为 `null`，未配置/未启动定时刷新时 `refresh_interval_seconds` 为 `0`、`refresher_running` 为 `false`）。360 源的 `soft360` 段结构相同（少 `background_refreshes`、多 `categories`），`catalog` 未加载时为 `null`。`DELETE /api/v1/cache` 在原有 `cleared`/`persistent_cleared` 之外追加 `lenovo` 与 `soft360` 清理结果（未启用时为 `null`，清理失败时为 `{"cleared":false}`，且不影响内置精选的清理结果），同时保留联想 token；清理联想目录后下一个请求走冷启动同步抓取一次并重新写 `catalog.json`，后台定时刷新继续按间隔更新；清理 360 目录后请求路径仍不联网，由后台线程或 `POST /store/360/refresh` 重新填充。
 
 45 款软件的固定图标保存于 `icon/`（43 个 PNG，另有原有的 `7zip.ico` 和 `notepadplusplus.ico`），`data/apps.json` 与 `data/apps.d/*.json` 使用本地 `icon_file`。图标均来自官网或官方源码，来源和文件 SHA256 见 `icon/SOURCES.md` 以及 `icon/sources-devtools.md`、`sources-ai.md`、`sources-chat.md`、`sources-utils.md`。服务运行与刷新版本时读取本地文件；图标接口返回 `Cache-Control: public, max-age=604800`、内容 ETag 和 Last-Modified，条件请求命中时返回 304。清理版本缓存不会删除图标资产。
 
@@ -382,3 +417,5 @@ API 测试使用注入的测试提供器，各软件插件测试使用 `httpx2.M
 内置精选源的启用范围由 `tests/test_builtin_source.py` 覆盖（同样注入假 provider、不联网）：白名单只暴露 `clashverge` 与 `telegram`（`/apps` 2 款、其余软件详情/版本/图标 404）、完整目录仍加载 45 款、只为白名单软件注册 provider 且 `/refresh` 只抓这两款、空白名单等于全部软件、`builtin.enabled=false` 时 `/api/v1/apps*` 与 `/refresh` 返回 503 且不创建 provider（`create_release_providers` 不被调用）、`/health`/`/status`/`/cache`/`DELETE /cache` 不崩、`/sources` 的 enabled/app_count、未知 app id 启动失败，以及 `builtin` 段的默认值、提交的 `config.json`、环境变量覆盖与非法值拒绝。
 
 日志实现由 `tests/test_logging.py` 覆盖：`logging` 段的默认值、提交的 `config.json`、文件/`config.local.json`/环境变量覆盖与非法 `level`/`max_bytes`/`backup_count`/布尔值启动失败；`configure_logging` 的写盘格式（含 UTF-8 中文）、root 级别、uvicorn 三个 logger 共用同一文件且每行只写一次、幂等不重复 handler、`enabled=false` 不建目录不写文件、目录不可用时降级为仅控制台、按 `max_bytes` 轮转出 `.1` 备份、`shutdown_logging` 释放文件、`get_log_files` 只读统计；以及 `GET /api/v1/cache` 的 `logging` 段、禁用时不创建目录、「日志初始化失败不影响服务启动」。日志测试全部注入临时目录，不写真实 `Backend/.cache`。注意：其它测试工厂注入的 `BackendSettings` 若未覆盖 `logging`，lifespan 会按默认配置在 `Backend/.cache/logs` 写测试日志（该目录已 gitignore）；新增测试建议注入临时 `logging.directory` 或 `logging.enabled=false`。
+
+360 软件源的测试同样全部离线（`httpx2.MockTransport` + 临时目录，禁止真实网络）：`tests/test_soft360_client.py` 覆盖列表 URL/查询参数、`getinfo` 逗号拼接与 50 个 ID 上限、`errno != 0`/非 JSON/非法包络/HTTP 错误/超时/连接错误的异常映射与参数校验；`tests/test_soft360_catalog.py` 覆盖 24 分类固定清单、分页与空数组提前结束、按 `soft_id` 去重与首分类归属、分类计数、logo http→https、描述截断、分类失败重试一次后整轮失败、磁盘 `catalog.json` 写入/`preload` 只读/损坏与过旧快照忽略/`clear`、以及独立 daemon 线程 `soft360-catalog-refresher` 按小间隔刷新写盘并在 `shutdown` 后退出；`tests/test_soft360_details.py` 覆盖 `getinfo` 字段映射（含整数 `baoku_cate.id`、`os.bit` 架构、`os.ver` 最低 Windows 与低于 7 按下限）、截图 https 规范化与代理路径、详情内存/磁盘缓存与陈旧回退、`p2p` 的 `|||` 与 `pdown://` 内嵌 360 CDN 地址、`multi_urls` 回退、https 优先、文件名清洗与回退、大小为 `down.default.size`/`soft_size`、`sha256=None`、实时解析不写缓存以及 404/502；`tests/test_soft360_media.py` 覆盖 http→https、host 白名单与 SSRF（含重定向）、格式/大小/空响应、内存与磁盘缓存、`clear`、超时/HTTP 错误与 ETag 稳定性；`tests/test_soft360_api.py` 用注入的假服务覆盖 `/api/v1/sources`（三项、360 启用/未启用与 `app_count`）、全部 `/store/360/*` 路由（成功 JSON、GET 带 `refresh=true` 被忽略且只读缓存、空目录、404、502/504、未启用 503、图片 ETag/304、下载 `no-store`、搜索本地匹配与参数校验、`POST /refresh`）、`GET/DELETE /api/v1/cache` 的 `soft360` 段以及 lifespan 对注入服务只 `preload` 不启动线程/不 shutdown；`tests/test_soft360_config.py` 覆盖 `soft360` 段默认值、提交的 `config.json`、文件/`config.local.json`/环境变量覆盖全部字段，以及分页 0/21、并发 0/17、负数/NaN TTL、非正图片上限、非法布尔等启动失败路径。

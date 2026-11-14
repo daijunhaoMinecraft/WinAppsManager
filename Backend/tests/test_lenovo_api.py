@@ -322,8 +322,10 @@ class SourcesApiTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.headers["cache-control"], "no-store")
             payload = response.json()
-            self.assertEqual(payload["total"], 2)
-            lenovo, builtin = payload["items"]
+            self.assertEqual(payload["total"], 3)
+            lenovo, builtin, soft360 = payload["items"]
+            self.assertEqual(soft360["id"], "soft360")
+            self.assertFalse(soft360["is_default"])
             self.assertEqual(lenovo["id"], "lenovo")
             self.assertEqual(lenovo["name"], "联想应用商店")
             self.assertEqual(lenovo["description"], "联想官方 PC 应用商店目录，含软件与游戏。")
@@ -357,7 +359,7 @@ class SourcesApiTests(unittest.TestCase):
         with TestClient(api) as client:
             response = client.get("/api/v1/sources")
             self.assertEqual(response.status_code, 200)
-            lenovo, builtin = response.json()["items"]
+            lenovo, builtin, _soft360 = response.json()["items"]
             self.assertFalse(lenovo["enabled"])
             self.assertIsNone(lenovo["app_count"])
             self.assertIsNone(lenovo["updated_at"])
