@@ -1,0 +1,26 @@
+[Unit]
+Description=WinAppsManager API (FastAPI)
+Documentation=https://github.com/daijunhaoMinecraft/WinAppsManager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/winappsmanager/Backend
+# 建议只监听 127.0.0.1，由 Caddy/Nginx 反向代理并终止 HTTPS。
+ExecStart=/opt/winappsmanager/Backend/.venv/bin/python -m uvicorn main:app \
+    --host 127.0.0.1 --port 8080 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+# 后端只写自己的缓存目录；如改了 cache.directory，请同步调整 ReadWritePaths。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/winappsmanager/Backend/.cache
+
+[Install]
+WantedBy=multi-user.target

@@ -24,6 +24,8 @@ python -m venv .venv
 
 配置目录、软件数据、`data/apps.d/*.json` 或图标后重启后端，使启动校验与目录数据同步更新。
 
+公网部署（Docker/systemd + HTTPS 反向代理）与安全清单见 [`docs/deploy.md`](../docs/deploy.md)。
+
 ## 配置
 
 `config.json` 保存提交到仓库的运行时配置，启动时读取；文件不存在时使用内置默认值。同目录的 `config.local.json` 是机器本地覆盖文件（已加入 `.gitignore`，用于 GitHub 令牌等敏感值），会深合并覆盖 `config.json`；`WINAPPSMANAGER_*` 环境变量最后覆盖两者。加载顺序为：内置默认 → `config.json` → `config.local.json` → 环境变量。修改后重启后端生效。

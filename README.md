@@ -155,6 +155,13 @@ API 文档：<http://127.0.0.1:8080/docs>（Swagger UI 静态资源随后端一�
 
 34 款软件通过 GitHub API 读取版本；未认证配额只有 60 次/小时，建议在本机配置令牌提升到 5000 次/小时：把 `{"github":{"token":"..."}}` 放进 `Backend/config.local.json`（该文件已加入 `Backend/.gitignore`，不要提交），或设置环境变量 `WINAPPSMANAGER_GITHUB_TOKEN`（优先级最高）。令牌只通过 `Authorization` 请求头发送，不会写入日志、缓存或 API 响应；`GET /api/v1/cache` 中只显示 `***` 和 `token_configured`。后端还会把每个 GitHub 仓库的响应体、`ETag` 和 `Last-Modified` 缓存到磁盘：重启后 900 秒内（`github.refresh_interval_seconds`）直接复用、不发请求，超过间隔才发条件请求，数据未变化时返回 304 且不消耗配额。配置修改后需要重启后端。
 
+## 部署
+
+仓库同时包含可部署的 FastAPI 后端：根目录提供 `Dockerfile` / `docker-compose.yml`，`deploy/` 下有 systemd 单元与 Caddy 反向代理示例，完整步骤与安全清单见 [`docs/deploy.md`](docs/deploy.md)。
+
+- 推荐生产方式：后端只监听 `127.0.0.1:8080`，由 Caddy/Nginx 提供 HTTPS，并屏蔽 `POST /api/v1/refresh`、`POST /api/v1/store/lenovo/refresh`、`/api/v1/cache*` 等管理接口。
+- 客户端在设置页把“服务端地址”改成 `https://api.example.com/` 即可连接远程后端；软件源仍由 `GET /api/v1/sources` 动态发现。
+- 仓库当前为私有，API 公网部署与安全审查完成后再转为公开（命令与检查项见部署文档）。
 ## REST API
 
 | 方法 | 资源路径 | 用途 |

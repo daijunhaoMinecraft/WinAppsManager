@@ -1,0 +1,18 @@
+# 构建上下文只包含后端需要的文件
+.git
+.gitignore
+AGENTS.md
+README.md
+LICENSE
+docs/
+deploy/
+WinAppsManager/
+Backend/.venv/
+Backend/.cache/
+Backend/**/__pycache__/
+Backend/**/*.py[cod]
+Backend/tests/
+Backend/static/swagger/LICENSE.txt
+Backend/static/swagger/README.md
+**/.idea/
+**/*.log

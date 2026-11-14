@@ -1,0 +1,21 @@
+# 示例：用 Caddy 为 WinAppsManager API 提供 HTTPS，并屏蔽管理/写接口。
+# 替换 api.example.com 后放到 /etc/caddy/Caddyfile，然后 systemctl reload caddy。
+api.example.com {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+    }
+
+    # 客户端不需要手动刷新/缓存清理接口：对公网直接拒绝，避免被滥用。
+    @management path /api/v1/refresh /api/v1/store/lenovo/refresh /api/v1/cache*
+    respond @management 403
+
+    # 如果连 /docs 也不想公开，取消下面一行的注释：
+    # @docs path /docs*
+    # respond @docs 404
+
+    reverse_proxy 127.0.0.1:8080
+}

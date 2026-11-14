@@ -1,0 +1,17 @@
+services:
+  api:
+    build: .
+    image: winappsmanager-api:local
+    container_name: winappsmanager-api
+    restart: unless-stopped
+    # 默认只绑定本机，由 Caddy/Nginx 反向代理并终止 HTTPS；
+    # 如果确实要直接对局域网开放，改成 "0.0.0.0:8080:8080" 并自行做访问控制。
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - winappsmanager-cache:/app/Backend/.cache
+    environment:
+      WINAPPSMANAGER_LOG_CONSOLE: "true"
+
+volumes:
+  winappsmanager-cache:
