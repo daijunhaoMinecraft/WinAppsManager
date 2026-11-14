@@ -474,7 +474,7 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
    优先 https，扩展名限 `.exe/.msi/.msix/.appx`，文件名清洗；md5 不写入 `sha256`；详情/下载 URL 不缓存。
 5. **图片**：logo/snapshot 在 `*.qhimg.com`/`*.mediav.com`，后端代理缓存（ETag/304，30 天、256MB 上限），
    http 地址规范化为 https；客户端图标直连 CDN 白名单（qhimg/mediav/qhres2/qhres），失败回退后端。
-6. **搜索**：页面搜索走 `enc_client/v2/search/*` 签名接口，本项目**不逆向**；`/api/v1/store/360/search`
+6. **搜索**：页面搜索走 `enc_client/v2/search/*` 加密签名接口，本项目已在 `Backend/soft360/search.py` 逆向（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，算法见 `docs/soft360-search-api.md`）；`/api/v1/store/360/search`
    只对已缓存目录做名称/描述/分类匹配，因此只覆盖热门子集。
 7. **刷新**：`catalog.json`（内存/磁盘）随服务启动预加载；独立线程 `soft360-catalog-refresher`
    默认每 1800 秒抓取并原子写盘，失败保留旧快照；无快照冷启动等待一个间隔（不联网），
@@ -483,5 +483,5 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
    目录/详情/下载/图标/截图复用既有商店数据流；设置页从 `/sources` 映射 `soft360`；缓存按源隔离。
 9. **接口**：`GET /api/v1/store/360/{categories,apps,apps/{soft_id},apps/{soft_id}/download,apps/{soft_id}/icon,apps/{soft_id}/screenshots/{index},search}`，
    `POST /refresh`；`/sources` 第三项、`/cache` 的 `soft360` 段、`DELETE /cache` 清理同上。
-10. **限制**：目录为热门子集而非全量；无公开搜索 API；`os.ver` 编码按 1..8 推测映射（低于 7 按 7 处理）；
+10. **限制**：目录为热门子集而非全量（搜索已覆盖全量）；加密搜索接口为未公开接口，360 改版可能失效（失败自动回退本地匹配）；`os.ver` 编码按 1..8 推测映射（低于 7 按 7 处理）；
     部分条目 corp 为空、无 SHA256。详见 `docs/soft360-store-api.md`。

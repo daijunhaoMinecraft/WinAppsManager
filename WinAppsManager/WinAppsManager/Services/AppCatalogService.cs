@@ -1242,18 +1242,26 @@ public static class AppCatalogService
     }
 
     /// <summary>
-    /// 联想商店在线搜索（目录之外的补充结果）。返回应用摘要并登记“已知应用表”，
-    /// 后续详情/下载仍能按 <see cref="AppItem.Id"/> 找到 <c>soft_id</c>。
-    /// 只有联想应用商店提供在线搜索入口：内置精选源没有该能力，360 软件管家的目录已全量缓存、
-    /// 由列表页本地筛选（在线搜索按钮仍只对联想源显示），两者都返回空列表。
+    /// 在线搜索（目录之外的补充结果）：联想应用商店调用 <c>/store/lenovo/search</c>，
+    /// 360 软件管家调用 <c>/store/360/search</c>（服务端已覆盖全量目录，可能返回缓存目录之外的软件）。
+    /// 返回应用摘要并登记“已知应用表”，后续详情/下载仍能按 <see cref="AppItem.Id"/> 找到 <c>soft_id</c>。
+    /// 内置精选源没有在线搜索能力，返回空列表。
     /// </summary>
     public static async Task<IReadOnlyList<AppItem>> SearchStoreAsync(string query, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query)) return Array.Empty<AppItem>();
         EnsureInitialized();
-        if (_currentSource != AppSourcePreference.Lenovo) return Array.Empty<AppItem>();
-
         string text = query.Trim();
+        return _currentSource switch
+        {
+            AppSourcePreference.Lenovo => await SearchLenovoStoreAsync(text, ct).ConfigureAwait(false),
+            AppSourcePreference.Soft360 => await SearchSoft360StoreAsync(text, ct).ConfigureAwait(false),
+            _ => Array.Empty<AppItem>()
+        };
+    }
+
+    private static async Task<IReadOnlyList<AppItem>> SearchLenovoStoreAsync(string text, CancellationToken ct)
+    {
         var path = $"store/lenovo/search?q={Uri.EscapeDataString(text)}&limit={StoreSearchLimit}";
         var response = await GetAsync<StoreSearchResponse>(path, ct, StoreRequestTimeout).ConfigureAwait(false);
         if (response.Items is null || response.Items.Count == 0) return Array.Empty<AppItem>();
@@ -1267,6 +1275,44 @@ public static class AppCatalogService
             try
             {
                 app = NormalizeApp(summary.ToAppItem(sourceName));
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+            if (!ids.Add(app.Id)) continue;
+            RegisterKnownApp(app);
+            results.Add(app);
+        }
+
+        return results.AsReadOnly();
+    }
+
+    /// <summary>
+    /// 360 软件管家在线搜索：响应字段与后端 <c>Soft360SearchResponse</c> 一致（source/query/total/items），
+    /// 条目是 <see cref="Soft360AppSummary"/>，映射复用 <see cref="Soft360CatalogMapper.ToAppItem"/>。
+    /// 结果可能不在缓存目录里，但登记“已知应用表”后详情/下载仍能按 <c>soft_id</c> 打开。
+    /// </summary>
+    private static async Task<IReadOnlyList<AppItem>> SearchSoft360StoreAsync(string text, CancellationToken ct)
+    {
+        var path = $"store/360/search?q={Uri.EscapeDataString(text)}&limit={StoreSearchLimit}";
+        var response = await GetAsync<Soft360SearchResponse>(path, ct, StoreRequestTimeout).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(response.Source)
+            && !string.Equals(response.Source, Soft360SourceId, StringComparison.Ordinal))
+        {
+            throw new JsonException("360软件管家搜索响应的来源与请求不一致。");
+        }
+
+        if (response.Items is null || response.Items.Count == 0) return Array.Empty<AppItem>();
+
+        var results = new List<AppItem>(response.Items.Count);
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var summary in response.Items)
+        {
+            AppItem app;
+            try
+            {
+                app = NormalizeApp(summary.ToAppItem());
             }
             catch (JsonException)
             {

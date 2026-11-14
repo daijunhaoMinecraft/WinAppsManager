@@ -1,8 +1,10 @@
 """360 软件详情缓存与下载地址解析。
 
 - 详情：内存 LRU + TTL，磁盘 ``<cache>/soft360/details/<sha256(soft_id)>.json``。详情接口
-  ``getinfo`` 同时给出 ``edition_info.default_edition``（版本、系统、下载信息）与 ``snapshot``
-  截图列表；缓存里只保存规范化后的展示字段，**绝不保存下载地址**（下载地址每次实时解析）。
+  ``getinfo`` 同时给出 ``edition_info.default_edition``（版本、系统、下载信息）、``logo`` 与
+  ``snapshot`` 截图列表；缓存里只保存规范化后的展示字段，**绝不保存下载地址**（下载地址每次
+  实时解析）。详情与下载接口对**目录外**软件（搜索结果里出现、但不在热门目录快照里）同样
+  可用：服务层用这里返回的字段现场合成 summary。
 - 截图：``snapshot[]`` 里的图片地址统一规范化为 https，模型里只暴露后端代理路径
   ``/api/v1/store/360/apps/{soft_id}/screenshots/{index}``；360 没有视频。
 - 下载：``resolve_download`` 每次都实时请求 ``getinfo``（不读也不写详情缓存），从
@@ -10,6 +12,7 @@
   里提取 http(s) 地址，优先 https，扩展名只允许 ``.exe/.msi/.msix/.appx``；文件名用
   ``down.default.name`` 清洗，缺失或不安全时回退 ``{安全应用名}_{版本}.exe``；大小用
   ``down.default.size`` 或 ``soft_size``；``md5`` **不是** sha256，因此 ``sha256`` 一律为空。
+  ``summary`` 可以传 ``None``（目录外软件）：此时名称/大小/架构都从 ``getinfo`` 响应里取。
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ else:
 
 from .catalog import (
     build_architectures,
+    logo_url_from,
     minimum_windows_from_versions,
     normalize_image_url,
     parse_score,
@@ -97,6 +101,8 @@ class Soft360DetailsFields:
     version: str
     brief: str
     long_description: str
+    # 详情接口的 ``logo``（http 已规范化为 https）；缺失时为空串，由服务层回退目录图标。
+    icon_url: str
     size_bytes: int | None
     score: int | None
     category: str | None
@@ -232,6 +238,8 @@ class Soft360DetailsProvider:
             description=truncate_description(brief, summary.name),
             category=fields.category or summary.category,
             category_id=fields.category_id or summary.category_id,
+            # 详情接口的 logo 比目录条目更新；缺失时沿用目录图标。
+            icon_url=fields.icon_url or summary.icon_url,
             size_bytes=fields.size_bytes if fields.size_bytes is not None else summary.size_bytes,
             score=fields.score if fields.score is not None else summary.score,
             architectures=list(fields.architectures) or list(summary.architectures),
@@ -246,31 +254,40 @@ class Soft360DetailsProvider:
     async def resolve_download(
         self,
         soft_id: str,
-        summary: Soft360AppSummary,
+        summary: Soft360AppSummary | None,
         architecture: str = "x64",
     ) -> Release:
-        """实时解析当前可用的下载地址；结果绝不缓存。"""
+        """实时解析当前可用的下载地址；结果绝不缓存。
 
-        if not isinstance(summary, Soft360AppSummary):
+        ``summary`` 为 ``None`` 表示目录外软件（搜索结果里的 soft_id），此时名称、大小与
+        架构都从本次 ``getinfo`` 响应里取，不额外请求详情缓存。
+        """
+
+        if summary is not None and not isinstance(summary, Soft360AppSummary):
             raise Soft360ProtocolError("360 软件目录条目类型无效。")
         # 下载地址不缓存：每次都重新请求详情（也不写入详情缓存）。
         data = await self._client.get_info([soft_id])
         raw = _pick_info(data, soft_id)
         if raw is None:
             raise Soft360NotFoundError(f"360 软件源中找不到 {soft_id}。")
+        display_name = summary.name if summary is not None else (_text(raw.get("name")) or soft_id)
         edition = _default_edition(raw)
         if edition is None:
-            raise Soft360UnavailableError(f"360 软件源暂时没有 {summary.name} 的安装包信息。")
+            raise Soft360UnavailableError(f"360 软件源暂时没有 {display_name} 的安装包信息。")
         down = _download_entry(edition)
         if down is None:
-            raise Soft360UnavailableError(f"360 软件源暂时没有 {summary.name} 的下载信息。")
+            raise Soft360UnavailableError(f"360 软件源暂时没有 {display_name} 的下载信息。")
         selected = _select_download_url(down)
         if selected is None:
-            raise Soft360UnavailableError(f"360 软件源暂时没有 {summary.name} 的可用下载地址。")
+            raise Soft360UnavailableError(f"360 软件源暂时没有 {display_name} 的可用下载地址。")
         version = _text(edition.get("version")) or LATEST_VERSION
-        file_name = _safe_file_name(down.get("name"), summary, version)
-        size_bytes = parse_size_bytes(down.get("size")) or summary.size_bytes
-        chosen_architecture = _choose_architecture(raw, summary, architecture)
+        file_name = _safe_file_name(down.get("name"), display_name, soft_id, version)
+        fallback_size = (
+            summary.size_bytes if summary is not None else parse_size_bytes(raw.get("soft_size"))
+        )
+        size_bytes = parse_size_bytes(down.get("size")) or fallback_size
+        supported = summary.architectures if summary is not None else None
+        chosen_architecture = _choose_architecture(raw, supported, architecture)
         try:
             return Release(
                 id=_release_id(soft_id, version),
@@ -396,6 +413,10 @@ class Soft360DetailsProvider:
         score = raw.get("score")
         if score is not None and (type(score) is not int or not 0 <= score <= 100):
             return None
+        # icon_url 是后加的字段：旧版缓存文件没有它，缺失/非法时按空串处理（回退目录图标）。
+        icon_url = raw.get("icon_url")
+        if not isinstance(icon_url, str):
+            icon_url = ""
         return (
             Soft360DetailsFields(
                 name=strings["name"] or soft_id,
@@ -404,6 +425,7 @@ class Soft360DetailsProvider:
                 version=strings["version"],
                 brief=strings["brief"] or "",
                 long_description=strings["long_description"] or "",
+                icon_url=icon_url,
                 size_bytes=size_bytes,
                 score=score,
                 category=strings["category"],
@@ -430,6 +452,7 @@ class Soft360DetailsProvider:
             "version": fields.version,
             "brief": fields.brief,
             "long_description": fields.long_description,
+            "icon_url": fields.icon_url,
             "size_bytes": fields.size_bytes,
             "score": fields.score,
             "category": fields.category,
@@ -521,6 +544,7 @@ def _parse_fields(raw: Mapping[str, Any], soft_id: str) -> Soft360DetailsFields:
         version=_text(edition.get("version")),
         brief=_text(raw.get("brief")),
         long_description=_text(raw.get("desc")),
+        icon_url=logo_url_from(raw.get("logo")) or "",
         size_bytes=parse_size_bytes(raw.get("soft_size")),
         score=parse_score(raw.get("soft_score")),
         category=category,
@@ -622,8 +646,8 @@ def _string(value: Any) -> str:
     return ""
 
 
-def _safe_file_name(raw: Any, summary: Soft360AppSummary, version: str) -> str:
-    fallback = _fallback_file_name(summary, version)
+def _safe_file_name(raw: Any, name: str, soft_id: str, version: str) -> str:
+    fallback = _fallback_file_name(name, soft_id, version)
     if not isinstance(raw, str) or not raw.strip():
         return fallback
     try:
@@ -644,10 +668,10 @@ def _safe_file_name(raw: Any, summary: Soft360AppSummary, version: str) -> str:
     return cleaned
 
 
-def _fallback_file_name(summary: Soft360AppSummary, version: str) -> str:
-    name = _safe_file_component(summary.name) or _safe_file_component(summary.soft_id) or "installer"
+def _fallback_file_name(name: str, soft_id: str, version: str) -> str:
+    safe_name = _safe_file_component(name) or _safe_file_component(soft_id) or "installer"
     version_text = _safe_file_component(version) or LATEST_VERSION
-    return f"{name}_{version_text}.exe"
+    return f"{safe_name}_{version_text}.exe"
 
 
 def _safe_file_component(value: str, *, max_length: int = 60) -> str:
@@ -675,13 +699,19 @@ def _clean_file_name(value: str) -> str:
     return cleaned
 
 
-def _choose_architecture(raw: Mapping[str, Any], summary: Soft360AppSummary, requested: str) -> str:
-    supported = list(summary.architectures)
+def _choose_architecture(
+    raw: Mapping[str, Any],
+    supported_architectures: list[str] | None,
+    requested: str,
+) -> str:
+    supported = list(supported_architectures or ())
     edition = _default_edition(raw) or {}
     os_info = edition.get("os")
     bits = os_info.get("bit") if isinstance(os_info, Mapping) else None
     if isinstance(bits, list) and bits:
         supported = build_architectures(bits)
+    if not supported:
+        supported = ["x86", "x64"]
     if requested in supported and requested in ("x64", "x86"):
         return requested
     if "x64" in supported:

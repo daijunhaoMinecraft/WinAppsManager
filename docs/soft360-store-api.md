@@ -148,10 +148,12 @@ GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo
 
 - 页面搜索框会跳到 `#/app/result`，实际调用 `mgr.soft.360.cn/main/enc_client/v2/search/suggest`
   与 `/search/search`（带 `sign`、`timestamp`、`rand` 等参数的 **加密签名接口**）。
-- 本项目**不逆向签名接口**：`GET /api/v1/store/360/search` 只对已缓存目录做名称/别名/描述/
-  分类的本地匹配，因此只能搜到“各分类前 N 页”子集中的软件。
-- 全量 43,731 款可通过 `soft360.catalog_pages_per_category` 增大覆盖，但抓取时间、目录文件
-  和客户端内存都会线性增长，默认保持 3 页/分类。
+- 本项目已逆向该搜索接口：AES-128-CBC、RSA PKCS#1 v1.5 与 MD5 签名的完整算法、常量、请求/响应
+  字段见 [soft360-search-api.md](soft360-search-api.md)。`GET /api/v1/store/360/search` 现在覆盖
+  360 全量目录（约 43,731 款），不再局限于缓存子集。
+- 逆向接口失效或解密失败时，后端自动回退到对缓存目录的本地匹配（不会 500）。
+- 目录本身仍是“各分类前 N 页”热门子集；要扩大目录覆盖面可调 `soft360.catalog_pages_per_category`
+  （1–20，默认 3），抓取时间、目录文件与客户端内存会线性增长。
 
 ## 6. curl 示例
 

@@ -504,12 +504,23 @@ SOURCE_DIR_NAME = "soft360"
 
 
 # ---------------------------------------------------------------------------
-# 服务层：本地搜索 / 目录外软件 404 / 关闭后的错误
+# 服务层：搜索（远程替身）/ 目录外软件 / 关闭后的错误
 # ---------------------------------------------------------------------------
 
 
+class EmptySearchClient:
+    """加密搜索替身：远程返回空列表（触发本地目录回退），并记录调用。"""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def search(self, keyword: str):
+        self.calls.append(keyword)
+        return []
+
+
 class ServiceTests(unittest.IsolatedAsyncioTestCase):
-    async def test_search_matches_the_cached_catalog_without_network(self):
+    async def test_search_falls_back_to_the_cached_catalog_without_extra_network(self):
         pages = {
             ("149", 1): [
                 item("1010", "微信", brief="国民级聊天工具"),
@@ -523,10 +534,17 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                 catalog_pages_per_category=1, catalog_refresh_interval_seconds=0
             )
         )
+        search_client = EmptySearchClient()
         with tempfile.TemporaryDirectory() as directory:
             http = make_http(upstream)
             async with http:
-                service = Soft360StoreService(http, directory, settings=settings, cache_persist=False)
+                service = Soft360StoreService(
+                    http,
+                    directory,
+                    settings=settings,
+                    cache_persist=False,
+                    search_client=search_client,
+                )
                 try:
                     await service.refresh_catalog()
                     requests_before = upstream.count()
@@ -542,12 +560,13 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len(limited.items), 1)
                     empty = await service.search("   ")
                     self.assertEqual(empty.total, 0)
-                    # 本地搜索只读缓存，不产生任何 360 请求。
+                    # 远程替身返回空列表后回退本地匹配：只读缓存，不产生任何 360 请求。
                     self.assertEqual(upstream.count(), requests_before)
+                    self.assertEqual(search_client.calls, ["微信", "聊天工具", "微信"])
                 finally:
                     await service.shutdown()
 
-    async def test_details_for_an_app_outside_the_catalog_are_not_found(self):
+    async def test_apps_outside_the_catalog_are_fetched_live_and_404_when_unknown(self):
         upstream = FakeCatalogUpstream(pages={("149", 1): [item("1010", "微信")]})
         settings = BackendSettings(
             soft360=Soft360Config(
@@ -557,11 +576,21 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             http = make_http(upstream)
             async with http:
-                service = Soft360StoreService(http, directory, settings=settings, cache_persist=False)
+                service = Soft360StoreService(
+                    http,
+                    directory,
+                    settings=settings,
+                    cache_persist=False,
+                    search_client=EmptySearchClient(),
+                )
                 try:
                     await service.refresh_catalog()
+                    requests_before = upstream.count()
+                    # 目录外软件不再直接 404：会实时请求 getinfo；替身对未知 ID 返回空 data，
+                    # 因此仍然映射成 404。
                     with self.assertRaises(Soft360NotFoundError):
                         await service.get_details("9999")
+                    self.assertGreater(upstream.count(), requests_before)
                     with self.assertRaises(Soft360NotFoundError):
                         await service.get_details("not a valid id")
                     with self.assertRaises(Soft360NotFoundError):

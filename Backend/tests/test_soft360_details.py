@@ -85,6 +85,10 @@ def info_payload(**overrides) -> dict:
         "brief": "微信简介",
         "soft_size": 123456789,
         "soft_score": 90,
+        "logo": {
+            "32": "http://p0.qhimg.com/1010/32.png",
+            "72": "https://p0.qhimg.com/1010/72.png",
+        },
         "baoku_cate": {"id": 149, "name": "聊天工具"},
         "snapshot": [
             "http://p0.qhimg.com/shot1.png",
@@ -171,6 +175,8 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fields.score, 90)
         self.assertEqual(fields.category, "聊天工具")
         self.assertEqual(fields.category_id, "149")
+        # getinfo 的 logo 也映射进详情字段（优先大图并 https 化），供目录外软件合成图标。
+        self.assertEqual(fields.icon_url, "https://p0.qhimg.com/1010/72.png")
         self.assertEqual(fields.architectures, ("x64",))
         self.assertEqual(fields.minimum_windows, "7")
         # 截图：只保留合法图片地址，http 统一规范化成 https，索引是 snapshot 原始顺序。
@@ -202,6 +208,7 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
                 details = provider.build_details(summary(), fields)
         self.assertEqual(fields.version, "")
         self.assertEqual(fields.publisher, None)
+        self.assertEqual(fields.icon_url, "")
         self.assertEqual(fields.architectures, ())
         self.assertIsNone(fields.minimum_windows)
         self.assertEqual(details.version, "以官网为准")
@@ -326,10 +333,32 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raw["schema_version"], 1)
             self.assertEqual(raw["soft_id"], "1010")
             self.assertEqual(raw["version"], "3.9.12")
+            self.assertEqual(raw["icon_url"], "https://p0.qhimg.com/1010/72.png")
             self.assertEqual(raw["screenshots"][0]["source_url"], "https://p0.qhimg.com/shot1.png")
             # 下载地址绝不写入详情缓存。
             self.assertNotIn("download_url", json.dumps(raw))
             self.assertNotIn("p2p", json.dumps(raw))
+
+    async def test_legacy_disk_cache_without_icon_url_is_still_accepted(self):
+        upstream = FakeInfoUpstream({"1010": info_payload()})
+        clock = MutableClock()
+        with tempfile.TemporaryDirectory() as directory:
+            cache_directory = Path(directory)
+            http, provider = make_provider(upstream, cache_directory, clock)
+            async with http:
+                await provider.get_fields("1010")
+            # 模拟升级前的缓存文件：没有 icon_url 字段（schema_version 不变）。
+            path = next((cache_directory / "details").glob("*.json"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw.pop("icon_url")
+            path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+            http2, second = make_provider(upstream, cache_directory, clock)
+            async with http2:
+                fields = await second.get_fields("1010")
+        self.assertEqual(fields.version, "3.9.12")
+        self.assertEqual(fields.icon_url, "")
+        # 旧缓存被直接复用，不再请求上游。
+        self.assertEqual(upstream.requests, 1)
 
 
 # ---------------------------------------------------------------------------

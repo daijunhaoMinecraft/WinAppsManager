@@ -422,10 +422,11 @@
                         <TextBlock x:Name="EmptyDescriptionText" Text="试试其他关键词，或清空分类和搜索条件。" Margin="0,10,0,18"
                                    HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
-                        <Button x:Name="OnlineSearchButton" Content="在联想商店在线搜索" Padding="16,8"
+                        <!-- 在线搜索支持联想应用商店与 360 软件管家：按钮文案/无障碍名称在代码里按当前软件源动态设置。 -->
+                        <Button x:Name="OnlineSearchButton" Content="在线搜索" Padding="16,8"
                                 HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12"
                                 Click="OnlineSearch_OnClick"
-                                AutomationProperties.Name="在联想商店在线搜索" />
+                                AutomationProperties.Name="在线搜索" />
                         <StackPanel x:Name="OnlineSearchStatusPanel" Orientation="Horizontal"
                                     HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12">
                             <ui:ProgressRing x:Name="OnlineSearchProgress" IsActive="True" IsIndeterminate="True"

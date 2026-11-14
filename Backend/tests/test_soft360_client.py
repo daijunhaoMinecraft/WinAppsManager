@@ -276,6 +276,15 @@ class Soft360ClientInfoTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client._client.aclose()
 
+    async def test_get_info_null_data_means_no_details(self):
+        # 实测不存在/已下架的 soft_id 返回 errno=0 且 data=null；按空详情处理（服务层再 404）。
+        transport = RecordingTransport(lambda request: (200, ok(None)))
+        client = client_for(transport)
+        try:
+            self.assertEqual(await client.get_info(["999999999999"]), {})
+        finally:
+            await client._client.aclose()
+
 
 class Soft360ClientConfigurationTests(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_base_urls_are_rejected(self):

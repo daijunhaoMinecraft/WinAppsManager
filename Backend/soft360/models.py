@@ -6,13 +6,15 @@
 
 与联想源的差异：
 
-- 360 目录/详情接口都是**明文 JSON、无需 token/签名**，列表项自带 ``logo`` 地址；
+- 360 的目录/详情接口是**明文 JSON、无需 token/签名**，列表项自带 ``logo`` 地址；搜索走
+  加密的 ``enc_client/v2/search/search``（AES + RSA + MD5 签名，见
+  :mod:`Backend.soft360.search`），结果条目字段与目录条目类似；
 - ``logo_url`` 是 **360 图片 CDN 的绝对 https URL**（qhimg.com / mediav.com 等），客户端可
   直连取图；``icon_proxy_url`` 是后端代理路径，直连失败或需要统一缓存时使用；
 - 截图 ``url`` 是后端相对代理路径（``/api/v1/store/360/...``），由客户端按 BaseUrl 解析；
 - 360 没有视频，:class:`Soft360Screenshot` 只有图片；
-- 列表接口不返回架构/系统信息，所以目录条目默认 ``architectures=["x64", "x86"]``、
-  ``minimum_windows="7"``；详情接口的 ``os.bit`` / ``os.ver`` 会在详情与下载接口里覆盖。
+- 目录列表接口不返回架构/系统信息，所以目录条目默认 ``architectures=["x64", "x86"]``、
+  ``minimum_windows="7"``；详情与搜索接口的 ``os.bit`` / ``os.ver`` 会覆盖这两个字段。
 """
 
 from __future__ import annotations
@@ -146,7 +148,11 @@ class Soft360Catalog(ApiModel):
 
 
 class Soft360SearchResponse(ApiModel):
-    """本地搜索结果：360 没有公开搜索 API，这里返回对缓存目录的匹配结果。"""
+    """搜索结果：优先来自 360 全量目录的加密搜索接口，失败时回退缓存目录本地匹配。
+
+    条目可能是目录外软件（不在 ``GET /store/360/apps`` 的热门子集里），客户端照常用
+    ``soft_id`` 打开详情/下载（后端会实时抓 ``getinfo``）。
+    """
 
     source: Literal["soft360"] = "soft360"
     query: str

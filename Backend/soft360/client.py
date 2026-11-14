@@ -14,8 +14,9 @@
 - 超时映射成 :class:`Soft360TimeoutError`（504）；
 - HTTP / 网络错误映射成 :class:`Soft360UnavailableError`（502）；
 - 响应结构或 ``errno`` 异常映射成 :class:`Soft360ProtocolError`（502）；
-- 详情查询里 360 返回失败（``errno != 0``）时映射成 :class:`Soft360NotFoundError`
-  （路由 404），因为详情接口只会在 ID 不存在/下架时这样回答。
+- 详情查询里 360 返回失败（``errno != 0``，或是 ``errno=0`` 但 ``data=null``）时映射成
+  “没有详情”：``errno != 0`` 抛 :class:`Soft360NotFoundError`（路由 404），``data=null``
+  返回空对象由服务层映射 404；因为详情接口只会在 ID 不存在/下架时这样回答。
 
 接口调研结论见任务说明与 ``Backend/README.md`` 的“360 软件源”章节。
 """
@@ -100,7 +101,11 @@ class Soft360RawClient:
         return data
 
     async def get_info(self, soft_ids: Sequence[str]) -> dict[str, Any]:
-        """批量查询软件详情；返回 ``{soft_id: {...}}``。"""
+        """批量查询软件详情；返回 ``{soft_id: {...}}``。
+
+        实测查询不存在/已下架的 ``soft_id`` 时 360 仍返回 ``errno=0`` 且 ``data=null``，
+        这里按“没有详情”返回空对象（服务层再映射成 404），而不是把上游的空结果当成协议错误。
+        """
 
         ids = _validate_soft_ids(soft_ids)
         data = await self._get_data(
@@ -113,6 +118,8 @@ class Soft360RawClient:
             operation="软件详情",
             offline_on_error=True,
         )
+        if data is None:
+            return {}
         if not isinstance(data, Mapping):
             raise Soft360ProtocolError("360 软件详情响应结构无效。")
         return dict(data)

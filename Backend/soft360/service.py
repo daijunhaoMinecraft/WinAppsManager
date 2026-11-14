@@ -9,7 +9,12 @@
   刷新线程（默认每 ``catalog_refresh_interval_seconds`` 秒一次；线程把刷新协程投递回主事件
   循环执行），:meth:`catalog_status` 供 ``GET /api/v1/cache`` 诊断；
 - 请求路径（``GET /apps`` / ``GET /categories``）**只读内存/磁盘快照，绝不访问 360 网络**；
-  只有详情/下载/截图接口按需请求 360；
+  详情/下载/图片接口按需请求 360；:meth:`search` 先调用逆向出来的加密搜索接口
+  （:class:`~Backend.soft360.search.Soft360SearchClient`，覆盖 360 全量目录），远程失败或
+  空结果时回退到已缓存的热门子集做本地匹配；
+- 目录外软件（搜索结果里出现、但不在热门子集快照里）也能打开详情/下载/图标/截图：
+  详情接口按 ``soft_id`` 实时抓取 ``getinfo``，再用返回字段现场合成
+  :class:`Soft360AppSummary`；确实不存在（``errno``/空 ``data``）仍然 404；
 - :meth:`resolve_download` 返回 :class:`Backend.models.Release`（下载地址每轮实时解析，绝不缓存）；
 - :meth:`get_icon` / :meth:`get_screenshot` 返回 :class:`Backend.soft360.media.ImagePayload`；
 - :meth:`refresh_catalog` / :meth:`clear_caches` / :meth:`cached_app_count` / :meth:`shutdown`
@@ -22,6 +27,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from datetime import datetime, timezone
 import logging
 import math
@@ -29,6 +35,7 @@ from pathlib import Path
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx2
 
@@ -45,13 +52,21 @@ from .catalog import (
     CatalogSnapshot,
     Soft360CatalogBuilder,
     Soft360CatalogStore,
+    app_id_for,
+    build_architectures,
     category_specs,
+    logo_url_from,
+    minimum_windows_from_versions,
     normalize_soft_id,
+    parse_score,
+    parse_size_bytes,
+    truncate_description,
 )
 from .client import Soft360RawClient
 from .details import (
     DEFAULT_DETAILS_PERSISTENT_TTL_SECONDS,
     DEFAULT_DETAILS_TTL_SECONDS,
+    Soft360DetailsFields,
     Soft360DetailsProvider,
 )
 from .errors import (
@@ -66,6 +81,7 @@ from .media import (
     Soft360MediaCache,
 )
 from .models import (
+    INSTALLATION_NOTES,
     Soft360AppDetails,
     Soft360AppSummary,
     Soft360Catalog,
@@ -73,6 +89,7 @@ from .models import (
     Soft360Category,
     Soft360SearchResponse,
 )
+from .search import Soft360SearchClient
 
 if TYPE_CHECKING:  # pragma: no cover
     from ..models import Release
@@ -87,6 +104,10 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 SEARCH_MIN_LIMIT = 1
 SEARCH_MAX_LIMIT = 50
 SEARCH_DEFAULT_LIMIT = 30
+# 目录外软件现场合成 summary 时的图标兜底：真实 getinfo 总会带 logo，这里只是防御性占位，
+# 让模型契约（icon_url 必须是绝对 http(s) URL）始终成立。360 官网主机不在客户端/图片代理的
+# CDN 白名单里，取图会立即回退为字母徽章，不会额外发起图片请求。
+DEFAULT_ICON_URL = "https://www.360.cn/favicon.ico"
 # 目录后台刷新线程：名称固定，便于诊断/测试；daemon 保证进程退出不被它拖住。
 CATALOG_REFRESHER_THREAD_NAME = "soft360-catalog-refresher"
 CATALOG_REFRESHER_JOIN_TIMEOUT_SECONDS = 30.0
@@ -104,11 +125,14 @@ class Soft360StoreService:
         settings: "BackendSettings | Any | None" = None,
         cache_enabled: bool = True,
         cache_persist: bool = True,
+        search_client: "Soft360SearchClient | Any | None" = None,
     ) -> None:
         if not isinstance(client, httpx2.AsyncClient):
             raise ValueError("client must be an httpx2.AsyncClient")
         if type(cache_enabled) is not bool or type(cache_persist) is not bool:
             raise ValueError("cache_enabled / cache_persist must be booleans")
+        if search_client is not None and not callable(getattr(search_client, "search", None)):
+            raise ValueError("search_client must provide an async search(keyword) method")
         timeout_seconds = _read_number(settings, "timeout_seconds", DEFAULT_TIMEOUT_SECONDS, positive=True)
         connect_timeout = min(DEFAULT_CONNECT_TIMEOUT_SECONDS, timeout_seconds)
         catalog_ttl = _read_number(settings, "catalog_ttl_seconds", DEFAULT_CATALOG_TTL_SECONDS)
@@ -185,6 +209,18 @@ class Soft360StoreService:
             persistent_ttl_seconds=details_persistent_ttl,
             cache_enabled=cache_enabled,
             cache_persist=cache_persist,
+        )
+        # 搜索走加密的 enc_client 接口：复用同一个 httpx2.AsyncClient（连接池、浏览器 UA、
+        # soft360.timeout_seconds），不额外创建客户端，也不在启动阶段发起任何请求。
+        # 测试可注入任何带 ``async def search(keyword)`` 的替身。
+        self._search_client = (
+            search_client
+            if search_client is not None
+            else Soft360SearchClient(
+                client,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout,
+            )
         )
         self._media = Soft360MediaCache(
             client,
@@ -375,34 +411,40 @@ class Soft360StoreService:
     # -- 详情 / 下载 ------------------------------------------------------
 
     async def get_details(self, soft_id: str) -> Soft360AppDetails:
-        """读取详情；软件必须先在当前目录快照里（目录是各分类热门子集）。"""
+        """读取详情；目录内外的软件都支持，确实不存在时返回 404。
+
+        目录条目只覆盖各分类热门子集，但搜索接口能返回全量目录里的 ``soft_id``，因此
+        这里不再要求 ``soft_id`` 出现在快照里：先实时抓 ``getinfo``，目录外软件再用详情
+        字段现场合成 :class:`Soft360AppSummary` 交给 :meth:`Soft360DetailsProvider.build_details`。
+        """
 
         self._ensure_open()
         normalized = self._require_soft_id(soft_id)
         summary = self._catalog.find(normalized)
-        if summary is None:
-            raise Soft360NotFoundError(f"360 软件源目录中找不到 {soft_id}。")
         fields = await self._details.get_fields(normalized)
+        if summary is None:
+            # 目录外软件：用实时详情字段合成 summary（图标/分类/架构/最低系统都来自 getinfo）。
+            summary = _summary_from_details_fields(normalized, fields)
         return self._details.build_details(summary, fields)
 
     async def resolve_download(self, soft_id: str, architecture: str = "x64") -> "Release":
-        """实时解析下载地址；软件必须先在当前目录快照里。"""
+        """实时解析下载地址；目录内外都支持，软件不存在/已下架时 404。"""
 
         self._ensure_open()
         normalized = self._require_soft_id(soft_id)
         summary = self._catalog.find(normalized)
-        if summary is None:
-            raise Soft360NotFoundError(f"360 软件源目录中找不到 {soft_id}。")
         requested = architecture if architecture in _ARCHITECTURES else "x64"
         return await self._details.resolve_download(normalized, summary, requested)
 
-    # -- 搜索（本地匹配，360 没有公开搜索 API）-----------------------------
+    # -- 搜索（加密 enc_client 接口 + 本地回退）-----------------------------
 
     async def search(self, query: str, limit: int = SEARCH_DEFAULT_LIMIT) -> Soft360SearchResponse:
-        """对当前缓存目录做本地匹配：名称 / 别名 / 描述 / 分类。
+        """搜索 360 全量目录：先走加密搜索接口，失败/空结果时回退缓存目录本地匹配。
 
-        360 页面搜索走 ``enc_client`` 签名接口，本项目不逆向签名，因此搜索只覆盖已抓取的
-        热门子集（与 ``GET /apps`` 的目录一致）。
+        - 远程搜索每次最多返回 50 条，``limit`` 在本地截断（路由限制 1–50）；
+        - 远程失败（超时/上游错误/解密失败）只记 WARNING，**绝不把搜索变成 500**；
+        - 远程返回空结果或全部条目无法映射时，对已缓存的热门子集做名称/别名/描述/分类匹配，
+          目录为空时返回空列表。
         """
 
         self._ensure_open()
@@ -411,6 +453,22 @@ class Soft360StoreService:
             return Soft360SearchResponse(query="", total=0, items=[])
         effective_limit = limit if type(limit) is int else SEARCH_DEFAULT_LIMIT
         effective_limit = max(SEARCH_MIN_LIMIT, min(SEARCH_MAX_LIMIT, effective_limit))
+
+        remote_items: list[Any] = []
+        try:
+            remote_items = await self._search_client.search(text)
+        except Soft360Error as error:
+            logger.warning("360 远程搜索失败，回退本地目录匹配：%s", error)
+        except Exception:  # noqa: BLE001 - 搜索降级失败不能变成 500
+            logger.warning("360 远程搜索出现未预期错误，回退本地目录匹配。", exc_info=True)
+        if isinstance(remote_items, list) and remote_items:
+            items = _summaries_from_search_items(remote_items, effective_limit)
+            if items:
+                return Soft360SearchResponse(query=text, total=len(items), items=items)
+            logger.warning(
+                "360 远程搜索返回的 %d 条结果都无法映射，回退本地目录匹配。", len(remote_items)
+            )
+
         snapshot = await self._catalog.get()
         if snapshot is None:
             return Soft360SearchResponse(query=text, total=0, items=[])
@@ -423,9 +481,13 @@ class Soft360StoreService:
         self._ensure_open()
         normalized = self._require_soft_id(soft_id)
         summary = self._catalog.find(normalized)
-        if summary is None:
-            raise Soft360NotFoundError(f"360 软件源目录中找不到 {soft_id} 的图标。")
-        return await self._media.fetch(summary.icon_url)
+        if summary is not None:
+            return await self._media.fetch(summary.icon_url)
+        # 目录外软件：图标地址只能从实时详情里取（getinfo 的 logo）。
+        fields = await self._details.get_fields(normalized)
+        if not fields.icon_url:
+            raise Soft360NotFoundError(f"360 软件源中找不到 {soft_id} 的图标。")
+        return await self._media.fetch(fields.icon_url)
 
     async def get_screenshot(self, soft_id: str, index: int) -> ImagePayload:
         self._ensure_open()
@@ -545,6 +607,121 @@ def _match_apps(
     return [item[3] for item in scored[:limit]]
 
 
+# ---------------------------------------------------------------------------
+# 原始搜索结果 / 详情字段 → 规范化 summary
+# ---------------------------------------------------------------------------
+
+
+def _summaries_from_search_items(
+    items: list[Any], limit: int
+) -> list[Soft360AppSummary]:
+    """把加密搜索返回的原始条目映射成 summary（按 soft_id 去重、截断到 ``limit``）。"""
+
+    summaries: list[Soft360AppSummary] = []
+    seen: set[str] = set()
+    for raw in items:
+        summary = _summary_from_search_item(raw, len(summaries))
+        if summary is None or summary.soft_id in seen:
+            continue
+        seen.add(summary.soft_id)
+        summaries.append(summary)
+        if len(summaries) >= limit:
+            break
+    return summaries
+
+
+def _summary_from_search_item(raw: Any, position: int) -> Soft360AppSummary | None:
+    """搜索条目字段（``soft_id``/``name``/``logo``/``type_name``/``os`` 等）→ summary。
+
+    实测字段：``soft_id``/``name``/``desc``/``logo``(字符串)/``type_name``/``size``/``score``/
+    ``os{bit,ver}``/``soft_baoku_cate_id``/``snapshot``/``free{flag}``；``soft_id`` 与
+    ``name`` 缺失时返回 ``None``（调用方跳过）。
+    """
+
+    if not isinstance(raw, Mapping):
+        return None
+    # 只接受 ``type=1`` 的软件条目（广告/活动等其它类型跳过）；字段缺失时按软件处理。
+    item_type = raw.get("type")
+    if item_type is not None and item_type != 1 and item_type != "1":
+        return None
+    soft_id = normalize_soft_id(raw.get("soft_id"))
+    if soft_id is None:
+        return None
+    name = _text(raw.get("name"))
+    if not name:
+        return None
+    os_info = raw.get("os")
+    bits = os_info.get("bit") if isinstance(os_info, Mapping) else None
+    versions = os_info.get("ver") if isinstance(os_info, Mapping) else None
+    category = _text(raw.get("type_name")) or "软件"
+    category_id = _string(raw.get("soft_baoku_cate_id")) or "0"
+    encoded_soft_id = quote(soft_id, safe="")
+    return Soft360AppSummary(
+        id=app_id_for(soft_id),
+        soft_id=soft_id,
+        name=name,
+        # 搜索条目没有独立的 bname 字段，按契约用 name 填充（客户端 name 优先，不影响展示）。
+        bname=_text(raw.get("bname")) or name,
+        description=truncate_description(raw.get("desc") or raw.get("brief"), name),
+        category=category,
+        category_id=category_id,
+        size_bytes=parse_size_bytes(raw.get("size")),
+        score=parse_score(raw.get("score")),
+        icon_url=logo_url_from(raw.get("logo")) or DEFAULT_ICON_URL,
+        icon_proxy_url=f"/api/v1/store/360/apps/{encoded_soft_id}/icon",
+        architectures=build_architectures(bits),
+        minimum_windows=minimum_windows_from_versions(versions) or "7",
+        tags=[category],
+        license="免费",
+        is_free=True,
+        sort_order=position,
+        installation_notes=INSTALLATION_NOTES,
+    )
+
+
+def _summary_from_details_fields(
+    soft_id: str, fields: Soft360DetailsFields
+) -> Soft360AppSummary:
+    """目录外软件：用 ``getinfo`` 的详情字段现场合成 summary。"""
+
+    name = fields.name or soft_id
+    category = fields.category or "软件"
+    category_id = fields.category_id or "0"
+    encoded_soft_id = quote(soft_id, safe="")
+    return Soft360AppSummary(
+        id=app_id_for(soft_id),
+        soft_id=soft_id,
+        name=name,
+        bname=fields.bname,
+        description=truncate_description(fields.brief or fields.long_description, name),
+        category=category,
+        category_id=category_id,
+        size_bytes=fields.size_bytes,
+        score=fields.score,
+        icon_url=fields.icon_url or DEFAULT_ICON_URL,
+        icon_proxy_url=f"/api/v1/store/360/apps/{encoded_soft_id}/icon",
+        architectures=list(fields.architectures) or ["x86", "x64"],
+        minimum_windows=fields.minimum_windows or "7",
+        tags=[category],
+        license="免费",
+        is_free=True,
+        sort_order=0,
+        installation_notes=INSTALLATION_NOTES,
+    )
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _string(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if type(value) is int:
+        return str(value)
+    return ""
+
+
 def create_soft360_store_service(
     client: httpx2.AsyncClient,
     cache_directory: Path | str | None,
@@ -552,8 +729,13 @@ def create_soft360_store_service(
     *,
     cache_enabled: bool = True,
     cache_persist: bool = True,
+    search_client: "Soft360SearchClient | Any | None" = None,
 ) -> Soft360StoreService:
-    """创建 360 软件源服务；``main.py`` 只在 ``soft360.enabled`` 时调用。"""
+    """创建 360 软件源服务；``main.py`` 只在 ``soft360.enabled`` 时调用。
+
+    ``search_client`` 只供测试注入替身；生产代码由服务自己用同一个 httpx2 客户端创建
+    :class:`~Backend.soft360.search.Soft360SearchClient`。
+    """
 
     return Soft360StoreService(
         client,
@@ -561,6 +743,7 @@ def create_soft360_store_service(
         settings=settings,
         cache_enabled=cache_enabled,
         cache_persist=cache_persist,
+        search_client=search_client,
     )
 
 
@@ -628,6 +811,7 @@ def _iso_time(timestamp: float) -> str:
 
 
 __all__ = [
+    "DEFAULT_ICON_URL",
     "SOURCE_DESCRIPTION",
     "SOURCE_ID",
     "SOURCE_NAME",

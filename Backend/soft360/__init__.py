@@ -11,7 +11,11 @@
     await service.preload_catalog()          # 只读 soft360/catalog.json，不联网
     await service.start_catalog_refresher()  # 独立 daemon 线程每 1800 秒刷新
     catalog = await service.get_catalog()    # 请求路径只读缓存
+    results = await service.search("微信")   # 加密搜索接口，覆盖 360 全量目录
     release = await service.resolve_download("1010", architecture="x64")
+
+搜索的加密/签名实现（AES-128-CBC、RSA PKCS#1 v1.5、MD5 签名）在
+:mod:`Backend.soft360.search`，只依赖 Python 标准库，不新增第三方依赖。
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from .models import (
     Soft360Screenshot,
     Soft360SearchResponse,
 )
+from .search import Soft360SearchClient
 from .service import (
     SOURCE_DESCRIPTION,
     SOURCE_ID,
@@ -57,6 +62,7 @@ __all__ = [
     "Soft360NotFoundError",
     "Soft360ProtocolError",
     "Soft360Screenshot",
+    "Soft360SearchClient",
     "Soft360SearchResponse",
     "Soft360StoreService",
     "Soft360TimeoutError",

@@ -241,7 +241,21 @@ public sealed class Soft360CatalogResponse
     public List<Soft360AppSummary>? Items { get; set; }
 }
 
-/// <summary>360 软件管家应用摘要（目录条目）。</summary>
+/// <summary>
+/// <c>GET /api/v1/store/360/search?q=...&amp;limit=...</c> 的响应（360 在线搜索，
+/// 覆盖服务端已逆向的全量目录，因此可能返回缓存目录之外的软件）。
+/// 字段与后端 <c>Soft360SearchResponse</c> 一致：<c>source</c>/<c>query</c>/<c>total</c>/<c>items</c>，
+/// 其中 <c>total</c> 等于 <c>items</c> 数量（服务端已按 limit 截断）。
+/// </summary>
+public sealed class Soft360SearchResponse
+{
+    public string? Source { get; set; }
+    public string? Query { get; set; }
+    public int? Total { get; set; }
+    public List<Soft360AppSummary>? Items { get; set; }
+}
+
+/// <summary>360 软件管家应用摘要（目录条目 / 在线搜索结果条目）。</summary>
 public class Soft360AppSummary
 {
     /// <summary>客户端使用的应用 ID，约定为 <c>soft360-{soft_id}</c>；缺失时客户端按 soft_id 拼出。</summary>

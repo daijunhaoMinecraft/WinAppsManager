@@ -86,7 +86,9 @@ WinAppsManager/
     tests/                                unittest 测试
   docs/
     lenovo-store-api.md                   联想 PC 商店接口调研（token/分类/列表/搜索/详情/下载/图片）
-    store-source-design.md                双软件源整体设计与实现契约
+    soft360-store-api.md                  360 应用中心接口调研（分类/列表/详情/下载/图片）
+    soft360-search-api.md                 360 加密搜索接口逆向（AES/RSA/MD5 签名与加解密）
+    store-source-design.md                多软件源整体设计与实现契约
   artifacts/ui/                           UI 截图（可选交付物）
   README.md                               项目说明
   Backend/README.md                       后端详细说明
@@ -226,7 +228,7 @@ Rider 的默认运行键使用 `WinAppsManager (Windows 7 兼容)`（net6）；�
 | GET | `/store/360/apps/{soft_id}` | 360 详情 |
 | GET | `/store/360/apps/{soft_id}/download` | 360 下载地址（实时解析，`no-store`） |
 | GET | `/store/360/apps/{soft_id}/icon`、`/screenshots/{index}` | 360 图标/截图代理（ETag/304） |
-| GET | `/store/360/search` | 360 缓存目录本地搜索 |
+| GET | `/store/360/search` | 360 全量在线搜索（逆向 enc_client 加密接口，失败回退缓存目录本地匹配） |
 | GET | `/cache` | 内存/磁盘缓存统计、`warmup`/`refresh`/`lenovo`（含 `catalog` 缓存年龄与下次刷新）状态和生效配置 |
 | DELETE | `/cache` | 清理内存和磁盘版本缓存，并清理联想目录/详情/图片缓存 |
 | POST | `/refresh` | 立即跑一轮刷新，并发调用合并为一轮 |
@@ -341,7 +343,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 ### 5.6 联想/360 应用商店源与内置源启用范围
 
 - **联想源**在 `Backend/lenovo/`：`token.py` 随机设备指纹 + JWT 缓存、`client.py` 原始接口、`catalog.py` 逐分类（soft 19 + game 9，`limit=1000`）抓取并按 `softID` 去重（约 5111 款）与内存/磁盘快照、`details.py` 详情缓存与下载地址解析、`media.py` 图片代理缓存、`service.py` 门面、`routes.py` 暴露 `/api/v1/store/lenovo/*`。**目录缓存语义（2026-11 调整）**：启动时 `preload()` 只读 `catalog.json` 到内存（不联网）；`GET /store/lenovo/apps` 请求路径**只返回内存/磁盘快照**（唯一例外是完全没有快照时的冷启动同步抓取），不会因为请求去抓联想；由**随服务启动的独立后台线程**（`threading.Thread`，名称 `lenovo-catalog-refresher`）按 `catalog_refresh_interval_seconds`（默认 300 秒）定时抓取并原子写回 `catalog.json`，启动时快照超龄会立即补刷一次，失败保留旧快照；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记；手动立即更新仅服务端 `POST /store/lenovo/refresh`（同步，客户端已移除刷新按钮与手动刷新链路）；GET 的 `refresh` 参数已移除，任何查询参数都不会触发抓取。详情内存/磁盘缓存；搜索 60 秒；下载地址**从不缓存**；图片按 URL 哈希落盘（30 天、256MB 上限、ETag/304）。联想接口调研见 `docs/lenovo-store-api.md`，实现契约见 `docs/store-source-design.md`。列表/搜索条目 `icon_url` 是联想 CDN 绝对地址（客户端直连取图），`icon_proxy_url` 是后端代理兜底；截图/封面仍走后端代理。联想业务请求全部在后端完成，客户端不直连联想接口。
-- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL，优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。GET 只读缓存、`POST /refresh` 同步刷新；360 无公开搜索 API（页面走签名 enc_client，本项目不逆向），`/search` 只匹配缓存子集；全量 43,731 款不抓全，默认是热门子集，调研见 `docs/soft360-store-api.md`。
+- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL，优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。GET 只读缓存、`POST /refresh` 同步刷新；搜索已逆向 `enc_client/v2/search/search`（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，实现在 `search.py`，算法见 `docs/soft360-search-api.md`），`/search` 覆盖 360 全量目录，失败回退缓存子集匹配；目录本身仍是各分类热门子集，全量 43,731 款不抓全，调研见 `docs/soft360-store-api.md`。
 - **内置源**通过 `builtin.enabled` / `builtin.app_ids` 控制启用范围（默认只启用 `clashverge` 与 `telegram`）。未启用的目录条目保留在 `CatalogRepository.all_apps`，但 `list_apps`/`get_app` 不暴露、不创建 provider、不预热/不刷新；`/sources` 的 `builtin.app_count` 是过滤后的数量。改动内置源启用逻辑时同步 `Backend/tests/test_builtin_source.py`。
 
 ## 6. 客户端架构
@@ -363,7 +365,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.2 页面职责
 
-- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、联想源空结果时的在线搜索（**不提供刷新按钮**，联想目录由后端独立线程每 5 分钟自动更新，页面只在进入/源切换时读缓存）；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；联想源图标按行按需加载。
+- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、商店源（联想/360）空结果时的在线搜索（**不提供刷新按钮**，联想目录由后端独立线程每 5 分钟自动更新，页面只在进入/源切换时读缓存）；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；联想源图标按行按需加载。
 - `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，联想源传入 soft id 以播放视频）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
 - `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、取消/重试/移除/打开安装包/打开下载文件夹。
 - `UninstallPage`：读取 Windows 卸载注册表和当前用户商店应用，按“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四类展示，支持分类筛选、搜索、全选、逐项选择和批量卸载；不依赖后端。
