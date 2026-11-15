@@ -6,16 +6,18 @@
 - 所有模型 ``extra="forbid"``、``strict=True``，字段名一律 snake_case；
 - ``icon_url`` 是**联想 CDN 原始 logo 的绝对 http(s) URL**，客户端列表/搜索直接据此取图，
   不再经过后端代理；``icon_proxy_url`` 是可选的相对代理路径，作为直连失败时的兜底；
-- 截图/封面的 ``url`` 仍是后端相对代理路径（``/api/v1/store/lenovo/...``），由客户端按
-  BaseUrl 解析；
-- 详情里的视频截图 ``url`` 指向缩略图代理，绝不返回带时效的视频地址；
+- 截图/封面的 ``url`` **优先联想 CDN 绝对 https 地址**（客户端直连取图），不满足 https +
+  CDN 白名单时回退后端相对代理路径（``/api/v1/store/lenovo/...``）；``proxy_url`` /
+  ``cover_proxy_url`` 始终是代理路径，供客户端在直连失败时兜底；
+- 详情里的视频截图 ``url`` 指向缩略图（``videoImg``），绝不返回带时效的视频地址；视频播放
+  仍走后端代理 ``.../screenshots/{index}/video``；
 - 下载地址复用 :class:`Backend.models.Release`，由路由负责 ``Cache-Control: no-store``。
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -36,6 +38,64 @@ StoreRelativePath = Annotated[str, Field(min_length=1, max_length=512, pattern=r
 IconUrl = Annotated[str, Field(min_length=8, max_length=1024, pattern=r"^https?://")]
 IconBackground = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
 MinimumWindows = Annotated[str, Field(pattern=r"^(7|8|8\.1|10|11)$")]
+
+# 详情截图/封面直连 CDN 白名单：只允许 https 的联想 CDN 子域（与图片代理使用的是同一组 CDN）。
+ALLOWED_IMAGE_DOMAIN_SUFFIXES: tuple[str, ...] = (".lenovo.com.cn", ".lenovomm.cn", ".gtimg.com")
+# 详情图片地址：优先联想 CDN 绝对 https 地址，否则回退本后端 /api/v1/store/lenovo/ 相对代理路径。
+ImageUrl = Annotated[str, Field(min_length=1, max_length=1024)]
+_STORE_RELATIVE_PREFIX = "/api/v1/store/lenovo/"
+
+
+def cdn_image_url(value: Any) -> str | None:
+    """把联想 CDN 原图地址规范化为可直连的 https 绝对地址；不满足安全条件返回 ``None``。
+
+    必须同时满足：``https`` scheme、有 host、无用户信息、无空白/控制字符，且 host 落在
+    :data:`ALLOWED_IMAGE_DOMAIN_SUFFIXES`（``*.lenovo.com.cn`` / ``*.lenovomm.cn`` /
+    ``*.gtimg.com``）的子域内。这里不做 http→https 升级：http 地址一律视为不可直连，由调用方
+    回退后端代理路径（代理本身会再校验一次 host 白名单）。
+    """
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > 1024 or any(ord(character) < 32 for character in text):
+        return None
+    if any(character.isspace() for character in text):
+        return None
+    try:
+        parsed = urlsplit(text)
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    host = parsed.hostname.casefold()
+    if not host:
+        return None
+    if not any(
+        host.endswith(suffix) and len(host) > len(suffix)
+        for suffix in ALLOWED_IMAGE_DOMAIN_SUFFIXES
+    ):
+        return None
+    return text
+
+
+def _validate_image_url(value: str) -> str:
+    """校验详情图片地址：CDN 绝对 https 地址，或本后端联想相对代理路径。"""
+
+    if value.startswith(_STORE_RELATIVE_PREFIX):
+        if len(value) <= 512 and not any(
+            ord(character) < 32 or character.isspace() for character in value
+        ):
+            return value
+        raise ValueError("图片代理地址必须是 /api/v1/store/lenovo/ 下的相对路径")
+    if cdn_image_url(value) is not None:
+        return value
+    raise ValueError(
+        "图片地址必须是联想 CDN 绝对 https 地址，或 /api/v1/store/lenovo/ 相对代理路径"
+    )
 
 
 class StoreAppSummary(ApiModel):
@@ -98,11 +158,22 @@ class StoreAppSummary(ApiModel):
 
 
 class StoreScreenshot(ApiModel):
-    """详情页截图；``index`` 是联想 ``captureFileList`` 的原始顺序。"""
+    """详情页截图；``index`` 是联想 ``captureFileList`` 的原始顺序。
+
+    ``url`` 优先联想 CDN 的绝对 https 原图（视频截图则是 ``videoImg`` 缩略图），客户端直连
+    取图；CDN 地址不合格时回退 ``proxy_url`` 的后端代理路径。``proxy_url`` 始终是
+    ``/api/v1/store/lenovo/...`` 相对路径，供客户端在直连失败时兜底。
+    """
 
     index: Annotated[int, Field(ge=0)]
     kind: Literal["image", "video"]
-    url: StoreRelativePath
+    url: ImageUrl
+    proxy_url: StoreRelativePath | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return _validate_image_url(value)
 
 
 class StoreDetailTag(ApiModel):
@@ -116,10 +187,17 @@ class StoreAppDetails(StoreAppSummary):
     long_description: str
     release_notes: str = ""
     screenshots: list[StoreScreenshot] = Field(default_factory=list)
-    cover_url: StoreRelativePath | None = None
+    # 横版封面：``cover_url`` 优先联想 CDN 绝对 https 地址，``cover_proxy_url`` 是代理兜底。
+    cover_url: ImageUrl | None = None
+    cover_proxy_url: StoreRelativePath | None = None
     labels: list[RequiredText] = Field(default_factory=list)
     ranking: str | None = None
     detail_tags: list[StoreDetailTag] = Field(default_factory=list)
+
+    @field_validator("cover_url")
+    @classmethod
+    def validate_cover_url(cls, value: str | None) -> str | None:
+        return None if value is None else _validate_image_url(value)
 
 
 class StoreCategory(ApiModel):
@@ -175,6 +253,9 @@ class StoreSourceInfo(ApiModel):
     name: RequiredText
     description: RequiredText
     enabled: bool = True
+    # 该源是否支持服务端在线搜索（联想 / 360 为 true，内置精选为 false）；客户端据此决定
+    # 是否显示“在线搜索”入口，与 enabled 无关。
+    online_search: bool = False
     app_count: Annotated[int | None, Field(ge=0)] = None
     is_default: bool = False
     updated_at: datetime | None = None
@@ -192,6 +273,7 @@ class StoreSourcesResponse(ApiModel):
 
 
 __all__ = [
+    "ALLOWED_IMAGE_DOMAIN_SUFFIXES",
     "INSTALLATION_NOTES",
     "StoreAppDetails",
     "StoreAppSummary",
@@ -204,4 +286,5 @@ __all__ = [
     "StoreSearchResponse",
     "StoreSourceInfo",
     "StoreSourcesResponse",
+    "cdn_image_url",
 ]

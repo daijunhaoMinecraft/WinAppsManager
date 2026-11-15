@@ -139,10 +139,11 @@ GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo
 
 ## 4. 图片
 
-- logo 与 `snapshot` 都在 `*.qhimg.com`（个别 logo 在 `*.mediav.com`），http/https 均可直接
-  访问，无需特殊 UA；后端仍用浏览器 UA 代理并做磁盘缓存/ETag，避免客户端直连的跨域与 http 混用。
+- logo 与 `snapshot` 都在 `*.qhimg.com`（个别在 `*.mediav.com`），http/https 均可直接访问；
+  后端返回详情截图时优先给出 **https CDN 绝对地址**（客户端直连，减少后端带宽），同时附
+  `proxy_url`（`/api/v1/store/360/...`）作为直连失败时的兜底；图标同理（`icon_url` + `icon_proxy_url`）。
 - 后端 media 白名单：`*.qhimg.com`、`*.mediav.com`、`*.qhres2.com`、`*.qhres.com`；
-  http 地址统一规范化为 https。
+  非 https 或非白名单地址回退到后端代理。
 
 ## 5. 搜索与限制
 

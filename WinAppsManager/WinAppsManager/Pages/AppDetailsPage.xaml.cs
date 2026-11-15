@@ -462,9 +462,16 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
         var items = new List<AppScreenshot>();
         var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // 横版封面作为相册第一张；它和左上角的 76px 应用图标不同，不会重复。
+        // CoverUrl 优先是 CDN 绝对地址，CoverProxyUrl 是后端代理兜底（直连失败时回退）。
         if (!string.IsNullOrWhiteSpace(AppItem.CoverUrl) && seenUrls.Add(AppItem.CoverUrl))
         {
-            items.Add(new AppScreenshot { Index = -1, Kind = "image", Url = AppItem.CoverUrl });
+            items.Add(new AppScreenshot
+            {
+                Index = -1,
+                Kind = "image",
+                Url = AppItem.CoverUrl,
+                ProxyUrl = AppItem.CoverProxyUrl
+            });
         }
         foreach (var screenshot in AppItem.Screenshots)
         {
@@ -496,7 +503,9 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
         try
         {
             // 相册只显示缩略图，按显示宽度解码，避免每张截图都保留整张 1280×720 位图。
-            var image = await StoreMediaService.GetImageAsync(item.Url, ScreenshotThumbnailDecodeWidth, ct);
+            // 优先直连商店 CDN（Url），失败再回退后端代理（ProxyUrl），减少后端图片带宽。
+            var image = await StoreMediaService.GetImageAsync(
+                item.Url, item.ProxyUrl, ScreenshotThumbnailDecodeWidth, ct);
             ct.ThrowIfCancellationRequested();
             if (image is null)
             {
@@ -595,6 +604,9 @@ public sealed class ScreenshotViewItem : INotifyPropertyChanged
     public bool IsCover { get; }
 
     public string Url => Screenshot.Url;
+
+    /// <summary>后端代理兜底地址（直连 <see cref="Url"/> 失败时由 StoreMediaService 使用），可能为空。</summary>
+    public string? ProxyUrl => Screenshot.ProxyUrl;
 
     public bool IsVideo => Screenshot.IsVideo;
 

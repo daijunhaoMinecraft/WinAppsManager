@@ -117,10 +117,21 @@ def make_details(summary=None):
         long_description="QQ 的详细描述。",
         release_notes="修复已知问题并提升稳定性。",
         screenshots=[
-            StoreScreenshot(index=0, kind="image", url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/screenshots/0"),
-            StoreScreenshot(index=1, kind="video", url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/screenshots/1"),
+            StoreScreenshot(
+                index=0,
+                kind="image",
+                url="https://lsw-fast.lenovo.com.cn/img/qq-1.png",
+                proxy_url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/screenshots/0",
+            ),
+            StoreScreenshot(
+                index=1,
+                kind="video",
+                url="https://imgs.lenovomm.cn/thumb.jpg",
+                proxy_url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/screenshots/1",
+            ),
         ],
-        cover_url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/cover",
+        cover_url="https://imgs.lenovomm.cn/cover.jpg",
+        cover_proxy_url=f"/api/v1/store/lenovo/apps/{SOFT_ID}/cover",
         labels=["聊天社交", "办公辅助工具"],
         ranking="聊天社交类下载榜第2名",
         detail_tags=[StoreDetailTag(name="安全认证", tips="软件通过多款主流安全软件检测。")],
@@ -326,10 +337,13 @@ class SourcesApiTests(unittest.TestCase):
             lenovo, builtin, soft360 = payload["items"]
             self.assertEqual(soft360["id"], "soft360")
             self.assertFalse(soft360["is_default"])
+            # 在线搜索由服务端下发：联想 / 360 支持，内置精选不支持。
+            self.assertTrue(soft360["online_search"])
             self.assertEqual(lenovo["id"], "lenovo")
             self.assertEqual(lenovo["name"], "联想应用商店")
             self.assertEqual(lenovo["description"], "联想官方 PC 应用商店目录，含软件与游戏。")
             self.assertTrue(lenovo["enabled"])
+            self.assertTrue(lenovo["online_search"])
             self.assertEqual(lenovo["app_count"], 5111)
             self.assertTrue(lenovo["is_default"])
             self.assertTrue(lenovo["updated_at"].startswith("2026-11-14T09:00:00"))
@@ -338,6 +352,7 @@ class SourcesApiTests(unittest.TestCase):
                 "name": "内置精选",
                 "description": "项目内置的精选软件目录。",
                 "enabled": True,
+                "online_search": False,
                 "app_count": 8,
                 "is_default": False,
                 "updated_at": None,
@@ -463,6 +478,25 @@ class DetailsApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(payload["icon_url"], "https://lsw-fast.lenovo.com.cn/logo/L105867.png")
         self.assertEqual(payload["icon_proxy_url"], "/api/v1/store/lenovo/apps/L105867/icon")
+        # 截图/封面 CDN 直连优先，同时保留后端代理路径作为兜底。
+        self.assertEqual(
+            [
+                (shot["url"], shot["proxy_url"])
+                for shot in payload["screenshots"]
+            ],
+            [
+                (
+                    "https://lsw-fast.lenovo.com.cn/img/qq-1.png",
+                    "/api/v1/store/lenovo/apps/L105867/screenshots/0",
+                ),
+                (
+                    "https://imgs.lenovomm.cn/thumb.jpg",
+                    "/api/v1/store/lenovo/apps/L105867/screenshots/1",
+                ),
+            ],
+        )
+        self.assertEqual(payload["cover_url"], "https://imgs.lenovomm.cn/cover.jpg")
+        self.assertEqual(payload["cover_proxy_url"], "/api/v1/store/lenovo/apps/L105867/cover")
         self.assertEqual(service.details_calls, [(SOFT_ID, False)])
 
     def test_details_ignores_the_refresh_query_and_preserves_soft_id_case(self):

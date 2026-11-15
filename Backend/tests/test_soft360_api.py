@@ -107,7 +107,11 @@ def make_details(summary=None):
         publisher="腾讯",
         long_description="微信的详细描述。",
         screenshots=[
-            Soft360Screenshot(index=0, url=f"/api/v1/store/360/apps/{SOFT_ID}/screenshots/0"),
+            Soft360Screenshot(
+                index=0,
+                url="https://p0.qhimg.com/1010/shot0.png",
+                proxy_url=f"/api/v1/store/360/apps/{SOFT_ID}/screenshots/0",
+            ),
         ],
     )
 
@@ -282,6 +286,9 @@ class SourcesApiTests(unittest.TestCase):
             )
             self.assertTrue(soft360["enabled"])
             self.assertFalse(soft360["is_default"])
+            # 在线搜索由服务端下发：360 支持，内置精选不支持。
+            self.assertTrue(soft360["online_search"])
+            self.assertFalse(items["builtin"]["online_search"])
             self.assertEqual(soft360["app_count"], 5111)
             self.assertTrue(soft360["updated_at"].startswith("2026-11-14T09:00:00"))
             self.assertFalse(items["lenovo"]["enabled"])
@@ -355,6 +362,13 @@ class DetailsApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.json(), model_json(service.details))
+        payload = response.json()
+        # 截图 CDN 直连优先，同时保留后端代理路径作为兜底。
+        self.assertEqual(payload["screenshots"][0]["url"], "https://p0.qhimg.com/1010/shot0.png")
+        self.assertEqual(
+            payload["screenshots"][0]["proxy_url"],
+            "/api/v1/store/360/apps/1010/screenshots/0",
+        )
 
     def test_soft360_prefixed_id_is_accepted(self):
         service = FakeSoft360Service()

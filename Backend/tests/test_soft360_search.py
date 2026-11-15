@@ -912,10 +912,16 @@ class DirectoryOutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.architectures, ["x64"])
         self.assertEqual(details.minimum_windows, "7")
         self.assertEqual(
-            [shot.url for shot in details.screenshots],
+            [(shot.url, shot.proxy_url) for shot in details.screenshots],
             [
-                "/api/v1/store/360/apps/600001358/screenshots/0",
-                "/api/v1/store/360/apps/600001358/screenshots/1",
+                (
+                    "https://p0.qhimg.com/shot1.png",
+                    "/api/v1/store/360/apps/600001358/screenshots/0",
+                ),
+                (
+                    "https://p0.qhimg.com/shot2.png",
+                    "/api/v1/store/360/apps/600001358/screenshots/1",
+                ),
             ],
         )
 
@@ -1083,10 +1089,16 @@ class DirectoryOutRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["version"], "4.2.0.52")
         self.assertEqual(payload["icon_url"], "https://p0.qhimg.com/logo/72.png")
         self.assertEqual(
-            [shot["url"] for shot in payload["screenshots"]],
+            [(shot["url"], shot["proxy_url"]) for shot in payload["screenshots"]],
             [
-                "/api/v1/store/360/apps/600001358/screenshots/0",
-                "/api/v1/store/360/apps/600001358/screenshots/1",
+                (
+                    "https://p0.qhimg.com/shot1.png",
+                    "/api/v1/store/360/apps/600001358/screenshots/0",
+                ),
+                (
+                    "https://p0.qhimg.com/shot2.png",
+                    "/api/v1/store/360/apps/600001358/screenshots/1",
+                ),
             ],
         )
         self.assertEqual(download.status_code, 200)

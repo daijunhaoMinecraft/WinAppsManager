@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -30,13 +31,14 @@ from Backend.soft360.details import (
     DEFAULT_DETAILS_PERSISTENT_TTL_SECONDS,
     DEFAULT_DETAILS_TTL_SECONDS,
     Soft360DetailsProvider,
+    Soft360ScreenshotSource,
 )
 from Backend.soft360.errors import (
     Soft360NotFoundError,
     Soft360ProtocolError,
     Soft360UnavailableError,
 )
-from Backend.soft360.models import Soft360AppSummary
+from Backend.soft360.models import Soft360AppSummary, Soft360Screenshot
 
 
 # ---------------------------------------------------------------------------
@@ -190,13 +192,90 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.architectures, ["x64"])
         self.assertEqual(details.minimum_windows, "7")
         self.assertEqual(details.size_bytes, 123456789)
+        # 截图优先 360 图片 CDN 绝对 https 地址，proxy_url 始终是后端代理路径。
         self.assertEqual(
-            [shot.url for shot in details.screenshots],
+            [(shot.url, shot.proxy_url) for shot in details.screenshots],
             [
-                "/api/v1/store/360/apps/1010/screenshots/0",
-                "/api/v1/store/360/apps/1010/screenshots/1",
+                (
+                    "https://p0.qhimg.com/shot1.png",
+                    "/api/v1/store/360/apps/1010/screenshots/0",
+                ),
+                (
+                    "https://p0.qhimg.com/shot2.png",
+                    "/api/v1/store/360/apps/1010/screenshots/1",
+                ),
             ],
         )
+
+    async def test_non_direct_image_urls_fall_back_to_the_proxy_path(self):
+        """不是 https 或 host 不在 360 CDN 白名单的截图地址回退后端代理路径。"""
+
+        upstream = FakeInfoUpstream({"1010": info_payload()})
+        clock = MutableClock()
+        with tempfile.TemporaryDirectory() as directory:
+            http, provider = make_provider(upstream, Path(directory), clock)
+            async with http:
+                fields = await provider.get_fields("1010")
+        self.assertEqual(
+            [item.source_url for item in fields.screenshots],
+            ["https://p0.qhimg.com/shot1.png", "https://p0.qhimg.com/shot2.png"],
+        )
+        cases = (
+            ("https://p0.qhimg.com/a.png", "https://p0.qhimg.com/a.png"),
+            ("https://img.qhres2.com/a.png", "https://img.qhres2.com/a.png"),
+            ("https://s1.mediav.com/a.png", "https://s1.mediav.com/a.png"),
+            ("https://qhimg.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("https://evil.example.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("https://p0.qhimg.com.evil.example.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("http://p0.qhimg.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+        )
+        for source_url, expected in cases:
+            with self.subTest(source_url=source_url):
+                custom = replace(
+                    fields,
+                    screenshots=(
+                        Soft360ScreenshotSource(index=0, source_url=source_url),
+                    ),
+                )
+                details = provider.build_details(summary(), custom)
+                self.assertEqual(details.screenshots[0].url, expected)
+                self.assertEqual(
+                    details.screenshots[0].proxy_url,
+                    "/api/v1/store/360/apps/1010/screenshots/0",
+                )
+
+    async def test_screenshot_urls_cannot_be_arbitrary_addresses(self):
+        """模型层拒绝任意 URL 注入：url 只能是 360 CDN https 或本后端代理路径。"""
+
+        valid = [
+            "https://p0.qhimg.com/a.png",
+            "https://img.qhres2.com/a.png",
+            "https://img.qhres.com/a.png",
+            "https://s1.mediav.com/a.png",
+            "/api/v1/store/360/apps/1010/screenshots/0",
+        ]
+        for url in valid:
+            with self.subTest(url=url):
+                screenshot = Soft360Screenshot(index=0, url=url)
+                self.assertEqual(screenshot.url, url)
+        for url in (
+            "http://p0.qhimg.com/a.png",
+            "https://qhimg.com/a.png",
+            "https://evil.example.com/a.png",
+            "https://p0.qhimg.com.evil.example.com/a.png",
+            "https://p0.qhimg.com./a.png",
+            "https://user:pass@p0.qhimg.com/a.png",
+            "ftp://p0.qhimg.com/a.png",
+            "/api/v1/store/lenovo/apps/1/screenshots/0",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                Soft360Screenshot(index=0, url=url)
+        with self.assertRaises(ValueError):
+            Soft360Screenshot(
+                index=0,
+                url="https://p0.qhimg.com/a.png",
+                proxy_url="https://p0.qhimg.com/a.png",
+            )
 
     async def test_missing_optional_fields_fall_back_to_the_catalog_summary(self):
         upstream = FakeInfoUpstream({"1010": {"name": "微信", "edition_info": {}}})

@@ -485,3 +485,18 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
    `POST /refresh`；`/sources` 第三项、`/cache` 的 `soft360` 段、`DELETE /cache` 清理同上。
 10. **限制**：目录为热门子集而非全量（搜索已覆盖全量）；加密搜索接口为未公开接口，360 改版可能失效（失败自动回退本地匹配）；`os.ver` 编码按 1..8 推测映射（低于 7 按 7 处理）；
     部分条目 corp 为空、无 SHA256。详见 `docs/soft360-store-api.md`。
+
+## 9. 增量变更（2026-11）：在线搜索标志与图片 CDN 直连
+
+1. **`/api/v1/sources` 新增 `online_search`**：联想=true、360=true、内置精选=false。客户端据此显示
+   “在{源}在线搜索”入口；旧服务端缺少字段时按源回退（联想/360 可用、内置不可用），不再在页面硬编码源。
+2. **图片 CDN 直连**：联想详情 `screenshots[].url` / `cover_url` 与 360 `screenshots[].url` 优先返回
+   对应 CDN 的 https 绝对地址（联想 `*.lenovo.com.cn`/`*.lenovomm.cn`/`*.gtimg.com`，360
+   `*.qhimg.com`/`*.mediav.com`/`*.qhres2.com`/`*.qhres.com`）；无法通过白名单校验时仍返回原相对代理路径。
+3. **代理兜底**：详情同时返回 `proxy_url` / `cover_proxy_url`（`/api/v1/store/...`），客户端
+   `StoreMediaService` 先直连 CDN，失败再回退代理；后端 `/icon`、`/screenshots/{index}`、`/cover`
+   代理路由保留，用于直连失败/调试，正常浏览不再占用后端图片带宽。
+4. **客户端媒体白名单**：`StoreMediaService.TryMediaUri` 允许当前后端 `/api/v1/store/` 路径或上述
+   CDN 的任意子域，拒绝 userinfo/非 http(s)/任意主机；直连失败静默回退代理。
+5. **安全**：后端只暴露白名单 CDN 的 https 图片地址；联想视频缩略图虽可能带临时 `auth_key`，但视频
+   播放仍走原后端代理，不暴露视频地址。

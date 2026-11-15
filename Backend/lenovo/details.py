@@ -3,6 +3,9 @@
 - 详情：内存 LRU + TTL，磁盘 ``<cache>/lenovo/details/<sha256(soft_id)>.json``。联想详情里的
   ``captureFileList[].type=1`` 是带 ``auth_key`` 的**临时视频地址**，长期缓存时只保留
   ``videoImg`` 缩略图、丢掉视频 url；``capture`` 列表顺序就是客户端截图索引。
+- 详情映射：截图与横版封面优先返回联想 CDN 的**绝对 https 地址**（客户端直连，降低后端图片
+  带宽），地址不合格时回退 ``/api/v1/store/lenovo/...`` 相对代理路径；``proxy_url`` /
+  ``cover_proxy_url`` 始终是代理路径，作为直连失败时的兜底。
 - 视频：:meth:`LenovoDetailsProvider.resolve_screenshot_video_url` 每次都实时请求联想详情
   （不读也不写缓存），只返回通过 https + 联想视频 CDN 白名单校验的临时地址，供路由流式代理；
   该 URL 绝不写日志、缓存或磁盘。
@@ -45,7 +48,13 @@ from .errors import (
     LenovoProtocolError,
     LenovoUnavailableError,
 )
-from .models import StoreAppDetails, StoreAppSummary, StoreDetailTag, StoreScreenshot
+from .models import (
+    StoreAppDetails,
+    StoreAppSummary,
+    StoreDetailTag,
+    StoreScreenshot,
+    cdn_image_url,
+)
 
 logger = logging.getLogger("winappsmanager.lenovo")
 
@@ -210,29 +219,34 @@ class LenovoDetailsProvider:
 
         ``icon_url``（联想 CDN 绝对地址）与 ``icon_proxy_url``（后端代理兜底）随 summary
         原样继承，客户端详情页同样优先直连。
+
+        截图与横版封面优先返回联想 CDN 的绝对 https 地址（客户端直连，降低后端图片带宽）；
+        地址不是 https 或 host 不在联想 CDN 白名单时回退后端相对代理路径。``proxy_url`` /
+        ``cover_proxy_url`` 始终是代理路径，供客户端直连失败时兜底。
         """
 
         soft_id = summary.soft_id
         encoded_soft_id = quote(soft_id, safe="")
         screenshots = [
-            StoreScreenshot(
-                index=screenshot.index,
-                kind="video" if screenshot.kind == "video" else "image",
-                url=f"/api/v1/store/lenovo/apps/{encoded_soft_id}/screenshots/{screenshot.index}",
-            )
-            for screenshot in fields.screenshots
+            _build_screenshot(encoded_soft_id, screenshot) for screenshot in fields.screenshots
         ]
-        cover_url = (
+        cover_proxy_url = (
             f"/api/v1/store/lenovo/apps/{encoded_soft_id}/cover"
             if fields.cover_source is not None
             else None
         )
+        cover_url = (
+            cdn_image_url(fields.cover_source) if fields.cover_source is not None else None
+        )
+        if cover_url is None:
+            cover_url = cover_proxy_url
         return StoreAppDetails(
             **summary.model_dump(),
             long_description=fields.long_description,
             release_notes=fields.release_notes,
             screenshots=screenshots,
             cover_url=cover_url,
+            cover_proxy_url=cover_proxy_url,
             labels=list(fields.labels),
             ranking=fields.ranking,
             detail_tags=[
@@ -515,6 +529,20 @@ class LenovoDetailsProvider:
             await asyncio.to_thread(path.unlink, True)
         except OSError:
             pass
+
+
+def _build_screenshot(encoded_soft_id: str, screenshot: ScreenshotSource) -> StoreScreenshot:
+    """构造截图契约：CDN 绝对 https 优先，否则回退后端相对代理路径。"""
+
+    proxy_url = (
+        f"/api/v1/store/lenovo/apps/{encoded_soft_id}/screenshots/{screenshot.index}"
+    )
+    return StoreScreenshot(
+        index=screenshot.index,
+        kind="video" if screenshot.kind == "video" else "image",
+        url=cdn_image_url(screenshot.source_url) or proxy_url,
+        proxy_url=proxy_url,
+    )
 
 
 def _ensure_detail_identity(data: Mapping[str, Any], soft_id: str) -> None:

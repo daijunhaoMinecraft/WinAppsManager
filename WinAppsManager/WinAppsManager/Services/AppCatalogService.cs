@@ -92,6 +92,12 @@ public static class AppCatalogService
     private static readonly SemaphoreSlim IconDownloadGate = new(6, 6);
     private static readonly Dictionary<string, (AppItem App, DateTimeOffset Updated)> Details = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, AppItem> KnownApps = new(StringComparer.Ordinal);
+    /// <summary>
+    /// 服务端 <c>GET /api/v1/sources</c> 下发的“是否支持在线搜索”（按源 ID）。
+    /// 写入来自 <see cref="GetSourcesAsync"/>，读取来自 <see cref="OnlineSearchAvailable"/>；
+    /// 切换服务端地址时清空（不同服务端能力可能不同）。用并发字典保证多线程读取安全。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, bool> OnlineSearchCapabilities = new(StringComparer.OrdinalIgnoreCase);
     private static readonly List<Task> IconTasks = new();
 
     private static bool _initialized;
@@ -147,6 +153,35 @@ public static class AppCatalogService
     /// 目录全量拉取、不预热全部图标（列表行按需加载），且状态行可显示目录更新时间。
     /// </summary>
     public static bool IsStoreCatalogSource => IsLenovoSource || IsSoft360Source;
+
+    /// <summary>
+    /// 当前软件源是否支持在线搜索（软件列表页空结果时的“在…在线搜索”按钮）。
+    /// <para>
+    /// 能力由服务端 <c>GET /api/v1/sources</c> 每项的 <c>online_search</c> 字段下发（<see cref="GetSourcesAsync"/>
+    /// 调用时记录到内存能力表）：服务端给出值就以服务端为准。旧服务端没有该字段、或尚未从服务端加载过时，
+    /// 回退到按源判断（联想应用商店 / 360 软件管家 = 支持，内置精选 = 不支持），与旧版客户端行为一致。
+    /// </para>
+    /// </summary>
+    public static bool OnlineSearchAvailable
+    {
+        get
+        {
+            AppSourcePreference source = CurrentSource;
+            if (OnlineSearchCapabilities.TryGetValue(SourceIdOf(source), out bool value))
+            {
+                return value;
+            }
+
+            // 旧服务端没有 online_search 字段时的回退：联想应用商店 / 360 软件管家支持在线搜索，
+            // 内置精选源不支持（与旧版客户端硬编码的按源判断完全一致）。
+            return source switch
+            {
+                AppSourcePreference.Lenovo => true,
+                AppSourcePreference.Soft360 => true,
+                _ => false
+            };
+        }
+    }
 
     /// <summary>当前软件源显示名，例如“联想应用商店”。</summary>
     public static string SourceDisplayName => GetSourceDisplayName(CurrentSource);
@@ -326,6 +361,9 @@ public static class AppCatalogService
             SetCatalogUpdatedAt(null);
             _lastNetworkError = null;
             SetCacheState(CatalogCacheSource.None, null);
+            // 不同服务端的软件源能力可能不同：清空在线搜索能力表，等下一次 /sources 加载重新填充；
+            // 清空后 OnlineSearchAvailable 回退到按源判断，不会误用旧服务端的标志。
+            OnlineSearchCapabilities.Clear();
             BackendChanged?.Invoke(null, EventArgs.Empty);
             CatalogChanged?.Invoke(null, EventArgs.Empty);
             AppLogService.Info($"已切换后端服务地址：{normalized}。");
@@ -338,6 +376,8 @@ public static class AppCatalogService
 
     /// <summary>
     /// 从后端 <c>GET /api/v1/sources</c> 动态发现软件源。返回服务端给出的全部源（可能包含客户端不认识的 ID）。
+    /// 同时记录每个源的 <c>online_search</c> 能力供 <see cref="OnlineSearchAvailable"/> 使用
+    /// （旧服务端缺该字段时不记录，读取时回退到按源判断）。
     /// 失败时抛出异常，调用方应回退到静态软件源列表。
     /// </summary>
     public static async Task<IReadOnlyList<StoreSourceInfo>> GetSourcesAsync(CancellationToken ct = default)
@@ -345,6 +385,7 @@ public static class AppCatalogService
         EnsureInitialized();
         var response = await GetAsync<StoreSourcesResponse>("sources", ct, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
         var items = new List<StoreSourceInfo>();
+        bool anyCapability = false;
         foreach (var item in response.Items ?? new List<StoreSourceInfo>())
         {
             if (item is null || string.IsNullOrWhiteSpace(item.Id))
@@ -353,6 +394,27 @@ public static class AppCatalogService
             }
 
             items.Add(item);
+            // 线程安全地记住服务端下发的在线搜索能力；旧服务端没有 online_search（null）时不记录。
+            if (item.OnlineSearch.HasValue)
+            {
+                OnlineSearchCapabilities[item.Id.Trim()] = item.OnlineSearch.Value;
+                anyCapability = true;
+            }
+        }
+
+        if (!anyCapability)
+        {
+            // 服务端完全没有下发该字段（旧版本）：清空能力表，让 OnlineSearchAvailable 回退到按源判断，
+            // 避免继续沿用更新过的服务端留下的旧标志。
+            OnlineSearchCapabilities.Clear();
+        }
+
+        if (anyCapability)
+        {
+            AppLogService.Verbose(
+                "服务端在线搜索能力：" + string.Join("，", OnlineSearchCapabilities
+                    .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                    .Select(pair => $"{pair.Key}={pair.Value}")));
         }
 
         return items.AsReadOnly();
@@ -1600,6 +1662,8 @@ public static class AppCatalogService
         app.WebsiteUrl = ResolveHttpUrl(app.WebsiteUrl, allowEmpty: true);
         app.DownloadPageUrl = ResolveHttpUrl(app.DownloadPageUrl, allowEmpty: true);
         app.CoverUrl = ResolveOptionalHttpUrl(app.CoverUrl);
+        // 封面兜底是后端代理路径（相对 BaseUrl），与截图/图标的 proxy_url 一样统一解析成绝对地址。
+        app.CoverProxyUrl = ResolveOptionalHttpUrl(app.CoverProxyUrl);
         if (app.Screenshots.Count > 0)
         {
             var screenshots = new List<AppScreenshot>(app.Screenshots.Count);
@@ -1612,7 +1676,9 @@ public static class AppCatalogService
                 {
                     Index = screenshot.Index,
                     Kind = string.Equals(screenshot.Kind, "video", StringComparison.OrdinalIgnoreCase) ? "video" : "image",
-                    Url = url
+                    Url = url,
+                    // 直连 CDN 失败时的后端代理兜底；旧服务端没有该字段（null）时保持 null。
+                    ProxyUrl = ResolveOptionalHttpUrl(screenshot.ProxyUrl)
                 });
             }
             app.Screenshots = screenshots.Count == 0 ? Array.Empty<AppScreenshot>() : screenshots.AsReadOnly();

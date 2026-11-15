@@ -16,14 +16,19 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR.parent))
 
 from Backend.lenovo.client import LenovoRawClient
-from Backend.lenovo.details import DETAILS_SCHEMA_VERSION, LenovoDetailsProvider
+from Backend.lenovo.details import (
+    DETAILS_SCHEMA_VERSION,
+    DetailsFields,
+    LenovoDetailsProvider,
+    ScreenshotSource,
+)
 from Backend.lenovo.errors import (
     LenovoNotFoundError,
     LenovoProtocolError,
     LenovoTimeoutError,
     LenovoUnavailableError,
 )
-from Backend.lenovo.models import StoreAppDetails, StoreAppSummary
+from Backend.lenovo.models import StoreAppDetails, StoreAppSummary, StoreScreenshot
 
 
 class MutableClock:
@@ -175,20 +180,134 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(details, StoreAppDetails)
         self.assertEqual(details.id, "lenovo-l105867")
         self.assertEqual(details.version, "9.9.37.54395")
+        # 截图/视频缩略图优先联想 CDN 绝对 https 地址，proxy_url 始终是后端代理路径。
         self.assertEqual(
-            [(shot.index, shot.kind, shot.url) for shot in details.screenshots],
+            [(shot.index, shot.kind, shot.url, shot.proxy_url) for shot in details.screenshots],
             [
-                (0, "image", "/api/v1/store/lenovo/apps/L105867/screenshots/0"),
-                (1, "video", "/api/v1/store/lenovo/apps/L105867/screenshots/1"),
-                (2, "image", "/api/v1/store/lenovo/apps/L105867/screenshots/2"),
+                (
+                    0,
+                    "image",
+                    "https://lsw-fast.lenovo.com.cn/img/1.png",
+                    "/api/v1/store/lenovo/apps/L105867/screenshots/0",
+                ),
+                (
+                    1,
+                    "video",
+                    "https://imgs.lenovomm.cn/thumb.jpg",
+                    "/api/v1/store/lenovo/apps/L105867/screenshots/1",
+                ),
+                (
+                    2,
+                    "image",
+                    "https://lsw-fast.lenovo.com.cn/img/2.jpg",
+                    "/api/v1/store/lenovo/apps/L105867/screenshots/2",
+                ),
             ],
         )
-        self.assertEqual(details.cover_url, "/api/v1/store/lenovo/apps/L105867/cover")
+        self.assertEqual(details.cover_url, "https://imgs.lenovomm.cn/cover.jpg")
+        self.assertEqual(details.cover_proxy_url, "/api/v1/store/lenovo/apps/L105867/cover")
         self.assertEqual([tag.name for tag in details.detail_tags], ["安全认证", "无提示"])
         self.assertEqual(details.long_description, "详细描述文本")
         # 详情继承 summary 的图标字段：客户端仍可直连联想 CDN，代理路径作兜底。
         self.assertEqual(details.icon_url, "https://lsw-fast.lenovo.com.cn/logo/L105867.png")
         self.assertEqual(details.icon_proxy_url, "/api/v1/store/lenovo/apps/L105867/icon")
+
+    async def test_non_direct_image_urls_fall_back_to_the_proxy_path(self):
+        """不是 https 或 host 不在 CDN 白名单的图片地址回退后端代理路径。"""
+
+        fields = DetailsFields(
+            long_description="描述",
+            release_notes="",
+            screenshots=(
+                ScreenshotSource(index=0, kind="image", source_url="http://lsw-fast.lenovo.com.cn/a.png"),
+                ScreenshotSource(index=1, kind="image", source_url="https://evil.example.com/a.png"),
+                ScreenshotSource(
+                    index=2, kind="video", source_url="https://imgs.lenovomm.cn.evil.example.com/a.png"
+                ),
+                ScreenshotSource(index=3, kind="image", source_url="https://pc1.gtimg.com/a.png"),
+            ),
+            cover_source="https://evil.example.com/cover.png",
+            labels=(),
+            ranking=None,
+            detail_tags=(),
+        )
+        details = self.provider.build_details(summary(), fields)
+        self.assertEqual(
+            [shot.url for shot in details.screenshots],
+            [
+                "/api/v1/store/lenovo/apps/L105867/screenshots/0",
+                "/api/v1/store/lenovo/apps/L105867/screenshots/1",
+                "/api/v1/store/lenovo/apps/L105867/screenshots/2",
+                "https://pc1.gtimg.com/a.png",
+            ],
+        )
+        self.assertEqual(
+            [shot.proxy_url for shot in details.screenshots],
+            [f"/api/v1/store/lenovo/apps/L105867/screenshots/{index}" for index in range(4)],
+        )
+        # 封面地址不安全时回退代理路径，cover_proxy_url 保持代理路径。
+        self.assertEqual(details.cover_url, "/api/v1/store/lenovo/apps/L105867/cover")
+        self.assertEqual(details.cover_proxy_url, "/api/v1/store/lenovo/apps/L105867/cover")
+
+        without_cover = DetailsFields(
+            long_description="描述",
+            release_notes="",
+            screenshots=(),
+            cover_source=None,
+            labels=(),
+            ranking=None,
+            detail_tags=(),
+        )
+        no_cover_details = self.provider.build_details(summary(), without_cover)
+        self.assertIsNone(no_cover_details.cover_url)
+        self.assertIsNone(no_cover_details.cover_proxy_url)
+        self.assertEqual(no_cover_details.screenshots, [])
+
+    async def test_screenshot_urls_cannot_be_arbitrary_addresses(self):
+        """模型层拒绝任意 URL 注入：url 只能是 CDN https 或本后端代理路径。"""
+
+        valid = [
+            "https://lsw-fast.lenovo.com.cn/a.png",
+            "https://imgs.lenovomm.cn/a.png",
+            "https://pc1.gtimg.com/a.png",
+            "/api/v1/store/lenovo/apps/L105867/screenshots/0",
+        ]
+        for url in valid:
+            with self.subTest(url=url):
+                screenshot = StoreScreenshot(index=0, kind="image", url=url)
+                self.assertEqual(screenshot.url, url)
+        for url in (
+            "http://lsw-fast.lenovo.com.cn/a.png",
+            "https://evil.example.com/a.png",
+            "https://imgs.lenovomm.cn.evil.example.com/a.png",
+            "https://imgs.lenovomm.cn./a.png",
+            "https://imgs.lenovomm.cn@evil.example.com/a.png",
+            "https://user:pass@imgs.lenovomm.cn/a.png",
+            "ftp://imgs.lenovomm.cn/a.png",
+            "/api/v1/store/360/apps/1/screenshots/0",
+            "https://lenovomm.cn/a.png",
+        ):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                StoreScreenshot(index=0, kind="image", url=url)
+        with self.assertRaises(ValueError):
+            StoreScreenshot(
+                index=0,
+                kind="image",
+                url="https://imgs.lenovomm.cn/a.png",
+                proxy_url="https://imgs.lenovomm.cn/a.png",
+            )
+        with self.assertRaises(ValueError):
+            StoreAppDetails(
+                **summary().model_dump(),
+                long_description="描述",
+                cover_url="https://evil.example.com/cover.png",
+            )
+        with self.assertRaises(ValueError):
+            StoreAppDetails(
+                **summary().model_dump(),
+                long_description="描述",
+                cover_proxy_url="/api/v1/store/360/apps/1/cover",
+            )
 
     async def test_video_url_is_never_written_to_disk(self):
         await self.provider.get_fields("L105867")

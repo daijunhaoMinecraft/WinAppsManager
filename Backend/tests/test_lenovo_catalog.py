@@ -992,9 +992,17 @@ class LenovoServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.long_description, "详细描述文本")
         self.assertEqual(details.release_notes, "更新说明文本")
         self.assertEqual([(shot.index, shot.kind) for shot in details.screenshots], [(0, "image"), (1, "video")])
-        self.assertEqual(details.screenshots[0].url, "/api/v1/store/lenovo/apps/L105867/screenshots/0")
-        self.assertEqual(details.screenshots[1].url, "/api/v1/store/lenovo/apps/L105867/screenshots/1")
-        self.assertEqual(details.cover_url, "/api/v1/store/lenovo/apps/L105867/cover")
+        # 截图/封面优先返回联想 CDN 绝对 https 地址，proxy_url 始终是后端代理路径。
+        self.assertEqual(details.screenshots[0].url, "https://lsw-fast.lenovo.com.cn/img/1.png")
+        self.assertEqual(details.screenshots[1].url, "https://imgs.lenovomm.cn/thumb.jpg")
+        self.assertEqual(
+            details.screenshots[0].proxy_url, "/api/v1/store/lenovo/apps/L105867/screenshots/0"
+        )
+        self.assertEqual(
+            details.screenshots[1].proxy_url, "/api/v1/store/lenovo/apps/L105867/screenshots/1"
+        )
+        self.assertEqual(details.cover_url, "https://imgs.lenovomm.cn/cover.jpg")
+        self.assertEqual(details.cover_proxy_url, "/api/v1/store/lenovo/apps/L105867/cover")
         self.assertEqual(details.labels, ["AI对话", "办公辅助工具"])
         self.assertEqual(details.ranking, "聊天社交类下载榜第2名")
         self.assertEqual(details.detail_tags[0].name, "安全认证")

@@ -11,7 +11,9 @@
   :mod:`Backend.soft360.search`），结果条目字段与目录条目类似；
 - ``logo_url`` 是 **360 图片 CDN 的绝对 https URL**（qhimg.com / mediav.com 等），客户端可
   直连取图；``icon_proxy_url`` 是后端代理路径，直连失败或需要统一缓存时使用；
-- 截图 ``url`` 是后端相对代理路径（``/api/v1/store/360/...``），由客户端按 BaseUrl 解析；
+- 截图 ``url`` **优先 360 图片 CDN 的绝对 https 地址**（客户端直连取图），不满足 https +
+  CDN 白名单时回退后端相对代理路径（``/api/v1/store/360/...``）；``proxy_url`` 始终是代理
+  路径，作为直连失败时的兜底；
 - 360 没有视频，:class:`Soft360Screenshot` 只有图片；
 - 目录列表接口不返回架构/系统信息，所以目录条目默认 ``architectures=["x64", "x86"]``、
   ``minimum_windows="7"``；详情与搜索接口的 ``os.bit`` / ``os.ver`` 会覆盖这两个字段。
@@ -20,7 +22,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -41,6 +43,69 @@ StoreRelativePath = Annotated[str, Field(min_length=1, max_length=512, pattern=r
 # 客户端直连的图标地址：360 图片 CDN 的绝对 http(s) URL（响应里统一规范化为 https）。
 IconUrl = Annotated[str, Field(min_length=8, max_length=1024, pattern=r"^https?://")]
 MinimumWindows = Annotated[str, Field(pattern=r"^(7|8|8\.1|10|11)$")]
+
+# 详情截图直连 CDN 白名单：只允许 https 的 360 图片 CDN 子域（与图片代理使用的是同一组 CDN）。
+ALLOWED_IMAGE_DOMAIN_SUFFIXES: tuple[str, ...] = (
+    ".qhimg.com",
+    ".mediav.com",
+    ".qhres2.com",
+    ".qhres.com",
+)
+# 详情图片地址：优先 360 图片 CDN 绝对 https 地址，否则回退本后端 /api/v1/store/360/ 相对代理路径。
+ImageUrl = Annotated[str, Field(min_length=1, max_length=1024)]
+_STORE_RELATIVE_PREFIX = "/api/v1/store/360/"
+
+
+def cdn_image_url(value: Any) -> str | None:
+    """把 360 图片 CDN 地址规范化为可直连的 https 绝对地址；不满足安全条件返回 ``None``。
+
+    必须同时满足：``https`` scheme、有 host、无用户信息、无空白/控制字符，且 host 落在
+    :data:`ALLOWED_IMAGE_DOMAIN_SUFFIXES`（``*.qhimg.com`` / ``*.mediav.com`` /
+    ``*.qhres2.com`` / ``*.qhres.com``）的子域内。详情映射在读入时已经把 http 统一转成
+    https，因此这里不做 http→https 升级：不合格地址由调用方回退后端代理路径。
+    """
+
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > 1024 or any(ord(character) < 32 for character in text):
+        return None
+    if any(character.isspace() for character in text):
+        return None
+    try:
+        parsed = urlsplit(text)
+        parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.casefold() != "https" or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    host = parsed.hostname.casefold()
+    if not host:
+        return None
+    if not any(
+        host.endswith(suffix) and len(host) > len(suffix)
+        for suffix in ALLOWED_IMAGE_DOMAIN_SUFFIXES
+    ):
+        return None
+    return text
+
+
+def _validate_image_url(value: str) -> str:
+    """校验详情截图地址：CDN 绝对 https 地址，或本后端 360 相对代理路径。"""
+
+    if value.startswith(_STORE_RELATIVE_PREFIX):
+        if len(value) <= 512 and not any(
+            ord(character) < 32 or character.isspace() for character in value
+        ):
+            return value
+        raise ValueError("图片代理地址必须是 /api/v1/store/360/ 下的相对路径")
+    if cdn_image_url(value) is not None:
+        return value
+    raise ValueError(
+        "图片地址必须是 360 图片 CDN 绝对 https 地址，或 /api/v1/store/360/ 相对代理路径"
+    )
 
 
 class Soft360AppSummary(ApiModel):
@@ -95,11 +160,21 @@ class Soft360AppSummary(ApiModel):
 
 
 class Soft360Screenshot(ApiModel):
-    """详情页截图；``index`` 是 360 ``snapshot`` 列表的原始顺序。"""
+    """详情页截图；``index`` 是 360 ``snapshot`` 列表的原始顺序。
+
+    ``url`` 优先 360 图片 CDN 的绝对 https 原图，客户端直连取图；CDN 地址不合格时回退
+    ``proxy_url`` 的后端代理路径。``proxy_url`` 始终是 ``/api/v1/store/360/...`` 相对路径。
+    """
 
     index: Annotated[int, Field(ge=0)]
     kind: Literal["image"] = "image"
-    url: StoreRelativePath
+    url: ImageUrl
+    proxy_url: StoreRelativePath | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        return _validate_image_url(value)
 
 
 class Soft360AppDetails(Soft360AppSummary):
@@ -167,6 +242,7 @@ class Soft360SearchResponse(ApiModel):
 
 
 __all__ = [
+    "ALLOWED_IMAGE_DOMAIN_SUFFIXES",
     "INSTALLATION_NOTES",
     "Soft360AppDetails",
     "Soft360AppSummary",
@@ -175,4 +251,5 @@ __all__ = [
     "Soft360Category",
     "Soft360Screenshot",
     "Soft360SearchResponse",
+    "cdn_image_url",
 ]

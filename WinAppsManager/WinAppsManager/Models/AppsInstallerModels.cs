@@ -79,8 +79,14 @@ public class AppItem : INotifyPropertyChanged
     /// <summary>更新说明（联想的 <c>whatNew</c>），为空表示源不提供。</summary>
     public string? ReleaseNotes { get; set; }
 
-    /// <summary>横版封面图地址（已按后端 BaseUrl 解析为绝对地址），可能为空。</summary>
+    /// <summary>横版封面图地址（已按后端 BaseUrl 解析为绝对地址），可能为空；商店源优先是 CDN 绝对地址。</summary>
     public string? CoverUrl { get; set; }
+
+    /// <summary>
+    /// 封面兜底地址（后端 <c>/api/v1/store/...</c> 封面代理路径，已解析为绝对地址）。
+    /// 直连 <see cref="CoverUrl"/> 失败时由 <c>StoreMediaService</c> 回退到它，可能为空。
+    /// </summary>
+    public string? CoverProxyUrl { get; set; }
 
     /// <summary>截图/视频缩略图列表，内置精选源为空。</summary>
     public IReadOnlyList<AppScreenshot> Screenshots { get; set; } = Array.Empty<AppScreenshot>();
@@ -100,8 +106,14 @@ public sealed class AppScreenshot
     /// <summary><c>image</c> 或 <c>video</c>。</summary>
     public string Kind { get; set; } = "image";
 
-    /// <summary>图片地址（已按后端 BaseUrl 解析为绝对地址）。</summary>
+    /// <summary>图片地址（已按后端 BaseUrl 解析为绝对地址；商店源优先是 CDN 绝对地址）。</summary>
     public string Url { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 截图兜底地址（后端 <c>/api/v1/store/...</c> 截图代理路径，已解析为绝对地址）。
+    /// 直连 <see cref="Url"/> 失败时由 <c>StoreMediaService</c> 回退到它，可能为空。
+    /// </summary>
+    public string? ProxyUrl { get; set; }
 
     /// <summary>派生属性：是否为视频缩略图（不参与磁盘缓存序列化，反序列化时自动重算）。</summary>
     public bool IsVideo => string.Equals(Kind, "video", StringComparison.OrdinalIgnoreCase);

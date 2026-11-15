@@ -51,6 +51,11 @@ public partial class AppsInstallPage : Page
     private bool _isLoading;
     private bool _isOnlineSearching;
     private bool _hasSuccessfulLoad;
+    /// <summary>
+    /// 服务端“在线搜索能力”（<c>/api/v1/sources</c> 的 <c>online_search</c>）是否已请求过；
+    /// 请求失败时复位，允许下一次目录加载重试（失败期间回退按源判断）。
+    /// </summary>
+    private bool _onlineSearchCapabilityRequested;
     private string _selectedCategory = AllCategories;
     private string? _onlineSearchQuery;
     private string? _onlineSearchError;
@@ -80,6 +85,8 @@ public partial class AppsInstallPage : Page
     {
         _isPageActive = true;
         AppCatalogService.CacheChanged += OnCacheChanged;
+        // 服务端下发的在线搜索能力与目录并行预取：旧服务端没有该字段时自动回退按源判断。
+        _ = RefreshOnlineSearchCapabilityAsync();
 
         if (_catalogLoadTask is { IsCompleted: false })
         {
@@ -199,7 +206,12 @@ public partial class AppsInstallPage : Page
     }
 
     /// <summary>服务端地址切换后目录缓存与内存目录都已清空：按切换软件源的同样方式清空页面状态并重新加载。</summary>
-    private void OnBackendChanged(object? sender, EventArgs args) => OnSourceChanged(sender, args);
+    private void OnBackendChanged(object? sender, EventArgs args)
+    {
+        // 换了服务端：在线搜索能力要按新服务端重新获取（旧服务端可能根本没有 online_search 字段）。
+        _onlineSearchCapabilityRequested = false;
+        OnSourceChanged(sender, args);
+    }
 
     /// <summary>目录加载失败后的“重试”按钮：重新走普通加载（客户端已无手动刷新目录入口）。</summary>
     private async void RetryCatalog_OnClick(object sender, RoutedEventArgs args) => await LoadCatalogAsync();
@@ -213,6 +225,54 @@ public partial class AppsInstallPage : Page
 
         _catalogLoadTask = LoadCatalogCoreAsync();
         return _catalogLoadTask;
+    }
+
+    /// <summary>
+    /// 在线搜索是否可用由服务端 <c>GET /api/v1/sources</c> 的 <c>online_search</c> 决定：
+    /// 目录加载时静默预取一次能力表（与目录请求并行，不阻塞列表显示），拿到结果后刷新空状态里的
+    /// “在…在线搜索”按钮。旧服务端没有该字段或请求失败时保持按源判断的回退
+    /// （见 <see cref="AppCatalogService.OnlineSearchAvailable"/>），并允许下一次目录加载重试。
+    /// </summary>
+    private async Task RefreshOnlineSearchCapabilityAsync()
+    {
+        if (_onlineSearchCapabilityRequested)
+        {
+            return;
+        }
+
+        _onlineSearchCapabilityRequested = true;
+        try
+        {
+            // 预取前的可搜索状态（未加载时是回退值）；只有服务端标志真正改变结果时才刷新空状态，
+            // 避免列表已显示后无意义地重建当前页。
+            bool before = AppCatalogService.OnlineSearchAvailable;
+            await AppCatalogService.GetSourcesAsync();
+            if (!_isInitialized || before == AppCatalogService.OnlineSearchAvailable)
+            {
+                return;
+            }
+
+            if (Dispatcher.CheckAccess())
+            {
+                ApplyFilters();
+            }
+            else
+            {
+                _ = Dispatcher.BeginInvoke(new Action(ApplyFilters));
+            }
+        }
+        catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // 旧服务端没有 /sources 路由：保持按源判断的回退，不需要在每次目录加载时重复请求。
+            AppLogService.Verbose("服务端没有 /sources 接口，在线搜索能力回退按源判断。");
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            // 旧服务端（响应里没有 online_search 字段）或网络失败都不影响软件列表，继续用回退判断。
+            _onlineSearchCapabilityRequested = false;
+            AppLogService.Verbose(
+                $"获取服务端在线搜索能力失败，回退按源判断：{error.GetType().Name}：{error.Message}");
+        }
     }
 
     /// <summary>
@@ -239,6 +299,8 @@ public partial class AppsInstallPage : Page
         _loadError = null;
         UpdateLoadStatus();
         AppLogService.Info($"软件列表开始加载目录：源={AppCatalogService.SourceDisplayName}。");
+        // 与目录加载并行预取“在线搜索能力”（服务端 online_search）；不阻塞目录请求。
+        _ = RefreshOnlineSearchCapabilityAsync();
 
         try
         {
@@ -444,8 +506,9 @@ public partial class AppsInstallPage : Page
 
         bool showEmpty = hasData && _filteredApps.Count == 0;
         EmptyState.Visibility = showEmpty ? Visibility.Visible : Visibility.Collapsed;
-        // 联想应用商店与 360 软件管家都支持在线搜索（目录外补充结果）；内置精选源没有该能力。
-        bool canOnlineSearch = !online && query.Length > 0 && _hasSuccessfulLoad && AppCatalogService.IsStoreCatalogSource;
+        // 是否提供在线搜索由服务端 /api/v1/sources 的 online_search 决定（旧服务端回退按源判断，
+        // 见 AppCatalogService.OnlineSearchAvailable）；页面不再硬编码“联想/360 才有在线搜索”。
+        bool canOnlineSearch = !online && query.Length > 0 && _hasSuccessfulLoad && AppCatalogService.OnlineSearchAvailable;
         string onlineSearchText = $"在{sourceName}在线搜索";
         OnlineSearchButton.Visibility = showEmpty && canOnlineSearch && !_isOnlineSearching
             ? Visibility.Visible : Visibility.Collapsed;
@@ -647,8 +710,8 @@ public partial class AppsInstallPage : Page
     private async void OnlineSearch_OnClick(object sender, RoutedEventArgs args)
     {
         string query = SearchBox.Text.Trim();
-        // 联想应用商店与 360 软件管家都支持在线搜索（目录外补充结果）；内置精选源没有该能力。
-        if (query.Length == 0 || _isOnlineSearching || !AppCatalogService.IsStoreCatalogSource)
+        // 在线搜索能力由服务端 /api/v1/sources 的 online_search 下发（旧服务端回退按源判断）。
+        if (query.Length == 0 || _isOnlineSearching || !AppCatalogService.OnlineSearchAvailable)
         {
             return;
         }

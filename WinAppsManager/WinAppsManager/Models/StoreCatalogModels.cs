@@ -88,6 +88,7 @@ public static class StoreCatalogMapper
         app.ReleaseNotes = NormalizeText(details.ReleaseNotes);
         app.RankingDescription = string.IsNullOrWhiteSpace(details.Ranking) ? null : details.Ranking.Trim();
         app.CoverUrl = string.IsNullOrWhiteSpace(details.CoverUrl) ? null : details.CoverUrl.Trim();
+        app.CoverProxyUrl = string.IsNullOrWhiteSpace(details.CoverProxyUrl) ? null : details.CoverProxyUrl.Trim();
         app.Labels = CleanList(details.Labels);
         app.DetailTags = MapDetailTags(details.DetailTags);
         app.Screenshots = MapScreenshots(details.Screenshots);
@@ -135,7 +136,9 @@ public static class StoreCatalogMapper
             {
                 Index = item.Index,
                 Kind = kind,
-                Url = item.Url.Trim()
+                Url = item.Url.Trim(),
+                // proxy_url 是后端截图代理路径（直连 CDN 失败时兜底）；旧服务端没有该字段时为 null。
+                ProxyUrl = string.IsNullOrWhiteSpace(item.ProxyUrl) ? null : item.ProxyUrl.Trim()
             });
         }
 
@@ -241,7 +244,13 @@ public sealed class StoreAppDetails : StoreAppSummary
     public string? LongDescription { get; set; }
     public string? ReleaseNotes { get; set; }
     public List<StoreScreenshot>? Screenshots { get; set; }
+
+    /// <summary>横版封面地址：优先是联想 CDN 绝对 https 地址，无法直连时后端回退相对代理路径。</summary>
     public string? CoverUrl { get; set; }
+
+    /// <summary>封面后端代理路径（相对 BaseUrl，<c>/api/v1/store/lenovo/apps/{soft_id}/cover</c>），直连 CDN 失败时兜底。</summary>
+    public string? CoverProxyUrl { get; set; }
+
     public List<string>? Labels { get; set; }
     public string? Ranking { get; set; }
     public List<StoreDetailTag>? DetailTags { get; set; }
@@ -252,7 +261,12 @@ public sealed class StoreScreenshot
 {
     public int Index { get; set; }
     public string? Kind { get; set; }
+
+    /// <summary>图片地址：优先是联想 CDN 绝对 https 地址，无法直连时后端回退相对代理路径。</summary>
     public string? Url { get; set; }
+
+    /// <summary>后端截图代理路径（相对 BaseUrl），直连 CDN 失败时的兜底；旧服务端没有该字段。</summary>
+    public string? ProxyUrl { get; set; }
 }
 
 /// <summary>详情徽章：名称 + 提示文案。</summary>
@@ -299,6 +313,12 @@ public sealed class StoreSourceInfo
     public int? AppCount { get; set; }
     public bool IsDefault { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
+
+    /// <summary>
+    /// 服务端是否提供“在线搜索”（JSON 字段 <c>online_search</c>）。
+    /// 旧服务端没有该字段时为 <see langword="null"/>，客户端回退到按源判断（联想/360 = true、内置精选 = false）。
+    /// </summary>
+    public bool? OnlineSearch { get; set; }
 }
 
 /// <summary><c>GET /api/v1/sources</c> 的响应。</summary>

@@ -204,7 +204,7 @@ Rider 的默认运行键使用 `WinAppsManager (Windows 7 兼容)`（net6）；�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 服务状态 |
-| GET | `/sources` | 软件源列表：联想应用商店、360 软件管家与内置精选的 enabled / app_count / is_default |
+| GET | `/sources` | 软件源列表：联想应用商店、360 软件管家与内置精选的 enabled / app_count / is_default / online_search |
 | GET | `/status` | 预热/可用性状态与定时刷新统计，诊断用 |
 | GET | `/apps` | 软件列表，支持 `search`、`category`、`sort`、`architecture`、`refresh`（`builtin.enabled=false` 时 503） |
 | GET | `/apps/{app_id}` | 软件详情，不可用且无快照时返回 503 |
@@ -342,8 +342,8 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 5.6 联想/360 应用商店源与内置源启用范围
 
-- **联想源**在 `Backend/lenovo/`：`token.py` 随机设备指纹 + JWT 缓存、`client.py` 原始接口、`catalog.py` 逐分类（soft 19 + game 9，`limit=1000`）抓取并按 `softID` 去重（约 5111 款）与内存/磁盘快照、`details.py` 详情缓存与下载地址解析、`media.py` 图片代理缓存、`service.py` 门面、`routes.py` 暴露 `/api/v1/store/lenovo/*`。**目录缓存语义（2026-11 调整）**：启动时 `preload()` 只读 `catalog.json` 到内存（不联网）；`GET /store/lenovo/apps` 请求路径**只返回内存/磁盘快照**（唯一例外是完全没有快照时的冷启动同步抓取），不会因为请求去抓联想；由**随服务启动的独立后台线程**（`threading.Thread`，名称 `lenovo-catalog-refresher`）按 `catalog_refresh_interval_seconds`（默认 300 秒）定时抓取并原子写回 `catalog.json`，启动时快照超龄会立即补刷一次，失败保留旧快照；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记；手动立即更新仅服务端 `POST /store/lenovo/refresh`（同步，客户端已移除刷新按钮与手动刷新链路）；GET 的 `refresh` 参数已移除，任何查询参数都不会触发抓取。详情内存/磁盘缓存；搜索 60 秒；下载地址**从不缓存**；图片按 URL 哈希落盘（30 天、256MB 上限、ETag/304）。联想接口调研见 `docs/lenovo-store-api.md`，实现契约见 `docs/store-source-design.md`。列表/搜索条目 `icon_url` 是联想 CDN 绝对地址（客户端直连取图），`icon_proxy_url` 是后端代理兜底；截图/封面仍走后端代理。联想业务请求全部在后端完成，客户端不直连联想接口。
-- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL，优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。GET 只读缓存、`POST /refresh` 同步刷新；搜索已逆向 `enc_client/v2/search/search`（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，实现在 `search.py`，算法见 `docs/soft360-search-api.md`），`/search` 覆盖 360 全量目录，失败回退缓存子集匹配；目录本身仍是各分类热门子集，全量 43,731 款不抓全，调研见 `docs/soft360-store-api.md`。
+- **联想源**在 `Backend/lenovo/`：`token.py` 随机设备指纹 + JWT 缓存、`client.py` 原始接口、`catalog.py` 逐分类（soft 19 + game 9，`limit=1000`）抓取并按 `softID` 去重（约 5111 款）与内存/磁盘快照、`details.py` 详情缓存与下载地址解析、`media.py` 图片代理缓存、`service.py` 门面、`routes.py` 暴露 `/api/v1/store/lenovo/*`。**目录缓存语义（2026-11 调整）**：启动时 `preload()` 只读 `catalog.json` 到内存（不联网）；`GET /store/lenovo/apps` 请求路径**只返回内存/磁盘快照**（唯一例外是完全没有快照时的冷启动同步抓取），不会因为请求去抓联想；由**随服务启动的独立后台线程**（`threading.Thread`，名称 `lenovo-catalog-refresher`）按 `catalog_refresh_interval_seconds`（默认 300 秒）定时抓取并原子写回 `catalog.json`，启动时快照超龄会立即补刷一次，失败保留旧快照；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记；手动立即更新仅服务端 `POST /store/lenovo/refresh`（同步，客户端已移除刷新按钮与手动刷新链路）；GET 的 `refresh` 参数已移除，任何查询参数都不会触发抓取。详情内存/磁盘缓存；搜索 60 秒；下载地址**从不缓存**；图片按 URL 哈希落盘（30 天、256MB 上限、ETag/304）。联想接口调研见 `docs/lenovo-store-api.md`，实现契约见 `docs/store-source-design.md`。列表/搜索条目 `icon_url` 是联想 CDN 绝对地址（客户端直连取图），`icon_proxy_url` 是后端代理兜底；详情截图与封面也优先返回 CDN 绝对地址（`url`/`cover_url`），并附 `proxy_url`/`cover_proxy_url` 作为客户端直连失败时的后端兜底。联想业务请求全部在后端完成，客户端不直连联想接口。
+- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL，优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。详情截图 `url` 优先返回 qhimg 等 CDN 绝对地址并附 `proxy_url` 兜底；`/sources` 的 `online_search=true` 告诉客户端可显示在线搜索。GET 只读缓存、`POST /refresh` 同步刷新；搜索已逆向 `enc_client/v2/search/search`（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，实现在 `search.py`，算法见 `docs/soft360-search-api.md`），`/search` 覆盖 360 全量目录，失败回退缓存子集匹配；目录本身仍是各分类热门子集，全量 43,731 款不抓全，调研见 `docs/soft360-store-api.md`。
 - **内置源**通过 `builtin.enabled` / `builtin.app_ids` 控制启用范围（默认只启用 `clashverge` 与 `telegram`）。未启用的目录条目保留在 `CatalogRepository.all_apps`，但 `list_apps`/`get_app` 不暴露、不创建 provider、不预热/不刷新；`/sources` 的 `builtin.app_count` 是过滤后的数量。改动内置源启用逻辑时同步 `Backend/tests/test_builtin_source.py`。
 
 ## 6. 客户端架构
@@ -365,7 +365,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.2 页面职责
 
-- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、商店源（联想/360）空结果时的在线搜索（**不提供刷新按钮**，联想目录由后端独立线程每 5 分钟自动更新，页面只在进入/源切换时读缓存）；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；联想源图标按行按需加载。
+- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、按 `/sources` 的 `online_search` 能力显示商店源在线搜索（**不提供刷新按钮**，联想目录由后端独立线程每 5 分钟自动更新，页面只在进入/源切换时读缓存）；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；联想源图标按行按需加载。
 - `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，联想源传入 soft id 以播放视频）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
 - `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、取消/重试/移除/打开安装包/打开下载文件夹。
 - `UninstallPage`：读取 Windows 卸载注册表和当前用户商店应用，按“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四类展示，支持分类筛选、搜索、全选、逐项选择和批量卸载；不依赖后端。
@@ -505,7 +505,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - **ETag 条件缓存**：每个图标旁写 `<key>.meta.json`（`etag`/`last_modified`/`checked_at_utc`）；`IconRevalidateInterval`（默认 24 小时）内直接读文件，过期后发 `If-None-Match`/`If-Modified-Since`：304 只刷新元数据、200 替换文件、超时或非 2xx 继续用旧文件。
 - **ICO 帧选择**：`IconImageFormat` 解析 ICO 目录选最大帧，PNG 帧直接解码、DIB 帧重封装后交给 `IconBitmapDecoder`，失败才回退整个容器；7zip、notepadplusplus 实测正常显示。
 - **联想/360 源图标直连 CDN**：列表/搜索的 `icon_url` 是 CDN 绝对地址（联想：lsw-fast.lenovo.com.cn、imgs.lenovomm.cn、pc1.gtimg.com；360：*.qhimg.com、*.mediav.com、*.qhres2.com、*.qhres.com），`ClientCacheStore.TryIconUri` 对白名单 CDN 主机放行，图标 HttpClient 固定 `User-Agent: WinAppsManager/1.0`（联想 CDN 拒绝 curl 类 UA）；`EnsureIconAsync` 先直连、失败再回退后端 `icon_proxy_url`；支持 png/ico/jpg/jpeg/gif/bmp。内置源图标仍走后端 `/api/v1/apps/{id}/icon` 预热。
-- **按需加载**：联想源约 5000 款不预热图标，列表行加载时调用 `EnsureIconAsync`（并发上限 6）；`StoreMediaService` 负责详情截图/封面（后端代理 URL，只允许当前服务端 `/api/v1/store/`），内存 LRU 按解码后像素字节记账、相册缩略图按 640 宽解码，磁盘缓存 `%LOCALAPPDATA%\WinAppsManager\Cache\store-media`。**视频不经过 StoreMediaService 缓存**：`ScreenshotViewerWindow` 用 `MediaElement` 播放 `AppCatalogService.TryBuildLenovoVideoUrl(softId, index)` 拼出的后端代理 URL（`/screenshots/{index}/video`，Range/206），播放失败显示错误并可用浏览器打开同一代理地址；窗口会因 MediaElement 与 `AllowsTransparency` 不兼容而在视频相册时使用不透明背景。
+- **按需加载**：联想/360 源不预热图标，列表行加载时调用 `EnsureIconAsync`（并发上限 6）；`StoreMediaService` 负责详情截图/封面，允许当前服务端 `/api/v1/store/` 代理路径与联想/360 CDN 白名单绝对地址（直连优先、失败回退 `proxy_url`/`cover_proxy_url`），内存 LRU 按解码后像素字节记账、相册缩略图按 640 宽解码，磁盘缓存 `%LOCALAPPDATA%\WinAppsManager\Cache\store-media`。**视频不经过 StoreMediaService 缓存**：`ScreenshotViewerWindow` 用 `MediaElement` 播放 `AppCatalogService.TryBuildLenovoVideoUrl(softId, index)` 拼出的后端代理 URL（`/screenshots/{index}/video`，Range/206），播放失败显示错误并可用浏览器打开同一代理地址；窗口会因 MediaElement 与 `AllowsTransparency` 不兼容而在视频相册时使用不透明背景。
 
 ### 6.12 平台与架构适配
 

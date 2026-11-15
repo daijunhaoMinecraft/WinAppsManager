@@ -15,6 +15,8 @@ namespace WinAppsManager.Dialogs;
 /// <summary>
 /// 联想应用商店截图/视频预览窗口：深色对话框外观、上一张/下一张、Esc 关闭，
 /// 键盘 Left/Right/Home/End 导航；图片由 <see cref="StoreMediaService"/> 异步加载并复用其内存/磁盘缓存。
+/// 大图优先直连联想 CDN（<see cref="AppScreenshot.Url"/>），失败回退后端代理路径（<see cref="AppScreenshot.ProxyUrl"/>），
+/// 与详情页缩略图使用同一套直连 + 回退链路。
 /// <para>
 /// 视频条目（<see cref="AppScreenshot.IsVideo"/>）额外提供 <see cref="MediaElement"/> 播放器：
 /// 媒体源是后端联想视频代理地址（<see cref="AppCatalogService.TryBuildLenovoVideoUrl"/>，客户端不直连 CDN），
@@ -307,7 +309,10 @@ public partial class ScreenshotViewerWindow : Window
 
         try
         {
-            var image = await StoreMediaService.GetImageAsync(_screenshots[index].Url, _cancellation.Token);
+            // 大图按原始尺寸加载：优先直连商店 CDN（AppScreenshot.Url），失败再回退后端代理（ProxyUrl）。
+            AppScreenshot screenshot = _screenshots[index];
+            var image = await StoreMediaService.GetImageAsync(
+                screenshot.Url, screenshot.ProxyUrl, 0, _cancellation.Token);
             _cancellation.Token.ThrowIfCancellationRequested();
             if (image is not null)
             {

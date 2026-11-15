@@ -12,7 +12,14 @@ using System.Windows.Media.Imaging;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// 把后端代理的商店图片（联想应用商店 / 360 软件管家的截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
+/// 把商店图片（联想应用商店 / 360 软件管家的截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
+/// <para>
+/// 图片来源有两类：①后端 <c>/api/v1/store/</c> 代理路径（相对当前服务端地址）；②联想/360 图片 CDN 的
+/// 绝对地址（后端详情响应里的 <c>url</c> / <c>cover_url</c>）。加载时优先直连 CDN，
+/// 失败再回退后端代理路径（<see cref="GetImageAsync(string?, string?, int, CancellationToken)"/>），
+/// 以减少后端图片代理带宽；两类地址都必须通过 <see cref="TryMediaUri"/> 的主机白名单校验，
+/// 避免把任意 URL 当成图片去请求。
+/// </para>
 /// <para>
 /// 线程模型：解码在后台线程完成并 <see cref="Freezable.Freeze"/> 后返回，UI 线程只做绑定。
 /// 缓存分两层：内存 LRU（按**解码后的像素字节**计，默认 64 张 / 32 MB）与磁盘缓存
@@ -38,6 +45,15 @@ public static class StoreMediaService
     private const string TemporaryExtension = ".tmp";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico"];
+
+    /// <summary>
+    /// 联想图片 CDN 主机白名单（含子域）：logo/截图在 <c>lsw-fast.lenovo.com.cn</c>，
+    /// 详情封面与视频缩略图在 <c>imgs.lenovomm.cn</c>，部分 logo 在第三方图床 <c>pc1.gtimg.com</c>。
+    /// </summary>
+    private static readonly string[] LenovoCdnHosts = ["lenovo.com.cn", "lenovomm.cn", "gtimg.com"];
+
+    /// <summary>360 图片 CDN 域名白名单（含子域）：logo 与 snapshot 在 qhimg.com，个别在 mediav.com。</summary>
+    private static readonly string[] Soft360CdnHosts = ["qhimg.com", "mediav.com", "qhres2.com", "qhres.com"];
 
     // 后端地址可在设置中修改，因此这里每次取当前值，不再用静态字段固化。
     private static Uri Backend => AppCatalogService.BackendUri;
@@ -69,17 +85,15 @@ public static class StoreMediaService
         get { lock (MemoryGate) return Memory.Count; }
     }
 
-    /// <summary>
-    /// 加载一张后端图片为可跨线程使用的 <see cref="ImageSource"/>；任何失败都返回 <see langword="null"/>。
-    /// 只接受当前后端 <c>/api/v1/store/</c> 下的图片地址，避免把任意 URL 当成图片去请求。
-    /// </summary>
+    /// <summary>加载一张图片（后端代理路径或商店 CDN 绝对地址）；任何失败都返回 <see langword="null"/>。</summary>
     public static Task<ImageSource?> GetImageAsync(string? url, CancellationToken ct = default) =>
         GetImageAsync(url, 0, ct);
 
     /// <summary>
-    /// 加载一张后端图片，并按 <paramref name="decodePixelWidth"/> 缩窄解码宽度（0 = 原始尺寸）。
+    /// 加载一张图片，并按 <paramref name="decodePixelWidth"/> 缩窄解码宽度（0 = 原始尺寸）。
     /// 相册缩略图（显示约 236×148）建议传 480，解码后内存从约 3.5 MB 降到约 0.5 MB；
     /// 大图预览传 0 或目标窗口宽度。不同解码宽度的结果在内存缓存中分开保存。
+    /// URL 只接受后端 <c>/api/v1/store/</c> 代理路径或联想/360 图片 CDN 白名单主机。
     /// </summary>
     public static async Task<ImageSource?> GetImageAsync(string? url, int decodePixelWidth, CancellationToken ct = default)
     {
@@ -140,6 +154,41 @@ public static class StoreMediaService
         {
             requestLock.Release();
         }
+    }
+
+    /// <summary>
+    /// 加载一张商店图片：先尝试 <paramref name="url"/>（后端详情给的 CDN 绝对地址），
+    /// 失败或为空时再回退 <paramref name="proxyUrl"/>（后端 <c>/api/v1/store/</c> 代理路径）。
+    /// <paramref name="decodePixelWidth"/> 语义与
+    /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 相同。
+    /// <para>
+    /// 两个地址都通过同一套主机白名单校验（CDN 主机或当前后端代理路径），各自复用
+    /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 的内存/磁盘缓存，
+    /// 因此直连成功时完全不会请求后端代理；两者相同、都为空或都不可用时只尝试一次。
+    /// 取消会向上抛出，其余失败静默返回 <see langword="null"/>。
+    /// </para>
+    /// </summary>
+    public static async Task<ImageSource?> GetImageAsync(string? url, string? proxyUrl, int decodePixelWidth,
+        CancellationToken ct = default)
+    {
+        var image = await GetImageAsync(url, decodePixelWidth, ct).ConfigureAwait(false);
+        if (image is not null || SameMediaUrl(url, proxyUrl)) return image;
+        return await GetImageAsync(proxyUrl, decodePixelWidth, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>两个图片地址是否指向同一资源（绝对 URI 比较；任一方无法解析时退化为去空白后的字符串比较）。</summary>
+    private static bool SameMediaUrl(string? first, string? second)
+    {
+        string left = first?.Trim() ?? string.Empty;
+        string right = second?.Trim() ?? string.Empty;
+        if (left.Length == 0 || right.Length == 0) return left.Length == 0 && right.Length == 0;
+        if (Uri.TryCreate(left, UriKind.Absolute, out var leftUri)
+            && Uri.TryCreate(right, UriKind.Absolute, out var rightUri))
+        {
+            return Uri.Equals(leftUri, rightUri);
+        }
+
+        return string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string MemoryKey(string urlKey, int decodePixelWidth) =>
@@ -458,23 +507,66 @@ public static class StoreMediaService
     private static long DecodedBytes(ImageSource image) =>
         image is BitmapSource bitmap ? (long)bitmap.PixelWidth * bitmap.PixelHeight * 4 : 0;
 
+    /// <summary>
+    /// 校验并解析商店图片地址：只允许 ①当前服务端 <c>/api/v1/store/</c> 下的代理路径，
+    /// 或 ②联想/360 图片 CDN 白名单主机（含子域）的 http(s) 绝对地址。
+    /// 拒绝非 http(s)、带 userinfo 的地址，避免把任意 URL 当成图片去请求。
+    /// </summary>
     private static bool TryMediaUri(string? value, out Uri uri, out string key)
     {
         uri = null!;
         key = string.Empty;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed)) return false;
-        if (parsed.Scheme != Backend.Scheme || parsed.Host != Backend.Host || parsed.Port != Backend.Port) return false;
+        // 直连 CDN 时 http/https 都接受（后端契约给的是 https），但拒绝 file:// 等其它协议。
+        if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) return false;
         if (parsed.UserInfo.Length != 0) return false;
-        // 只接受后端代理的商店图片路径：/api/v1/store/.../icon、/cover、/screenshots/{index}。
-        if (!parsed.AbsolutePath.StartsWith(BackendRoot + "/api/v1/store/", StringComparison.Ordinal)) return false;
+        if (!IsBackendStoreUri(parsed) && !IsStoreCdnHost(parsed.Host)) return false;
         uri = parsed;
         key = Key(parsed.AbsoluteUri);
         return true;
     }
 
+    /// <summary>是否为当前后端 <c>/api/v1/store/</c> 下的图片代理地址（logo/cover/screenshots 等）。</summary>
+    private static bool IsBackendStoreUri(Uri uri)
+    {
+        var backend = Backend;
+        if (uri.Scheme != backend.Scheme
+            || !string.Equals(uri.Host, backend.Host, StringComparison.OrdinalIgnoreCase)
+            || uri.Port != backend.Port)
+        {
+            return false;
+        }
+
+        return uri.AbsolutePath.StartsWith(BackendRoot + "/api/v1/store/", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 是否为联想/360 图片 CDN 的白名单主机（本域或任意子域）。
+    /// 详情截图与封面可以直接从这些主机取图，失败再回退后端代理。
+    /// </summary>
+    private static bool IsStoreCdnHost(string host)
+    {
+        foreach (var domain in LenovoCdnHosts)
+        {
+            if (IsHostOrSubdomain(host, domain)) return true;
+        }
+
+        foreach (var domain in Soft360CdnHosts)
+        {
+            if (IsHostOrSubdomain(host, domain)) return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsHostOrSubdomain(string host, string domain) =>
+        host.Equals(domain, StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase);
+
     private static HttpClient CreateHttpClient()
     {
-        // 后端图片接口对 UA 不敏感，但统一带一个非 curl UA 以兼容将来可能直连的 CDN。
+        // 直连联想 CDN 必须带非 curl 类 User-Agent（实测 WinAppsManager/1.0 可用，curl 会被 403）；
+        // 后端图片接口与 360 CDN 对 UA 不敏感，同一个客户端共用。
         var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("WinAppsManager/1.0");
         return client;

@@ -122,7 +122,9 @@ public static class Soft360CatalogMapper
             {
                 Index = item.Index,
                 Kind = kind,
-                Url = item.Url.Trim()
+                Url = item.Url.Trim(),
+                // proxy_url 是后端截图代理路径（直连 360 图片 CDN 失败时兜底）；旧服务端没有该字段时为 null。
+                ProxyUrl = string.IsNullOrWhiteSpace(item.ProxyUrl) ? null : item.ProxyUrl.Trim()
             });
         }
 
@@ -330,7 +332,8 @@ public sealed class Soft360AppDetails : Soft360AppSummary
     /// <summary>更新说明；360 源通常为空。</summary>
     public string? ReleaseNotes { get; set; }
 
-    /// <summary>截图列表，<c>url</c> 是后端图片代理的相对路径，由 <c>AppCatalogService</c> 解析成绝对地址。</summary>
+    /// <summary>截图列表，<c>url</c> 优先是 360 图片 CDN 的绝对 https 地址（qhimg/mediav 等），
+    /// 无法直连时后端回退相对代理路径，由 <c>AppCatalogService</c> 解析成绝对地址。</summary>
     public List<Soft360Screenshot>? Screenshots { get; set; }
 
     /// <summary>横版封面；360 源当前为 null。</summary>
@@ -344,7 +347,13 @@ public sealed class Soft360AppDetails : Soft360AppSummary
 public sealed class Soft360Screenshot
 {
     public int Index { get; set; }
+
+    /// <summary>图片地址：优先是 360 图片 CDN 的绝对 https 地址，无法直连时后端回退相对代理路径。</summary>
     public string? Url { get; set; }
+
+    /// <summary>后端截图代理路径（相对 BaseUrl），直连 360 CDN 失败时的兜底；旧服务端没有该字段。</summary>
+    public string? ProxyUrl { get; set; }
+
     public string? Kind { get; set; }
 }
 
