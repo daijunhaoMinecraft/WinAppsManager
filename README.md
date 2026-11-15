@@ -88,16 +88,19 @@ dotnet run --project WinAppsManager\WinAppsManager\WinAppsManager.csproj
 
 **软件图标/截图不显示？** 图片优先从软件源 CDN 加载，失败会自动回退到后端代理；请检查网络，或在设置中切换服务端。
 
-## 许可证
+## License
 
-本项目采用自定义《WinAppsManager 非商业源代码许可协议 1.0》：允许个人学习、研究、非商业使用与修改；**禁止商业使用、倒卖、销售、付费分发**。这是 source-available 许可，不是 OSI 认可的开源许可。详见 [LICENSE](LICENSE)。
+WinAppsManager is licensed under the **PolyForm Noncommercial License 1.0.0** with additional source-sharing and non-resale terms. Commercial use, resale, paid distribution, and closed-source distribution are not permitted. See [LICENSE](LICENSE).
 
-联想应用商店、360 软件管家的名称、数据、图标与商标归各自权利人，本项目与它们无隶属或背书关系。
-客户端内置的 Fluent System Icons 字体来自 Microsoft `fluentui-system-icons`，使用 MIT 许可证（见 `WinAppsManager/Assets/Fonts/LICENSE.txt`）。
+Copyright (c) 2026 daijunhaoMinecraft
+
+Lenovo, 360, and their respective product names, data, icons, and trademarks belong to their owners; this project is not affiliated with or endorsed by them.
+The bundled Fluent System Icons font comes from Microsoft `fluentui-system-icons` and is used under the MIT License (see `WinAppsManager/Assets/Fonts/LICENSE.txt`).
 
 ## 开发文档
 
-- 后端接口与配置：[Backend/README.md](Backend/README.md)\n- 软件源统一接口契约：[docs/source-api.md](docs/source-api.md)
+- 后端接口与配置：[Backend/README.md](Backend/README.md)
+- 软件源统一接口契约：[docs/source-api.md](docs/source-api.md)
 - 软件源与设计说明：[docs/store-source-design.md](docs/store-source-design.md)
 - 联想接口调研：[docs/lenovo-store-api.md](docs/lenovo-store-api.md)
 - 360 接口调研：[docs/soft360-store-api.md](docs/soft360-store-api.md)、[docs/soft360-search-api.md](docs/soft360-search-api.md)
