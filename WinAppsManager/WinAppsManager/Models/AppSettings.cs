@@ -14,23 +14,6 @@ public enum ProxyMode
     Custom
 }
 
-/// <summary>
-/// 软件目录来源。默认使用联想应用商店，另可选项目内置的精选目录与 360 软件管家。
-/// 新值只追加在末尾，保证旧 settings.json 里的 <see cref="Lenovo"/>/<see cref="BuiltIn"/> 值不变；
-/// 读取时无法识别的值回退 <see cref="Lenovo"/>。
-/// </summary>
-public enum AppSourcePreference
-{
-    /// <summary>联想应用商店（后端代理，目录约 5000 款，默认）。</summary>
-    Lenovo,
-
-    /// <summary>项目内置的精选软件目录（原有的 45 款软件）。</summary>
-    BuiltIn,
-
-    /// <summary>360 软件管家（后端聚合的各分类热门子集，约 6000 款）。</summary>
-    Soft360
-}
-
 public sealed class AppSettings
 {
     /// <summary>默认后端地址；客户端所有目录/详情/图标/下载解析请求都以它为根。</summary>
@@ -54,10 +37,11 @@ public sealed class AppSettings
     public string DownloadDirectory { get; set; } = string.Empty;
 
     /// <summary>
-    /// 当前软件源；旧的 settings.json 没有该字段时按默认值 <see cref="AppSourcePreference.Lenovo"/> 迁移，
-    /// 未知/非法值同样回退联想应用商店（联想应用商店 / 内置精选 / 360 软件管家）。
+    /// 当前软件源的 <c>source_id</c>（来自服务端 <c>GET /api/v1/sources</c>，客户端不硬编码任何来源 ID）。
+    /// 空字符串表示尚未选择：运行时采用服务端下发 <c>is_default=true</c> 的可用来源。
+    /// 旧 settings.json 的 <c>Lenovo</c>/<c>BuiltIn</c>/<c>Soft360</c> 只在读取时做一次性迁移映射。
     /// </summary>
-    public AppSourcePreference AppSource { get; set; } = AppSourcePreference.Lenovo;
+    public string SourceId { get; set; } = string.Empty;
 
     /// <summary>
     /// 是否把运行日志写入 <c>%LOCALAPPDATA%\WinAppsManager\Logs</c>；默认开启。

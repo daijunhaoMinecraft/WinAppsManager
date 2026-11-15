@@ -13,13 +13,13 @@ using WinAppsManager.Services;
 namespace WinAppsManager.Dialogs;
 
 /// <summary>
-/// 联想应用商店截图/视频预览窗口：深色对话框外观、上一张/下一张、Esc 关闭，
+/// 软件详情截图/视频预览窗口：深色对话框外观、上一张/下一张、Esc 关闭，
 /// 键盘 Left/Right/Home/End 导航；图片由 <see cref="StoreMediaService"/> 异步加载并复用其内存/磁盘缓存。
-/// 大图优先直连联想 CDN（<see cref="AppScreenshot.Url"/>），失败回退后端代理路径（<see cref="AppScreenshot.ProxyUrl"/>），
+/// 大图优先直连服务端返回的图片地址（<see cref="AppScreenshot.Url"/>），失败回退代理地址（<see cref="AppScreenshot.ProxyUrl"/>），
 /// 与详情页缩略图使用同一套直连 + 回退链路。
 /// <para>
 /// 视频条目（<see cref="AppScreenshot.IsVideo"/>）额外提供 <see cref="MediaElement"/> 播放器：
-/// 媒体源是后端联想视频代理地址（<see cref="AppCatalogService.TryBuildLenovoVideoUrl"/>，客户端不直连 CDN），
+/// 媒体源是服务端详情返回的 <see cref="AppScreenshot.VideoProxyUrl"/>（客户端不构造来源专属路径），
 /// 缩略图在播放前充当海报；播放/暂停、拖动进度、静音、浏览器兜底与错误提示都在控件条内完成。
 /// 切换到其它条目或关闭窗口时必须 <c>Stop()</c>、清空 <c>Source</c> 并停止计时器，避免媒体句柄泄漏。
 /// 只负责展示，不触碰下载任务，也不会从后台线程访问 UI。
@@ -37,7 +37,6 @@ public partial class ScreenshotViewerWindow : Window
     private readonly HashSet<int> _loading = new();
     private readonly CancellationTokenSource _cancellation = new();
     private readonly DispatcherTimer _progressTimer;
-    private readonly string? _lenovoSoftId;
     private int _index;
 
     // ---- 视频播放状态：_videoUrl 是当前条目的后端代理地址，null 表示不是视频或参数不可用（只显示缩略图）。 ----
@@ -52,13 +51,12 @@ public partial class ScreenshotViewerWindow : Window
     private bool _releasingMedia;      // 主动清理期间忽略 MediaElement 的异步事件。
     private string _idleVideoStatus = IdleVideoStatus;
 
-    public ScreenshotViewerWindow(IReadOnlyList<AppScreenshot> screenshots, int startIndex, string? lenovoSoftId = null)
+    public ScreenshotViewerWindow(IReadOnlyList<AppScreenshot> screenshots, int startIndex)
     {
         ArgumentNullException.ThrowIfNull(screenshots);
         InitializeComponent();
 
         _screenshots = screenshots;
-        _lenovoSoftId = string.IsNullOrWhiteSpace(lenovoSoftId) ? null : lenovoSoftId.Trim();
         _images = new List<ImageSource?>(screenshots.Count);
         for (int i = 0; i < screenshots.Count; i++)
         {
@@ -221,9 +219,9 @@ public partial class ScreenshotViewerWindow : Window
 
         AppScreenshot screenshot = _screenshots[_index];
         bool isVideo = screenshot.IsVideo;
-        // 封面（Index = -1）是图片；视频需要联想 soft_id + 原始截图索引才能拼出后端代理地址。
-        _videoUrl = isVideo && screenshot.Index >= 0
-            ? AppCatalogService.TryBuildLenovoVideoUrl(_lenovoSoftId, screenshot.Index)
+        // 封面（Index = -1）是图片；视频播放地址由服务端详情直接返回（video_proxy_url），客户端只校验非空。
+        _videoUrl = isVideo && screenshot.Index >= 0 && !string.IsNullOrWhiteSpace(screenshot.VideoProxyUrl)
+            ? screenshot.VideoProxyUrl!.Trim()
             : null;
 
         HeaderTitleText.Text = isVideo ? "视频预览" : "截图预览";
@@ -231,8 +229,8 @@ public partial class ScreenshotViewerWindow : Window
         VideoBadge.Visibility = isVideo ? Visibility.Visible : Visibility.Collapsed;
         HintText.Text = isVideo
             ? _videoUrl is not null
-                ? "视频由本机软件服务代理播放 · Space 播放 / 暂停，← / → 切换，Home / End 首尾，Esc 关闭"
-                : "视频条目只提供联想应用商店的视频缩略图 · ← / → 切换，Home / End 首尾，Esc 关闭"
+                ? "视频由软件服务代理播放 · Space 播放 / 暂停，← / → 切换，Home / End 首尾，Esc 关闭"
+                : "该视频条目没有可用的播放地址 · ← / → 切换，Home / End 首尾，Esc 关闭"
             : "← / → 切换，Home / End 跳到首尾，Esc 关闭";
 
         if (_videoUrl is not null)
@@ -348,17 +346,13 @@ public partial class ScreenshotViewerWindow : Window
     private bool IsCurrentVideo() =>
         _index >= 0 && _index < _screenshots.Count && _screenshots[_index].IsVideo;
 
-    /// <summary>相册里是否至少有一个可通过后端代理播放的视频条目（决定是否需要关闭窗口透明层）。</summary>
+    /// <summary>相册里是否至少有一个可通过服务端视频代理播放的视频条目（决定是否需要关闭窗口透明层）。</summary>
     private bool HasPlayableVideoCandidate()
     {
-        if (_lenovoSoftId is null)
-        {
-            return false;
-        }
-
         foreach (AppScreenshot screenshot in _screenshots)
         {
-            if (screenshot.IsVideo && screenshot.Index >= 0)
+            if (screenshot.IsVideo && screenshot.Index >= 0
+                && !string.IsNullOrWhiteSpace(screenshot.VideoProxyUrl))
             {
                 return true;
             }
@@ -482,7 +476,7 @@ public partial class ScreenshotViewerWindow : Window
 
         try
         {
-            // 媒体源始终是后端代理地址（含 Range 支持），不直接访问联想 CDN。
+            // 媒体源始终是服务端返回的视频代理地址（含 Range 支持），客户端不构造来源专属路径。
             VideoPlayer.Volume = DefaultVideoVolume;
             VideoPlayer.Source = new Uri(_videoUrl, UriKind.Absolute);
             VideoPlayer.Play();
@@ -892,6 +886,6 @@ public partial class ScreenshotViewerWindow : Window
     private string VideoLogContext()
     {
         int screenshotIndex = _index >= 0 && _index < _screenshots.Count ? _screenshots[_index].Index : -1;
-        return $"soft_id={_lenovoSoftId ?? "(无)"}，截图索引={screenshotIndex}（相册第 {_index + 1}/{_screenshots.Count} 张）";
+        return $"截图索引={screenshotIndex}（相册第 {_index + 1}/{_screenshots.Count} 张）";
     }
 }

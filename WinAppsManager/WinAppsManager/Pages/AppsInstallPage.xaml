@@ -32,7 +32,7 @@
         </Style>
 
         <!-- The iNKORE ListBox template scrolls with CanContentScroll=false, which silently
-             disables VirtualizingStackPanel: every row got realised. The 联想源目录约有 5000 款，
+             disables VirtualizingStackPanel: every row got realised. 软件源目录可能有几千款软件，
              so use an explicit virtualizing template and panel (see AGENTS.md 6.10 §9). -->
         <Style x:Key="VirtualizedRowListStyle" TargetType="ListBox">
             <Setter Property="Background" Value="Transparent" />
@@ -120,7 +120,7 @@
                     <TextBlock x:Name="ResultsCount" FontSize="11"
                                Foreground="{DynamicResource Wam.TextSecondaryBrush}"
                                AutomationProperties.LiveSetting="Polite" />
-                    <!-- api 模式（服务端 search_mode=api，例如 360 软件管家）搜索框输入后自动调用服务端搜索，
+                    <!-- api 模式（服务端 search_mode=api）搜索框输入后自动调用服务端搜索，
                          这里显示“正在搜索…”时的进度指示；catalog 模式始终隐藏。 -->
                     <ui:ProgressRing x:Name="ApiSearchProgress" Width="14" Height="14" Margin="6,0,0,0"
                                      IsActive="True" IsIndeterminate="True" Visibility="Collapsed"
@@ -134,8 +134,7 @@
             </StackPanel>
 
             <Grid Grid.Column="2" MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center">
-                <!-- MaxLength=100 与服务端搜索接口的 q 上限一致（/store/360/search、/store/lenovo/search），
-                     避免超长关键词被服务端以 422 拒绝。 -->
+                <!-- MaxLength=100 与服务端搜索接口的 q 上限一致，避免超长关键词被服务端以 422 拒绝。 -->
                 <TextBox x:Name="SearchBox" Height="36" Padding="11,0" FontSize="13" MaxLength="100"
                          VerticalContentAlignment="Center"
                          TextChanged="SearchBox_OnTextChanged"
@@ -171,11 +170,6 @@
             <Button x:Name="ResetFiltersButton" Grid.Column="6" Content="清空筛选" Height="36"
                     Padding="12,0" VerticalAlignment="Center"
                     Visibility="Collapsed" Click="ResetFilters_OnClick" />
-
-            <Button x:Name="ReturnToCatalogButton" Grid.Column="8" Content="返回本地目录" Height="36"
-                    Padding="12,0" VerticalAlignment="Center"
-                    Visibility="Collapsed" Click="ReturnToCatalog_OnClick"
-                    AutomationProperties.Name="返回本地软件目录" />
         </Grid>
 
         <StackPanel Grid.Row="1">
@@ -389,22 +383,6 @@
                                                 <TextBlock Text="Beta" FontSize="9.5" FontWeight="SemiBold"
                                                            Foreground="{DynamicResource Wam.DangerBrush}" />
                                             </Border>
-                                            <Border BorderBrush="{DynamicResource Wam.CardBorderBrush}"
-                                                    BorderThickness="1" CornerRadius="4" Padding="6,1"
-                                                    VerticalAlignment="Center">
-                                                <Border.Style>
-                                                    <Style TargetType="Border">
-                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                        <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding SourceId}" Value="lenovo">
-                                                                <Setter Property="Visibility" Value="Visible" />
-                                                            </DataTrigger>
-                                                        </Style.Triggers>
-                                                    </Style>
-                                                </Border.Style>
-                                                <TextBlock Text="联想商店" FontSize="9.5"
-                                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
-                                            </Border>
                                         </WrapPanel>
                                     </StackPanel>
 
@@ -430,23 +408,6 @@
                         <TextBlock x:Name="EmptyDescriptionText" Text="试试其他关键词，或清空分类和搜索条件。" Margin="0,10,0,18"
                                    HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
                                    Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
-                        <!-- 旧服务端兼容的在线搜索按钮：只在服务端没有下发 search_mode、且 online_search 说支持时显示。
-                             新服务端 catalog 模式目录完整（本地搜索即可）、api 模式由搜索框自动调用服务端搜索 API，
-                             都不显示此按钮；文案/无障碍名称在代码里按当前软件源动态设置。 -->
-                        <Button x:Name="OnlineSearchButton" Content="在线搜索" Padding="16,8"
-                                HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12"
-                                Click="OnlineSearch_OnClick"
-                                AutomationProperties.Name="在线搜索" />
-                        <StackPanel x:Name="OnlineSearchStatusPanel" Orientation="Horizontal"
-                                    HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,0,0,12">
-                            <ui:ProgressRing x:Name="OnlineSearchProgress" IsActive="True" IsIndeterminate="True"
-                                             Width="20" Height="20" Margin="0,0,8,0" VerticalAlignment="Center"
-                                             Foreground="{DynamicResource Wam.AccentBrush}"
-                                             Background="Transparent" />
-                            <TextBlock x:Name="OnlineSearchStatusText" FontSize="11" VerticalAlignment="Center"
-                                       MaxWidth="420" TextWrapping="Wrap" TextAlignment="Left"
-                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
-                        </StackPanel>
                         <Button x:Name="EmptyResetButton" Content="显示全部软件" Padding="16,8"
                                 HorizontalAlignment="Center" Click="ResetFilters_OnClick" />
                     </StackPanel>
@@ -454,7 +415,7 @@
             </Grid>
         </Grid>
 
-        <!-- 分页栏：联想目录约 5000 款，列表只渲染当前页，避免一次实例化过多行与图标。 -->
+        <!-- 分页栏：软件源目录可能有几千款软件，列表只渲染当前页，避免一次实例化过多行与图标。 -->
         <Grid x:Name="PaginationBar" Grid.Row="3" Margin="0,10,0,0" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />

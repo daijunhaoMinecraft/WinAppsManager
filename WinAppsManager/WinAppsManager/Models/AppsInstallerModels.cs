@@ -3,6 +3,11 @@ using System.Text.Json.Serialization;
 
 namespace WinAppsManager.Models;
 
+/// <summary>
+/// 客户端展示用的软件条目。所有字段都来自服务端统一软件源 API
+/// （<c>/api/v1/sources/{source_id}/...</c>，见 <c>docs/source-api.md</c>），
+/// 客户端不包含任何来源 ID、名称或接口路径判断。
+/// </summary>
 public class AppItem : INotifyPropertyChanged
 {
     private string? _displayIconSource;
@@ -25,6 +30,10 @@ public class AppItem : INotifyPropertyChanged
     public string Description { get; set; } = string.Empty;
     public string LongDescription { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
+
+    /// <summary>服务端分类 ID（与 <c>/categories</c> 的 <c>id</c> 对应）；用于按分类精确筛选，可能为空。</summary>
+    public string CategoryId { get; set; } = string.Empty;
+
     public string Publisher { get; set; } = string.Empty;
     public string Version { get; set; } = "以官网为准";
     public string SizeDisplay { get; set; } = "以官网为准";
@@ -38,7 +47,7 @@ public class AppItem : INotifyPropertyChanged
     public string DownloadPageUrl { get; set; } = string.Empty;
     public string? IconUrl { get; set; }
 
-    /// <summary>图标兜底地址（联想应用商店 / 360 软件管家的后端代理路径）；直连 <see cref="IconUrl"/> 失败时使用。</summary>
+    /// <summary>图标兜底地址（服务端返回的 <c>icon_proxy_url</c>，通常为后端代理路径）；直连 <see cref="IconUrl"/> 失败时使用。</summary>
     public string? IconFallbackUrl { get; set; }
 
     public string IconText { get; set; } = string.Empty;
@@ -50,55 +59,49 @@ public class AppItem : INotifyPropertyChanged
     public int SortOrder { get; set; }
     public AppRelease? LatestRelease { get; set; }
 
-    // ---- 商店源（联想应用商店 lenovo / 360 软件管家 soft360）补充字段：全部可选，内置精选源保持空值/默认值，不影响旧缓存与旧接口。 ----
+    // ---- 可选展示字段：服务端不返回时保持空值/默认值，界面自动隐藏对应区域。 ----
 
-    /// <summary>软件源标识：<c>lenovo</c>、<c>builtin</c> 或 <c>soft360</c>；内置精选旧缓存缺省为空。</summary>
+    /// <summary>软件源 ID（服务端 <c>/sources</c> 的 <c>id</c>）；客户端只用它区分来源，不按具体值分支。</summary>
     public string? SourceId { get; set; }
 
-    /// <summary>源内原始应用 ID（联想的 <c>soft_id</c>、360 的 <c>soft_id</c>，区分大小写），用于详情/下载/图标请求。</summary>
-    public string? SourceAppId { get; set; }
-
-    /// <summary>源显示名，例如“联想应用商店”“360软件管家”。</summary>
+    /// <summary>软件源显示名（服务端 <c>/sources</c> 的 <c>name</c>），用于界面上标注来源。</summary>
     public string? SourceName { get; set; }
 
-    /// <summary>安装包大小（字节）。联想的 <c>installFileSize</c> / 360 的 <c>soft_size</c> 解析值，仅用于展示。</summary>
+    /// <summary>安装包大小（字节），仅用于展示与下载进度预期。</summary>
     public long? SizeBytes { get; set; }
 
     /// <summary>下载量文案，例如“1.01亿次”。</summary>
     public string? DownloadCount { get; set; }
 
-    /// <summary>评分（0–100，联想商店为整数分），为空表示源不提供。</summary>
+    /// <summary>评分（0–100），为空表示源不提供。</summary>
     public int? Score { get; set; }
 
-    /// <summary>是否为 Beta 版本（联想源 <c>stable=beta</c>），内置源恒为 false。</summary>
+    /// <summary>是否为 Beta 版本。</summary>
     public bool IsBeta { get; set; }
 
     /// <summary>榜单文案，例如“聊天社交类下载榜第2名”。</summary>
     public string? RankingDescription { get; set; }
 
-    /// <summary>更新说明（联想的 <c>whatNew</c>），为空表示源不提供。</summary>
+    /// <summary>更新说明，为空表示源不提供。</summary>
     public string? ReleaseNotes { get; set; }
 
-    /// <summary>横版封面图地址（已按后端 BaseUrl 解析为绝对地址），可能为空；商店源优先是 CDN 绝对地址。</summary>
+    /// <summary>横版封面图地址，可能为空。</summary>
     public string? CoverUrl { get; set; }
 
-    /// <summary>
-    /// 封面兜底地址（后端 <c>/api/v1/store/...</c> 封面代理路径，已解析为绝对地址）。
-    /// 直连 <see cref="CoverUrl"/> 失败时由 <c>StoreMediaService</c> 回退到它，可能为空。
-    /// </summary>
+    /// <summary>封面兜底地址（服务端返回的 <c>cover_proxy_url</c>）；直连 <see cref="CoverUrl"/> 失败时回退。</summary>
     public string? CoverProxyUrl { get; set; }
 
-    /// <summary>截图/视频缩略图列表，内置精选源为空。</summary>
+    /// <summary>截图/视频缩略图列表，为空表示源不提供详情图片。</summary>
     public IReadOnlyList<AppScreenshot> Screenshots { get; set; } = Array.Empty<AppScreenshot>();
 
-    /// <summary>详情标签（联想 <c>appLabelList</c> 等），内置精选源为空。</summary>
+    /// <summary>详情标签，为空表示源不提供。</summary>
     public IReadOnlyList<string> Labels { get; set; } = Array.Empty<string>();
 
-    /// <summary>详情徽章（联想 <c>detailsTag</c> 等，带提示文案），内置精选源为空。</summary>
+    /// <summary>详情徽章（带提示文案），为空表示源不提供。</summary>
     public IReadOnlyList<AppDetailTag> DetailTags { get; set; } = Array.Empty<AppDetailTag>();
 }
 
-/// <summary>商店源（联想应用商店 / 360 软件管家）的一张截图：<see cref="Kind"/> 为 <c>image</c> 或 <c>video</c>（视频只提供缩略图）。</summary>
+/// <summary>详情页的一张截图：<see cref="Kind"/> 为 <c>image</c> 或 <c>video</c>（视频只提供缩略图）。</summary>
 public sealed class AppScreenshot
 {
     public int Index { get; set; }
@@ -106,20 +109,20 @@ public sealed class AppScreenshot
     /// <summary><c>image</c> 或 <c>video</c>。</summary>
     public string Kind { get; set; } = "image";
 
-    /// <summary>图片地址（已按后端 BaseUrl 解析为绝对地址；商店源优先是 CDN 绝对地址）。</summary>
+    /// <summary>图片地址（服务端返回的直连地址，可能为空而只有代理兜底）。</summary>
     public string Url { get; set; } = string.Empty;
 
-    /// <summary>
-    /// 截图兜底地址（后端 <c>/api/v1/store/...</c> 截图代理路径，已解析为绝对地址）。
-    /// 直连 <see cref="Url"/> 失败时由 <c>StoreMediaService</c> 回退到它，可能为空。
-    /// </summary>
+    /// <summary>截图兜底地址（服务端返回的 <c>proxy_url</c>）；直连 <see cref="Url"/> 失败时由 <c>StoreMediaService</c> 回退。</summary>
     public string? ProxyUrl { get; set; }
+
+    /// <summary>视频播放代理地址（服务端详情返回的 <c>video_proxy_url</c>，仅视频条目有值）；客户端直接播放，不构造来源专属路径。</summary>
+    public string? VideoProxyUrl { get; set; }
 
     /// <summary>派生属性：是否为视频缩略图（不参与磁盘缓存序列化，反序列化时自动重算）。</summary>
     public bool IsVideo => string.Equals(Kind, "video", StringComparison.OrdinalIgnoreCase);
 }
 
-/// <summary>商店源详情的详情徽章，例如“安全认证”及其说明。</summary>
+/// <summary>详情徽章，例如“安全认证”及其说明。</summary>
 public sealed class AppDetailTag
 {
     public string Name { get; set; } = string.Empty;

@@ -19,8 +19,8 @@ public partial class SettingsPage : Page
     private bool _isSynchronizing = true;
     private bool _isSwitchingSource;
 
-    /// <summary>服务端返回的软件源列表；为空时下拉框使用本地静态两项兜底。</summary>
-    private IReadOnlyList<StoreSourceInfo> _serverSources = Array.Empty<StoreSourceInfo>();
+    /// <summary>服务端返回的软件源列表（<c>GET /api/v1/sources</c>）；客户端不维护本地来源表。</summary>
+    private IReadOnlyList<SourceInfo> _serverSources = Array.Empty<SourceInfo>();
     private bool _serverSourcesLoaded;
 
     public SettingsPage()
@@ -201,42 +201,11 @@ public partial class SettingsPage : Page
             ? $"已加载 {AppCatalogService.Apps.Count} 款软件" : "目录尚未加载";
     }
 
-    private static string SourceIdOf(AppSourcePreference source) => source switch
-    {
-        AppSourcePreference.BuiltIn => StoreCatalogMapper.BuiltinSourceId,
-        AppSourcePreference.Soft360 => Soft360CatalogMapper.SourceId,
-        _ => StoreCatalogMapper.LenovoSourceId
-    };
-
-    private static bool TryMapSourceId(string? id, out AppSourcePreference source)
-    {
-        source = default;
-        if (string.Equals(id, StoreCatalogMapper.LenovoSourceId, StringComparison.OrdinalIgnoreCase))
-        {
-            source = AppSourcePreference.Lenovo;
-            return true;
-        }
-
-        if (string.Equals(id, StoreCatalogMapper.BuiltinSourceId, StringComparison.OrdinalIgnoreCase))
-        {
-            source = AppSourcePreference.BuiltIn;
-            return true;
-        }
-
-        if (string.Equals(id, Soft360CatalogMapper.SourceId, StringComparison.OrdinalIgnoreCase))
-        {
-            source = AppSourcePreference.Soft360;
-            return true;
-        }
-
-        return false;
-    }
-
     /// <summary>
-    /// 按服务端返回的源重建下拉框；服务端不可用或返回空列表时回退到本地静态两项。
-    /// 不可用的源与客户端不支持的源会标注并禁止选择。
+    /// 按服务端返回的源重建下拉框：名称、默认源、可用状态全部来自 <c>/api/v1/sources</c>，
+    /// 客户端不硬编码任何来源 ID/名称；服务端新增来源会自动出现在列表里。
     /// </summary>
-    private void ApplySourceComboItems(IReadOnlyList<StoreSourceInfo>? sources)
+    private void ApplySourceComboItems(IReadOnlyList<SourceInfo>? sources)
     {
         _isSynchronizing = true;
         try
@@ -252,34 +221,40 @@ public partial class SettingsPage : Page
                         continue;
                     }
 
-                    bool supported = TryMapSourceId(id, out _);
                     string name = string.IsNullOrWhiteSpace(source.Name) ? id : source.Name!.Trim();
-                    AppSourceCombo.Items.Add(new ComboBoxItem
+                    var item = new ComboBoxItem
                     {
-                        Content = supported
-                            ? (source.Enabled ? name : $"{name}（不可用）")
-                            : $"{name}（客户端不支持）",
+                        Content = source.Enabled
+                            ? source.IsDefault ? $"{name}（默认）" : name
+                            : $"{name}（不可用）",
                         Tag = id,
-                        IsEnabled = supported && source.Enabled
-                    });
+                        IsEnabled = source.Enabled
+                    };
+                    if (!string.IsNullOrWhiteSpace(source.Description))
+                    {
+                        item.ToolTip = source.Description.Trim();
+                    }
+
+                    AppSourceCombo.Items.Add(item);
                 }
             }
 
             if (AppSourceCombo.Items.Count == 0)
             {
-                AppSourceCombo.Items.Add(new ComboBoxItem
+                // 服务端不可用：只显示当前已保存/已解析的来源 ID，不伪造本地来源列表。
+                string currentId = AppCatalogService.CurrentSourceId;
+                if (currentId.Length > 0)
                 {
-                    Content = StoreCatalogMapper.LenovoSourceName + "（默认）",
-                    Tag = StoreCatalogMapper.LenovoSourceId
-                });
-                AppSourceCombo.Items.Add(new ComboBoxItem
-                {
-                    Content = StoreCatalogMapper.BuiltinSourceName,
-                    Tag = StoreCatalogMapper.BuiltinSourceId
-                });
+                    AppSourceCombo.Items.Add(new ComboBoxItem
+                    {
+                        Content = $"{AppCatalogService.SourceDisplayName}（服务端不可用）",
+                        Tag = currentId,
+                        IsEnabled = false
+                    });
+                }
             }
 
-            SelectAppSource(AppCatalogService.CurrentSource);
+            SelectAppSource(AppCatalogService.CurrentSourceId);
         }
         finally
         {
@@ -287,12 +262,18 @@ public partial class SettingsPage : Page
         }
     }
 
-    private void SelectAppSource(AppSourcePreference source)
+    private void SelectAppSource(string? sourceId)
     {
-        string id = SourceIdOf(source);
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            AppSourceCombo.SelectedIndex = -1;
+            return;
+        }
+
         foreach (var entry in AppSourceCombo.Items)
         {
-            if (entry is ComboBoxItem item && string.Equals(item.Tag as string, id, StringComparison.OrdinalIgnoreCase))
+            if (entry is ComboBoxItem item
+                && string.Equals(item.Tag as string, sourceId, StringComparison.OrdinalIgnoreCase))
             {
                 AppSourceCombo.SelectedItem = item;
                 return;
@@ -309,43 +290,32 @@ public partial class SettingsPage : Page
             return;
         }
 
-        if (!TryMapSourceId(item.Tag as string, out var source))
+        string sourceId = item.Tag as string ?? string.Empty;
+        if (sourceId.Length == 0)
         {
-            // 服务端新增了客户端不认识的源：只提示，不改变当前软件源。
-            SetStatusText(AppSourceStatusText, "该软件源暂不受当前客户端支持，已保留原有软件源。", isError: true);
-            _isSynchronizing = true;
-            try
-            {
-                SelectAppSource(AppCatalogService.CurrentSource);
-            }
-            finally
-            {
-                _isSynchronizing = false;
-            }
-
             return;
         }
 
-        if (source == AppCatalogService.CurrentSource)
+        if (string.Equals(sourceId, AppCatalogService.CurrentSourceId, StringComparison.OrdinalIgnoreCase))
         {
             RefreshAppSourceStatus();
             return;
         }
 
-        await SwitchAppSourceAsync(source);
+        await SwitchAppSourceAsync(sourceId);
     }
 
-    /// <summary>切换软件源：保存设置、清空并重建按源隔离的目录缓存；失败时回退到原软件源。</summary>
-    private async Task SwitchAppSourceAsync(AppSourcePreference source)
+    /// <summary>切换软件源：保存设置、清空并重建按来源隔离的目录缓存；失败时回退到原软件源。</summary>
+    private async Task SwitchAppSourceAsync(string sourceId)
     {
-        var previous = AppCatalogService.CurrentSource;
-        string name = AppCatalogService.GetSourceDisplayName(source);
+        string previous = AppCatalogService.CurrentSourceId;
+        string name = SourceNameOf(sourceId);
         _isSwitchingSource = true;
         AppSourceCombo.IsEnabled = false;
         SetStatusText(AppSourceStatusText, $"正在切换到{name}并重新加载软件目录…");
         try
         {
-            await AppCatalogService.SwitchSourceAsync(source);
+            await AppCatalogService.SwitchSourceAsync(sourceId);
             RefreshSettings();
             RefreshCacheStatus();
             RefreshCatalogCount();
@@ -353,28 +323,29 @@ public partial class SettingsPage : Page
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // 切换失败时不能改变当前软件源：恢复设置并让下拉框重新显示原源。
+            // 切换失败时不能改变当前软件源：恢复设置并让下拉框重新显示原来源。
             try
             {
-                AppSettingsService.SetAppSource(previous);
+                AppSettingsService.SetSourceId(previous);
             }
-            catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException)
+            catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 Debug.WriteLine(restoreError);
             }
 
-            string previousName = AppCatalogService.GetSourceDisplayName(AppCatalogService.CurrentSource);
+            string previousName = AppCatalogService.SourceDisplayName;
             SetStatusText(AppSourceStatusText,
                 $"切换到{name}失败：{error.Message} 已保留{previousName}。", isError: true);
             _isSynchronizing = true;
             try
             {
-                SelectAppSource(AppCatalogService.CurrentSource);
+                SelectAppSource(AppCatalogService.CurrentSourceId);
             }
             finally
             {
                 _isSynchronizing = false;
             }
+
             RefreshCatalogCount();
         }
         finally
@@ -382,6 +353,14 @@ public partial class SettingsPage : Page
             _isSwitchingSource = false;
             AppSourceCombo.IsEnabled = true;
         }
+    }
+
+    /// <summary>来源显示名（来自服务端列表）；列表里没有时回退为来源 ID。</summary>
+    private string SourceNameOf(string sourceId)
+    {
+        var info = _serverSources.FirstOrDefault(source =>
+            string.Equals(source.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+        return string.IsNullOrWhiteSpace(info?.Name) ? sourceId : info!.Name!.Trim();
     }
 
     private void RefreshAppSourceStatus()
@@ -394,7 +373,7 @@ public partial class SettingsPage : Page
         _isSynchronizing = true;
         try
         {
-            SelectAppSource(AppCatalogService.CurrentSource);
+            SelectAppSource(AppCatalogService.CurrentSourceId);
         }
         finally
         {
@@ -406,99 +385,91 @@ public partial class SettingsPage : Page
 
     private string BuildAppSourceStatusText()
     {
-        var source = AppCatalogService.CurrentSource;
-        string name = AppCatalogService.GetSourceDisplayName(source);
+        string currentId = AppCatalogService.CurrentSourceId;
+        if (currentId.Length == 0)
+        {
+            return _serverSourcesLoaded
+                ? "服务端没有可用的软件源，请稍后点击“重新读取来源”。"
+                : "暂时无法从服务端获取软件源列表；可用来源由服务端 /api/v1/sources 决定。";
+        }
+
+        string name = AppCatalogService.SourceDisplayName;
         string loaded = AppCatalogService.HasLoaded
             ? $"已加载 {AppCatalogService.Apps.Count} 款软件。"
             : "打开“软件列表”后会加载该源的软件目录。";
-        string text = $"当前软件源：{name}。{loaded}";
+        string text = $"当前软件源：{name}（{currentId}）。{loaded}";
 
-        if (_serverSourcesLoaded && _serverSources.Count > 0)
+        var currentInfo = _serverSources.FirstOrDefault(item =>
+            string.Equals(item.Id, currentId, StringComparison.OrdinalIgnoreCase));
+        if (currentInfo is { AppCount: > 0 })
         {
-            var currentInfo = _serverSources.FirstOrDefault(item =>
-                string.Equals(item.Id, SourceIdOf(source), StringComparison.OrdinalIgnoreCase));
-            if (currentInfo is { AppCount: > 0 })
-            {
-                text += $"（服务端报告 {currentInfo.AppCount} 款）";
-            }
-
-            var unsupported = _serverSources
-                .Where(item => !TryMapSourceId(item.Id, out _))
-                .Select(item => string.IsNullOrWhiteSpace(item.Name) ? item.Id : item.Name)
-                .Where(sourceName => !string.IsNullOrWhiteSpace(sourceName))
-                .ToArray();
-            if (unsupported.Length > 0)
-            {
-                text += $" 服务端还有客户端暂不支持的源：{string.Join("、", unsupported)}。";
-            }
+            text += $"（服务端报告 {currentInfo.AppCount} 款）";
         }
-        else if (!_serverSourcesLoaded)
+
+        string capabilities = DescribeCapabilities(AppCatalogService.CurrentCapabilities);
+        if (capabilities.Length > 0)
         {
-            text += " 暂时无法从服务端获取软件源列表，已显示本地默认源。";
+            text += $" 支持：{capabilities}。";
+        }
+
+        if (!_serverSourcesLoaded)
+        {
+            text += " 暂时无法从服务端获取软件源列表，已保留当前来源。";
+        }
+
+        if (!string.IsNullOrWhiteSpace(AppCatalogService.SourceFallbackNote))
+        {
+            text += " " + AppCatalogService.SourceFallbackNote;
         }
 
         return text;
     }
 
-    /// <summary>从当前服务端加载软件源列表；失败时回退静态两项并提示，不影响已保存的软件源。</summary>
-    private async Task LoadServerSourcesAsync()
+    /// <summary>把来源能力翻译成简短中文，供设置页状态行展示（不按来源 ID 判断）。</summary>
+    private static string DescribeCapabilities(SourceCapabilities capabilities)
     {
+        var names = new List<string>();
+        if (capabilities.Catalog) names.Add("目录");
+        if (capabilities.Categories) names.Add("分类");
+        if (capabilities.Search) names.Add("搜索");
+        if (capabilities.Details) names.Add("详情");
+        if (capabilities.Download) names.Add("下载");
+        if (capabilities.Screenshots) names.Add("截图");
+        if (capabilities.Cover) names.Add("封面");
+        if (capabilities.Video) names.Add("视频");
+        if (capabilities.Refresh) names.Add("刷新");
+        return string.Join("、", names);
+    }
+
+    /// <summary>从当前服务端加载软件源列表；失败时保留当前来源并提示，不影响已保存的设置。</summary>
+    private async Task LoadServerSourcesAsync(bool forceRefresh = false)
+    {
+        RefreshSourcesButton.IsEnabled = false;
         try
         {
-            var sources = await AppCatalogService.GetSourcesAsync();
+            var sources = await AppCatalogService.GetSourcesAsync(forceRefresh);
             _serverSources = sources;
             _serverSourcesLoaded = true;
             ApplySourceComboItems(sources);
-            await EnsureCurrentSourceAvailableAsync(sources);
             RefreshAppSourceStatus();
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException
-            or InvalidDataException or OperationCanceledException)
+            or InvalidDataException or InvalidOperationException or OperationCanceledException)
         {
-            _serverSources = Array.Empty<StoreSourceInfo>();
+            _serverSources = Array.Empty<SourceInfo>();
             _serverSourcesLoaded = false;
             ApplySourceComboItems(null);
             RefreshAppSourceStatus();
-            AppLogService.Warn($"获取服务端软件源列表失败，使用本地默认源：{error.GetType().Name}：{error.Message}");
+            AppLogService.Warn($"获取服务端软件源列表失败：{error.GetType().Name}：{error.Message}");
+        }
+        finally
+        {
+            RefreshSourcesButton.IsEnabled = true;
         }
     }
 
-    /// <summary>
-    /// 当前保存的软件源在服务端不可用（或不存在）时，自动回退到服务端 is_default 的可用源（默认联想应用商店）并提示。
-    /// </summary>
-    private async Task EnsureCurrentSourceAvailableAsync(IReadOnlyList<StoreSourceInfo> sources)
-    {
-        var current = AppCatalogService.CurrentSource;
-        string currentId = SourceIdOf(current);
-        var currentInfo = sources.FirstOrDefault(item =>
-            string.Equals(item.Id, currentId, StringComparison.OrdinalIgnoreCase));
-        if (currentInfo is { Enabled: true })
-        {
-            return;
-        }
-
-        var fallback = sources.FirstOrDefault(item => item.IsDefault && item.Enabled && TryMapSourceId(item.Id, out _))
-                       ?? sources.FirstOrDefault(item => item.Enabled && TryMapSourceId(item.Id, out _));
-        if (fallback is null || !TryMapSourceId(fallback.Id, out var fallbackSource) || fallbackSource == current)
-        {
-            SetStatusText(AppSourceStatusText, "服务端没有可用的软件源，已保留当前软件源。", isError: true);
-            return;
-        }
-
-        string currentName = AppCatalogService.GetSourceDisplayName(current);
-        string fallbackName = AppCatalogService.GetSourceDisplayName(fallbackSource);
-        try
-        {
-            await SwitchAppSourceAsync(fallbackSource);
-            SetStatusText(AppSourceStatusText,
-                $"服务端上的{currentName}当前不可用，已自动切换到{fallbackName}。{BuildAppSourceStatusText()}");
-        }
-        catch (Exception error) when (error is not OutOfMemoryException)
-        {
-            SetStatusText(AppSourceStatusText,
-                $"服务端上的{currentName}当前不可用，自动切换失败：{error.Message}", isError: true);
-        }
-    }
+    private async void OnRefreshServerSources(object sender, RoutedEventArgs args) =>
+        await LoadServerSourcesAsync(forceRefresh: true);
 
     private void OnSettingsChanged(object? sender, EventArgs args)
     {
@@ -533,7 +504,7 @@ public partial class SettingsPage : Page
             VerboseLoggingCheckBox.IsChecked = current.VerboseLogging;
             // 文件日志关闭时详细级别没有写入目标，禁用开关避免误解；值仍保留在设置里。
             VerboseLoggingCheckBox.IsEnabled = current.EnableFileLogging;
-            SelectAppSource(AppCatalogService.CurrentSource);
+            SelectAppSource(AppCatalogService.CurrentSourceId);
         }
         finally
         {

@@ -261,19 +261,62 @@ public static class AppSettingsService
         return saved;
     }
 
-    /// <summary>保存软件源选择。无效枚举值会抛出 <see cref="ArgumentOutOfRangeException"/>。</summary>
-    public static bool SetAppSource(AppSourcePreference source)
+    /// <summary>
+    /// 保存软件源选择（服务端 <c>/sources</c> 下发的 <c>source_id</c>）；空字符串表示跟随服务端默认来源。
+    /// 非法 ID 会抛出 <see cref="ArgumentException"/>，不会改动当前设置。
+    /// </summary>
+    public static bool SetSourceId(string? sourceId)
     {
-        if (!Enum.IsDefined(source))
+        Initialize();
+        string text = (sourceId ?? string.Empty).Trim();
+        if (text.Length > 0 && !TryNormalizeSourceId(text, out _))
         {
-            throw new ArgumentOutOfRangeException(nameof(source));
+            throw new ArgumentException("软件源 ID 无效。", nameof(sourceId));
         }
 
-        Initialize();
-        Current.AppSource = source;
+        Current.SourceId = text;
         var saved = SaveSettings();
         SettingsChanged?.Invoke(null, EventArgs.Empty);
         return saved;
+    }
+
+    /// <summary>
+    /// 旧 settings.json 的软件源写法（<c>AppSource</c>/<c>app_source</c> 枚举名）到服务端 <c>source_id</c> 的
+    /// 一次性迁移映射。只在读取设置时使用，运行路径不按来源 ID 分支。
+    /// </summary>
+    private static readonly Dictionary<string, string> LegacySourceIdMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Lenovo"] = "lenovo",
+        ["BuiltIn"] = "builtin",
+        ["Builtin"] = "builtin",
+        ["Soft360"] = "soft360"
+    };
+
+    /// <summary>规整 <c>source_id</c>：字母/数字与 <c>. _ -</c>，最长 64 字符；非法值返回 false。</summary>
+    private static bool TryNormalizeSourceId(string? value, out string normalized)
+    {
+        string text = (value ?? string.Empty).Trim();
+        normalized = string.Empty;
+        if (text.Length == 0)
+        {
+            return true;
+        }
+
+        if (text.Length > 64)
+        {
+            return false;
+        }
+
+        foreach (char character in text)
+        {
+            if (!char.IsLetterOrDigit(character) && character is not ('.' or '_' or '-'))
+            {
+                return false;
+            }
+        }
+
+        normalized = text;
+        return true;
     }
 
     /// <summary>
@@ -559,22 +602,47 @@ public static class AppSettingsService
                 }
             }
 
-            // 软件源是后加字段：旧的 settings.json 缺字段或值为非法枚举时都回退为默认的联想应用商店。
-            // 枚举只要在 AppSourcePreference 里追加（内置精选、360 软件管家）就能被识别，未知值仍回退 Lenovo。
-            var appSourceElement = settings.AppSource.ValueKind != JsonValueKind.Undefined
-                ? settings.AppSource
-                : settings.AppSourceSnakeCase;
-            if (appSourceElement.ValueKind != JsonValueKind.Undefined)
+            // 软件源改为服务端下发的 source_id（客户端不再有来源枚举）。新字段优先；旧 settings.json 的
+            // AppSource/app_source（Lenovo / BuiltIn / Soft360）只在读取时做一次性迁移映射，运行路径不再按来源分支。
+            var sourceIdElement = settings.SourceId.ValueKind != JsonValueKind.Undefined
+                ? settings.SourceId
+                : settings.SourceIdSnakeCase;
+            if (sourceIdElement.ValueKind != JsonValueKind.Undefined)
             {
-                if (TryReadString(appSourceElement, out var appSourceText)
-                    && Enum.TryParse<AppSourcePreference>(appSourceText, ignoreCase: true, out var appSource)
-                    && Enum.IsDefined(appSource))
+                if (TryReadString(sourceIdElement, out var sourceIdText)
+                    && TryNormalizeSourceId(sourceIdText, out var normalizedSourceId))
                 {
-                    Current.AppSource = appSource;
+                    Current.SourceId = normalizedSourceId;
                 }
                 else
                 {
-                    warnings.Add("保存的软件源选项无效，已恢复为联想应用商店。");
+                    warnings.Add("保存的软件源 ID 无效，已改为跟随服务端默认软件源。");
+                }
+            }
+            else
+            {
+                var legacySourceElement = settings.AppSource.ValueKind != JsonValueKind.Undefined
+                    ? settings.AppSource
+                    : settings.AppSourceSnakeCase;
+                if (legacySourceElement.ValueKind != JsonValueKind.Undefined)
+                {
+                    if (TryReadString(legacySourceElement, out var legacySourceText)
+                        && !string.IsNullOrWhiteSpace(legacySourceText))
+                    {
+                        if (LegacySourceIdMap.TryGetValue(legacySourceText.Trim(), out var migratedSourceId))
+                        {
+                            Current.SourceId = migratedSourceId;
+                            AppLogService.Info($"已把旧设置中的软件源“{legacySourceText.Trim()}”迁移为来源 ID“{migratedSourceId}”。");
+                        }
+                        else if (TryNormalizeSourceId(legacySourceText, out var directSourceId))
+                        {
+                            Current.SourceId = directSourceId;
+                        }
+                        else
+                        {
+                            warnings.Add("保存的软件源选项无效，已改为跟随服务端默认软件源。");
+                        }
+                    }
                 }
             }
 
@@ -787,10 +855,17 @@ public static class AppSettingsService
         [JsonPropertyName("backend_base_url")]
         public JsonElement BackendBaseUrlSnakeCase { get; set; }
 
-        /// <summary>settings.json 由 <see cref="JsonSerializer"/> 直接序列化 <see cref="AppSettings"/>，键名为 PascalCase。</summary>
+        /// <summary>当前软件源的 <c>source_id</c>（settings.json 由 <see cref="JsonSerializer"/> 序列化，键名为 PascalCase）。</summary>
+        public JsonElement SourceId { get; set; }
+
+        /// <summary>兼容手工写成 snake_case 的 <c>source_id</c>。</summary>
+        [JsonPropertyName("source_id")]
+        public JsonElement SourceIdSnakeCase { get; set; }
+
+        /// <summary>旧版本软件源字段（Lenovo / BuiltIn / Soft360 枚举名），读取时一次性迁移为 <see cref="SourceId"/>。</summary>
         public JsonElement AppSource { get; set; }
 
-        /// <summary>兼容手工写成 snake_case 的 <c>app_source</c>（与客户端缓存/后端命名一致）。</summary>
+        /// <summary>兼容手工写成 snake_case 的旧字段 <c>app_source</c>。</summary>
         [JsonPropertyName("app_source")]
         public JsonElement AppSourceSnakeCase { get; set; }
 

@@ -17,15 +17,13 @@ public sealed class ClientCacheStore
 {
     /// <summary>Marker used as <see cref="AppItem.DisplayIconSource"/> for icons that only live in memory.</summary>
     public const string MemoryIconPrefix = "memory://icon/";
-    private const string BuiltinSourceId = "builtin";
     private const int MaxIconBytes = 5 * 1024 * 1024;
     private static readonly HttpClient DefaultIconClient = CreateDefaultIconClient();
 
     private static HttpClient CreateDefaultIconClient()
     {
         var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
-        // 联想 CDN 对缺少/异常 User-Agent 的请求返回 403；固定客户端标识（实测 WinAppsManager/1.0 可用）。
-        // 360 图片 CDN（qhimg.com / mediav.com）对 UA 不敏感，同一个客户端也用于它。
+        // 部分软件 CDN 对缺少/异常 User-Agent 的请求返回 403；固定客户端标识（实测 WinAppsManager/1.0 可用）。
         client.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", "WinAppsManager/1.0");
         return client;
     }
@@ -35,8 +33,14 @@ public sealed class ClientCacheStore
         WriteIndented = true
     };
 
-    /// <summary>WPF 原生可解码的图标格式；联想商店的 logo 实际出现 png/jpg/gif/ico/bmp。</summary>
+    /// <summary>WPF 原生可解码的图标格式；服务端返回的图标实际出现 png/jpg/gif/ico/bmp。</summary>
     private static readonly string[] ImageExtensions = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp"];
+
+    /// <summary>
+    /// 目录缓存格式版本。2 = 统一来源接口（应用 ID 为来源内原始 ID、图片/下载 URL 统一来自服务端）；
+    /// 旧客户端按来源专属接口写入的缓存（ID 带来源前缀）版本为 1，读取时直接忽略并可被新缓存覆盖。
+    /// </summary>
+    private const int CatalogSchemaVersion = 2;
 
 
     private static readonly Regex ManagedFile = new(
@@ -46,7 +50,6 @@ public sealed class ClientCacheStore
     private readonly Uri _backend;
     private readonly string _architecture;
     private readonly string _sourceId;
-    private readonly string? _legacyCatalogPath;
     private readonly HttpClient _iconClient;
     private readonly SemaphoreSlim _ioGate = new(1, 1);
     private readonly SemaphoreSlim _iconSlots = new(4, 4);
@@ -76,20 +79,16 @@ public sealed class ClientCacheStore
         get { lock (_memoryGate) return _memoryIcons.Count; }
     }
 
-    public ClientCacheStore(string directoryPath, string backendUrl, string architecture, string sourceId = "builtin",
+    public ClientCacheStore(string directoryPath, string backendUrl, string architecture, string sourceId,
         HttpClient? iconClient = null)
     {
         DirectoryPath = Path.GetFullPath(directoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         _backend = new Uri(backendUrl, UriKind.Absolute);
         _architecture = architecture;
-        _sourceId = string.IsNullOrWhiteSpace(sourceId) ? "builtin" : sourceId.Trim();
+        _sourceId = sourceId?.Trim() ?? string.Empty;
         _iconClient = iconClient ?? DefaultIconClient;
-        // 目录缓存 key 含软件源：同一个后端在“内置精选/联想应用商店”之间切换时不会串用对方的目录缓存。
+        // 目录缓存 key 含来源 ID（来自服务端 /sources）：切换来源时不会串用对方的目录缓存。
         CatalogPath = Path.Combine(CatalogDirectory, Key(_backend.AbsoluteUri + "\n" + architecture + "\n" + _sourceId) + ".json");
-        // 旧版本（软件源功能之前）的目录缓存文件 key 不含源标识；旧文件没有 Source 字段，按内置精选读取。
-        _legacyCatalogPath = string.Equals(_sourceId, BuiltinSourceId, StringComparison.Ordinal)
-            ? Path.Combine(CatalogDirectory, Key(_backend.AbsoluteUri + "\n" + architecture) + ".json")
-            : null;
     }
 
     public static bool IsMemoryIconSource(string? source) =>
@@ -114,15 +113,11 @@ public sealed class ClientCacheStore
         try
         {
             var document = await ReadCatalogFileAsync(CatalogPath, ct).ConfigureAwait(false);
-            // 内置精选源兼容旧版本缓存文件（key 不含源标识，文档也没有 Source 字段）。
-            if (document is null && _legacyCatalogPath is not null)
-            {
-                document = await ReadCatalogFileAsync(_legacyCatalogPath, ct).ConfigureAwait(false);
-            }
-            if (document is null || document.SchemaVersion != 1 || document.BackendUrl != _backend.AbsoluteUri
+            if (document is null || document.SchemaVersion != CatalogSchemaVersion
+                || document.BackendUrl != _backend.AbsoluteUri
                 || document.Architecture != _architecture || document.Items is null || !document.CanUseOffline(now)) return null;
-            // 旧缓存没有 Source 字段，视为内置精选；源不匹配当作没有缓存，避免两个源串用目录。
-            string storedSource = string.IsNullOrWhiteSpace(document.Source) ? BuiltinSourceId : document.Source.Trim();
+            // 源不匹配当作没有缓存，避免不同来源串用目录。
+            string storedSource = document.Source?.Trim() ?? string.Empty;
             if (!string.Equals(storedSource, _sourceId, StringComparison.Ordinal)) return null;
             // Even a file created by an older client must never republish its signed download URLs.
             foreach (var app in document.Items)
@@ -160,7 +155,7 @@ public sealed class ClientCacheStore
     {
         var document = new CatalogCacheDocument
         {
-            SchemaVersion = 1, BackendUrl = _backend.AbsoluteUri, Architecture = _architecture,
+            SchemaVersion = CatalogSchemaVersion, BackendUrl = _backend.AbsoluteUri, Architecture = _architecture,
             Source = _sourceId, UpdatedAtUtc = updatedAtUtc,
             Items = items.Select(CloneForDisk).ToList()
         };
@@ -170,22 +165,6 @@ public sealed class ClientCacheStore
             EnsureDirectory(CatalogDirectory);
             var bytes = JsonSerializer.SerializeToUtf8Bytes(document, JsonOptions);
             await AtomicWriteAsync(CatalogPath, bytes, ct).ConfigureAwait(false);
-            // 内置精选源写过新格式缓存后，删除旧格式文件，避免统计里出现两份目录缓存。
-            if (_legacyCatalogPath is not null && !string.Equals(_legacyCatalogPath, CatalogPath, StringComparison.Ordinal))
-            {
-                try
-                {
-                    if (File.Exists(_legacyCatalogPath))
-                    {
-                        GuardFile(_legacyCatalogPath);
-                        File.Delete(_legacyCatalogPath);
-                    }
-                }
-                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-                {
-                    // 旧缓存删不掉不影响新缓存使用。
-                }
-            }
             LastError = null;
             return true;
         }
@@ -197,9 +176,29 @@ public sealed class ClientCacheStore
         finally { _ioGate.Release(); }
     }
 
-    public async Task AssignCachedIconsAsync(IEnumerable<AppItem> items, CancellationToken ct = default)
+    /// <summary>删除当前来源的磁盘目录缓存（服务端刷新目录后使用，下一次加载会强制走网络）。</summary>
+    public async Task DeleteCatalogAsync(CancellationToken ct = default)
     {
-        foreach (var app in items)
+        await _ioGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!File.Exists(CatalogPath)) return;
+            GuardFile(CatalogPath);
+            File.Delete(CatalogPath);
+            LastError = null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            LastError = "本地目录缓存暂时无法删除，将尝试直接连接软件服务。";
+        }
+        finally
+        {
+            _ioGate.Release();
+        }
+    }
+
+    public async Task AssignCachedIconsAsync(IEnumerable<AppItem> items, CancellationToken ct = default)
+    {        foreach (var app in items)
         {
             ct.ThrowIfCancellationRequested();
             app.DisplayIconSource = await FindIconAsync(app.IconUrl, ct).ConfigureAwait(false);
@@ -630,7 +629,7 @@ public sealed class ClientCacheStore
 
     private static AppItem CloneForDisk(AppItem source)
     {
-        // 内置源的 LatestRelease 带临时签名下载地址，写盘前必须去掉；联想源目录条目没有 release 时无需复制。
+        // 临时签名下载地址写盘前必须去掉；目录条目没有 release 时无需复制。
         if (source.LatestRelease is null || string.IsNullOrEmpty(source.LatestRelease.DownloadUrl)) return source;
         var clone = JsonSerializer.Deserialize<AppItem>(JsonSerializer.Serialize(source, JsonOptions), JsonOptions)!;
         if (clone.LatestRelease is not null) clone.LatestRelease.DownloadUrl = string.Empty;
@@ -644,37 +643,18 @@ public sealed class ClientCacheStore
             || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps)
             || parsed.UserInfo.Length != 0) return false;
 
-        // 后端自身提供的图标路径（内置源图标、商店图标兜底）始终允许。
+        // 后端自身提供的图标/截图/封面路径始终允许（不论具体路由）：服务端返回什么就请求什么。
         // 必须先于公网校验，因为后端可能部署在局域网/回环地址上。
         if (parsed.Scheme == _backend.Scheme
-            && parsed.Host == _backend.Host
+            && string.Equals(parsed.Host, _backend.Host, StringComparison.OrdinalIgnoreCase)
             && parsed.Port == _backend.Port)
         {
-            var root = _backend.AbsolutePath.TrimEnd('/');
-            bool allowed = parsed.AbsolutePath.StartsWith(root + "/api/v1/apps/", StringComparison.Ordinal)
-                           && parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal);
-            if (!allowed && parsed.AbsolutePath.StartsWith(root + "/icon/", StringComparison.Ordinal))
-            {
-                allowed = true;
-            }
-
-            // 商店源的 icon_proxy_url / cover / screenshots 也是后端兜底路径。
-            if (!allowed && parsed.AbsolutePath.StartsWith(root + "/api/v1/store/", StringComparison.Ordinal))
-            {
-                allowed = parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal)
-                          || parsed.AbsolutePath.EndsWith("/cover", StringComparison.Ordinal)
-                          || parsed.AbsolutePath.Contains("/screenshots/", StringComparison.Ordinal);
-            }
-
-            if (allowed)
-            {
-                uri = parsed;
-                return true;
-            }
+            uri = parsed;
+            return true;
         }
 
-        // 图标/CDN 地址不再维护固定域名白名单：后端只会下发可信来源的绝对 URL，
-        // 客户端按“安全公网地址”规则校验后直连；未知厂商 CDN（如 qhmsg.com）也可用。
+        // 图标/CDN 地址不再维护固定域名白名单：服务端只会下发可信来源的绝对 URL，
+        // 客户端按“安全公网地址”规则校验后直连；未知厂商 CDN 也可用。
         if (!IsSafePublicHost(parsed.Host)) return false;
         uri = parsed;
         return true;

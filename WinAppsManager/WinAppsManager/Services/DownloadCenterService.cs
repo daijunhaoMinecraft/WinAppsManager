@@ -32,14 +32,30 @@ public static class DownloadCenterService
         }
     }
 
+    /// <summary>
+    /// 查找某个软件条目对应的下载任务：除应用 ID 外还校验来源 ID，避免不同软件源的同名 ID 串用任务。
+    /// </summary>
+    public static DownloadTaskViewModel? Find(AppItem app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        lock (Gate)
+        {
+            return Items.FirstOrDefault(item =>
+                item.AppId == app.Id
+                && (string.IsNullOrWhiteSpace(app.SourceId)
+                    || string.IsNullOrWhiteSpace(item.App.SourceId)
+                    || string.Equals(item.App.SourceId, app.SourceId, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
     public static DownloadTaskViewModel Start(AppItem app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        AppLogService.Info($"开始下载：{app.Name}（{app.Id}）。");
+        AppLogService.Info($"开始下载：{app.Name}（{app.Id}，源={app.SourceId ?? "当前来源"}）。");
         DownloadTaskViewModel task;
         lock (Gate)
         {
-            var existing = Items.FirstOrDefault(item => item.AppId == app.Id);
+            var existing = Find(app);
             if (existing is { IsActive: true })
             {
                 return existing;
@@ -163,7 +179,7 @@ public static class DownloadCenterService
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            // 传入 AppItem：联想源用 soft_id 实时解析下载地址，目录里的 LatestRelease 为空也能开始下载。
+            // 传入 AppItem：按其 SourceId 请求对应来源的下载地址，目录里的 LatestRelease 为空也能开始下载。
             var release = await AppCatalogService.GetLatestReleaseAsync(task.App, cancellation.Token).ConfigureAwait(false);
             cancellation.Token.ThrowIfCancellationRequested();
             AppLogService.Info(

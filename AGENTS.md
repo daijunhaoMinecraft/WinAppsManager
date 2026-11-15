@@ -6,7 +6,7 @@
 
 WinAppsManager 是一个 Windows 软件管理器：
 
-- **前端**：WPF，单一目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11 共用一套构建），使用 iNKORE.UI.WPF.Modern 控件与主题。商店应用不依赖 WinRT：Windows 10/11 通过 Windows PowerShell `Get-AppxPackage` 自动启用，Windows 7/8 只显示桌面软件。
+- **前端**：WPF，单一目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11 共用一套构建），使用 iNKORE.UI.WPF.Modern 控件与主题。商店应用不依赖 WinRT：Windows 10/11 通过 Windows PowerShell `Get-AppxPackage` 自动启用，Windows 7/8 只显示桌面软件。软件源完全由服务端 `/api/v1/sources` 下发，客户端不硬编码来源 ID、名称、接口路径或能力分支。
 - **后端**：Python 3.10+ / FastAPI，默认监听 `127.0.0.1:8080`；同时提供**联想应用商店**（默认源，目录约 5111 款，服务端代理联想 PC 商店接口并缓存）、**360 软件管家**（服务端代理 360 应用中心，默认各分类热门子集约 5940 款）与**内置精选**（`/api/v1/apps` 等既有接口）三个软件源。
 - **职责划分**：后端维护软件目录、官网版本解析、下载地址签名、图标与缓存；客户端负责展示、筛选、下载任务、进度、设置和本地缓存。联想接口的调研文档见 `docs/lenovo-store-api.md`，整体设计见 `docs/store-source-design.md`。
 - **客户端后端地址**：默认 `http://127.0.0.1:8080/`，可在设置页“服务端地址”中运行时修改（`AppSettings.BackendBaseUrl`，http/https 绝对地址），切换后重建按服务端隔离的缓存。
@@ -28,9 +28,9 @@ WinAppsManager/
       App.xaml / App.xaml.cs             应用入口、共享 Wam.* 主题资源
       MainWindow.xaml / .cs              导航、分类子项、页面切换、关闭时取消下载
       Polyfills.cs                       net6 编译器标记补齐
-      Models/                            API 模型、设置、下载进度、已安装软件模型（含 StoreCatalogModels 联想商店 DTO/映射）
+      Models/                            API 模型、设置、下载进度、已安装软件模型（UnifiedSourceModels 统一软件源 DTO）
       Pages/
-        AppsInstallPage.xaml / .cs        软件列表、搜索/排序/分类/分页、在线搜索、按需图标
+        AppsInstallPage.xaml / .cs        软件列表、搜索/排序/分类/分页、服务端搜索、按需图标
         AppDetailsPage.xaml / .cs         详情、截图相册、下载链接、发起下载
         DownloadCenterPage.xaml / .cs     全局下载任务列表与操作
         UninstallPage.xaml / .cs          已安装软件列表、搜索、批量选择
@@ -39,9 +39,9 @@ WinAppsManager/
         UninstallConfirmationWindow.xaml / .cs  卸载二次确认与可停止说明
         UninstallProgressWindow.xaml / .cs      顺序卸载进度、停止与结果
         DeepCleanWindow.xaml / .cs              深度清理：残留树的勾选与删除
-        ScreenshotViewerWindow.xaml / .cs       联想商店截图/视频大图预览与视频播放（MediaElement）
+        ScreenshotViewerWindow.xaml / .cs       商店截图/视频大图预览与视频播放（MediaElement）
       Services/
-        AppCatalogService.cs              API 客户端、双软件源、目录/图标本地缓存、按系统过滤目录
+        AppCatalogService.cs              统一软件源 API 客户端、目录/详情/搜索/图标本地缓存、按系统过滤目录
         StoreMediaService.cs              联想商店截图/封面图片加载与内存/磁盘缓存
         AppLogService.cs                  文件日志（%LOCALAPPDATA%\WinAppsManager\Logs，按天分文件、保留 14 天）
         AppSettingsService.cs             设置读写、迁移、校验、主题资源更新
@@ -89,6 +89,7 @@ WinAppsManager/
     soft360-store-api.md                  360 应用中心接口调研（分类/列表/详情/下载/图片）
     soft360-search-api.md                 360 加密搜索接口逆向（AES/RSA/MD5 签名与加解密）
     store-source-design.md                多软件源整体设计与实现契约
+    source-api.md                         服务端/客户端统一软件源 API 契约（新增来源只改服务端）
   artifacts/ui/                           UI 截图（可选交付物）
   README.md                               项目说明
   Backend/README.md                       后端详细说明
@@ -204,7 +205,14 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/health` | 服务状态 |
-| GET | `/sources` | 软件源列表：联想应用商店、360 软件管家与内置精选的 enabled / app_count / is_default / search_mode（catalog/api）/ online_search 兼容字段 |
+| GET | `/sources` | 统一软件源列表：id/name/enabled/app_count/is_default/search_mode/capabilities；客户端只读它，不硬编码来源 |
+| GET | `/sources/{source_id}/categories` | 统一分类列表（能力 categories） |
+| GET | `/sources/{source_id}/apps` | 统一完整目录（客户端本地筛选/分页） |
+| GET | `/sources/{source_id}/search` | 统一服务端搜索（search_mode=api） |
+| GET | `/sources/{source_id}/apps/{app_id}` | 统一详情 |
+| GET | `/sources/{source_id}/apps/{app_id}/download` | 统一下载地址（Release，no-store） |
+| GET | `/sources/{source_id}/apps/{app_id}/icon`、`/screenshots/{index}`、`/cover`、`/screenshots/{index}/video` | 统一媒体代理（能力控制，视频 Range/206） |
+| POST | `/sources/{source_id}/refresh` | 统一目录刷新（能力 refresh） |
 | GET | `/status` | 预热/可用性状态与定时刷新统计，诊断用 |
 | GET | `/apps` | 软件列表，支持 `search`、`category`、`sort`、`architecture`、`refresh`（`builtin.enabled=false` 时 503） |
 | GET | `/apps/{app_id}` | 软件详情，不可用且无快照时返回 503 |
@@ -365,8 +373,8 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.2 页面职责
 
-- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、按 `/sources` 的 `search_mode` 选择本地全量搜索（catalog）或自动服务端 API 搜索（api）（**不提供刷新按钮**，联想目录由后端独立线程每 5 分钟自动更新，页面只在进入/源切换时读缓存）；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；联想源图标按行按需加载。
-- `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，联想源传入 soft id 以播放视频）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
+- `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、按 `/sources` 的 `search_mode` 选择本地全量搜索（catalog）或自动服务端 API 搜索（api）（**不提供刷新按钮**，目录由后端独立线程/刷新策略更新，页面只在进入/源切换时读缓存）；分类来自 `/sources/{id}/categories`，失败时按目录聚合；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；图标按行按需加载。
+- `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，视频直接使用详情返回的 `video_proxy_url`）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
 - `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、取消/重试/移除/打开安装包/打开下载文件夹。
 - `UninstallPage`：读取 Windows 卸载注册表和当前用户商店应用，按“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四类展示，支持分类筛选、搜索、全选、逐项选择和批量卸载；不依赖后端。
 - `SettingsPage`：主题、软件源（从服务端 `/sources` 动态加载）、服务端地址（应用/测试连接/恢复默认）、下载线程/超时/下载位置、GitHub 镜像、代理/证书、缓存、日志目录、设置存储。
@@ -459,7 +467,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 | `ProxyMode` | `System` | `System` / `Direct` / `Custom` |
 | `CustomProxyUrl` | `""` | http(s) 代理地址 |
 | `IgnoreCertificateErrors` | `false` | 危险，仅调试 |
-| `AppSource` | `Lenovo` | `Lenovo`（默认，联想应用商店）/ `BuiltIn`（内置精选）/ `Soft360`（360 软件管家）；旧文件缺字段按 `Lenovo`，非法值回退 `Lenovo` |
+| `SourceId` | `""` | 服务端 `/sources` 下发的来源 ID；空=跟随服务端默认源；旧 `AppSource`（Lenovo/BuiltIn/Soft360）仅读取时一次性迁移 |
 | `BackendBaseUrl` | `http://127.0.0.1:8080/` | 后端服务地址；必须是 http/https 绝对地址、无 userinfo/query/fragment，保存时规整末尾斜杠；切换后重建 HttpClient 与按服务端隔离的缓存 |
 | `EnableFileLogging` | `true` | 是否写客户端文件日志；关闭后只输出 Debug/Trace，保存后立即生效 |
 | `VerboseLogging` | `false` | 是否记录 Verbose 级别（分段下载、页面细节等）；保存后立即生效，`EnableFileLogging=false` 时无意义 |
@@ -506,7 +514,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - **ETag 条件缓存**：每个图标旁写 `<key>.meta.json`（`etag`/`last_modified`/`checked_at_utc`）；`IconRevalidateInterval`（默认 24 小时）内直接读文件，过期后发 `If-None-Match`/`If-Modified-Since`：304 只刷新元数据、200 替换文件、超时或非 2xx 继续用旧文件。
 - **ICO 帧选择**：`IconImageFormat` 解析 ICO 目录选最大帧，PNG 帧直接解码、DIB 帧重封装后交给 `IconBitmapDecoder`，失败才回退整个容器；7zip、notepadplusplus 实测正常显示。
 - **联想/360 源图标直连 CDN**：列表/搜索的 `icon_url` 是 CDN 绝对地址（qhimg/qhmsg/qhres、联想 CDN、任意厂商 CDN 均可），`ClientCacheStore.TryIconUri` 不再维护固定域名白名单，改为安全公网 URL 校验（拒绝 localhost/私网 IP/userinfo/内网后缀），图标 HttpClient 固定 `User-Agent: WinAppsManager/1.0`（联想 CDN 拒绝 curl 类 UA）；`EnsureIconAsync` 先直连、失败再回退后端 `icon_proxy_url`；支持 png/ico/jpg/jpeg/gif/bmp。内置源图标仍走后端 `/api/v1/apps/{id}/icon` 预热。
-- **按需加载**：联想/360 源不预热图标，列表行加载时调用 `EnsureIconAsync`（并发上限 6）；`StoreMediaService` 负责详情截图/封面，允许当前服务端 `/api/v1/store/` 代理路径与任意安全公网图片地址（直连优先、失败回退 `proxy_url`/`cover_proxy_url`），内存 LRU 按解码后像素字节记账、相册缩略图按 640 宽解码，磁盘缓存 `%LOCALAPPDATA%\WinAppsManager\Cache\store-media`。**视频不经过 StoreMediaService 缓存**：`ScreenshotViewerWindow` 用 `MediaElement` 播放 `AppCatalogService.TryBuildLenovoVideoUrl(softId, index)` 拼出的后端代理 URL（`/screenshots/{index}/video`，Range/206），播放失败显示错误并可用浏览器打开同一代理地址；窗口会因 MediaElement 与 `AllowsTransparency` 不兼容而在视频相册时使用不透明背景。
+- **按需加载**：列表行加载时调用 `EnsureIconAsync`（并发上限 6）；`StoreMediaService` 负责详情截图/封面，允许当前服务端 `/api/v1/sources/` 代理路径与任意安全公网图片地址（直连优先、失败回退 `proxy_url`/`cover_proxy_url`），内存 LRU 按解码后像素字节记账、相册缩略图按 640 宽解码，磁盘缓存 `%LOCALAPPDATA%\WinAppsManager\Cache\store-media`。**视频不经过 StoreMediaService 缓存**：`ScreenshotViewerWindow` 用 `MediaElement` 播放详情返回的 `video_proxy_url`（Range/206），播放失败显示错误并可用浏览器打开同一地址；窗口会因 MediaElement 与 `AllowsTransparency` 不兼容而在视频相册时使用不透明背景。
 
 ### 6.12 平台与架构适配
 

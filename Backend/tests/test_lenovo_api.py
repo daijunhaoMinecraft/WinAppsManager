@@ -360,6 +360,18 @@ class SourcesApiTests(unittest.TestCase):
                 "app_count": 8,
                 "is_default": False,
                 "updated_at": None,
+                # 统一 API：内置精选支持目录/详情/下载/分类，没有搜索/截图/封面/视频/刷新。
+                "capabilities": {
+                    "categories": True,
+                    "catalog": True,
+                    "search": False,
+                    "details": True,
+                    "download": True,
+                    "screenshots": False,
+                    "cover": False,
+                    "video": False,
+                    "refresh": False,
+                },
             })
             self.assertEqual(service.catalog_calls, [])
 

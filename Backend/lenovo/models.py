@@ -228,6 +228,12 @@ class StoreSearchResponse(ApiModel):
 
 
 class StoreSourceInfo(ApiModel):
+    """旧的 ``/sources`` 来源描述模型（保留兼容）。
+
+    ``GET /api/v1/sources`` 现在由统一软件源 API 提供（``Backend.unified.models.SourceInfo``，
+    额外带 ``capabilities``），本模型仅作为联想包的历史导出保留，不再被路由使用。
+    """
+
     id: ResourceId
     name: RequiredText
     description: RequiredText

@@ -16,7 +16,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// 详情页会缓存最近打开的少量页面（返回/再次打开更快），但必须限制数量：
-    /// 联想商店详情页含截图相册，每个页面会持有解码后的截图；不设上限时浏览几百款软件会持续占用数百 MB 内存。
+    /// 详情页可能含截图相册，每个页面会持有解码后的截图；不设上限时浏览几百款软件会持续占用数百 MB 内存。
     /// </summary>
     private const int MaxCachedDetailPages = 6;
 
@@ -345,10 +345,12 @@ public partial class MainWindow : Window
 
     private void ShowAppDetails(AppItem appItem)
     {
-        if (_detailsPages.TryGetValue(appItem.Id, out var detailsPage))
+        // 详情页按“来源 ID + 应用 ID”缓存：不同软件源可能有相同的应用 ID，不能互相复用页面。
+        string detailKey = (appItem.SourceId ?? string.Empty) + ":" + appItem.Id;
+        if (_detailsPages.TryGetValue(detailKey, out var detailsPage))
         {
-            _detailPageOrder.Remove(appItem.Id);
-            _detailPageOrder.Add(appItem.Id);
+            _detailPageOrder.Remove(detailKey);
+            _detailPageOrder.Add(detailKey);
             AppLogService.Verbose($"打开软件详情：{appItem.Name}（{appItem.Id}），复用已缓存的详情页。");
         }
         else
@@ -356,8 +358,8 @@ public partial class MainWindow : Window
             detailsPage = new AppDetailsPage(appItem);
             detailsPage.BackRequested += (_, _) => ChangePage(PageType.Install);
             detailsPage.DownloadCenterRequested += () => ChangePage(PageType.Downloads);
-            _detailsPages.Add(appItem.Id, detailsPage);
-            _detailPageOrder.Add(appItem.Id);
+            _detailsPages.Add(detailKey, detailsPage);
+            _detailPageOrder.Add(detailKey);
             // 超出上限后按最久未打开的顺序丢弃详情页，避免截图相册在内存里越积越多。
             while (_detailPageOrder.Count > MaxCachedDetailPages)
             {

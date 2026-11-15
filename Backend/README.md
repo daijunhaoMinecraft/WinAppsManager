@@ -2,7 +2,7 @@
 
 FastAPI 为桌面前端提供软件目录、软件详情、版本资源和图标。软件目录由 `data/apps.json`（原有 8 款精选软件）和 `data/apps.d/*.json`（37 款扩展软件，同一 schema，按文件名顺序合并）组成，共 45 款；版本和安装包全部由 `providers/` 从官方来源获取：11 款使用内置专用 provider（原有 8 款 + WorkBuddy、DeepSeek Harness、豆包 3 款非 GitHub 来源），其余 34 款使用通用的 GitHub Releases provider。前端调用 `http://127.0.0.1:8080/api/v1`。
 
-后端同时提供三个软件源：默认的**联想应用商店**（`lenovo`，后端代理联想 PC 商店接口，约 5111 款软件与游戏，`/api/v1/store/lenovo/*`）、**360软件管家**（`soft360`，后端代理 360 应用中心接口，24 分类热门子集约 5940 款，`/api/v1/store/360/*`；搜索已逆向 `enc_client` 加密接口，覆盖 360 全量目录）和原有的**内置精选**（`builtin`，仓库内 45 款，`/api/v1/apps` 等既有接口，行为不变）。内置精选默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`）两款（其余数据条目原样保留、不抓取），也可用 `builtin.enabled=false` 整体关闭。`GET /api/v1/sources` 列出三个源的启用状态与软件数量；联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](../docs/lenovo-store-api.md)，360 接口的结论见下文“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节，360 搜索的加密协议见 [`docs/soft360-search-api.md`](../docs/soft360-search-api.md)。
+后端同时提供三个软件源：默认的**联想应用商店**（`lenovo`，后端代理联想 PC 商店接口，约 5111 款软件与游戏，`/api/v1/store/lenovo/*`）、**360软件管家**（`soft360`，后端代理 360 应用中心接口，24 分类热门子集约 5940 款，`/api/v1/store/360/*`；搜索已逆向 `enc_client` 加密接口，覆盖 360 全量目录）和原有的**内置精选**（`builtin`，仓库内 45 款，`/api/v1/apps` 等既有接口，行为不变）。内置精选默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`）两款（其余数据条目原样保留、不抓取），也可用 `builtin.enabled=false` 整体关闭。`GET /api/v1/sources` 列出三个源的启用状态、搜索方式、软件数量与 `capabilities`；三个来源同时通过**统一软件源 API** `/api/v1/sources/{source_id}/...` 暴露同一套字段（客户端不再硬编码任何来源 ID/名称/路径，新增来源只改服务端，契约见 [`docs/source-api.md`](../docs/source-api.md)，实现见 `Backend/unified/`），旧的 `/store/lenovo/*`、`/store/360/*`、`/api/v1/apps*` 路由保持不变。联想接口的调研结论（token、分类分页、搜索、详情、下载地址、图片 CDN）见 [`docs/lenovo-store-api.md`](../docs/lenovo-store-api.md)，360 接口的结论见下文“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节，360 搜索的加密协议见 [`docs/soft360-search-api.md`](../docs/soft360-search-api.md)。
 
 目录条目用 `minimum_windows`（`7`/`8`/`8.1`/`10`/`11`）与 `architectures`（`x64`/`x86`/`arm64`）声明兼容范围，45 款均已按官方系统要求核实回填；`platforms` 是展示文案，统一写成「系统版本 · 架构」。`/api/v1/apps` 的 `architecture` 参数按 `architectures` 过滤列表。
 
@@ -108,16 +108,49 @@ python -m venv .venv
 
 | 源 id | 名称 | 接口 | 说明 |
 | --- | --- | --- | --- |
-| `lenovo` | 联想应用商店 | `/api/v1/store/lenovo/*` | 后端代理联想 PC 商店的 token 注册、分类/目录、详情、搜索、下载地址解析与图片；目录约 5111 款（软件 + 游戏） |
-| `builtin` | 内置精选 | `/api/v1/apps` 等既有接口 | 仓库内的 45 款精选软件；默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`） |
-| `soft360` | 360软件管家 | `/api/v1/store/360/*` | 后端代理 360 应用中心的分类/目录、详情、下载地址解析与图片；目录是**各分类热门子集**，默认约 5940 款（24 分类 × 前 3 页）；**搜索已逆向 `enc_client` 加密接口，覆盖 360 全量目录**（失败回退缓存子集匹配），搜索到的目录外软件也能打开详情/下载 |
+| `lenovo` | 联想应用商店 | 统一 `/api/v1/sources/lenovo/*`；旧 `/api/v1/store/lenovo/*`（兼容保留） | 后端代理联想 PC 商店的 token 注册、分类/目录、详情、搜索、下载地址解析与图片；目录约 5111 款（软件 + 游戏） |
+| `builtin` | 内置精选 | 统一 `/api/v1/sources/builtin/*`；旧 `/api/v1/apps` 等既有接口（兼容保留） | 仓库内的 45 款精选软件；默认通过 `builtin.app_ids` 只启用 Clash Verge Rev（`clashverge`）与 Telegram Desktop（`telegram`） |
+| `soft360` | 360软件管家 | 统一 `/api/v1/sources/soft360/*`；旧 `/api/v1/store/360/*`（兼容保留） | 后端代理 360 应用中心的分类/目录、详情、下载地址解析与图片；目录是**各分类热门子集**，默认约 5940 款（24 分类 × 前 3 页）；**搜索已逆向 `enc_client` 加密接口，覆盖 360 全量目录**（失败回退缓存子集匹配），搜索到的目录外软件也能打开详情/下载 |
 
-`GET /api/v1/sources` 返回三个源的 `enabled`、`search_mode`、`online_search`、`app_count`、`is_default`、`updated_at`；联想源与 360 源目录还没加载时 `app_count` 是 `null`（统计不会触发抓取）。内置精选的 `app_count` 是 `builtin.app_ids` 白名单过滤后的数量（默认 2），`enabled` 取 `builtin.enabled`。
+`GET /api/v1/sources` 返回三个源的 `enabled`、`search_mode`、`online_search`、`app_count`、`is_default`、`updated_at` 与 `capabilities`（categories/catalog/search/details/download/screenshots/cover/video/refresh 九个布尔值）；联想源与 360 源目录还没加载时 `app_count` 是 `null`（统计不会触发抓取）。内置精选的 `app_count` 是 `builtin.app_ids` 白名单过滤后的数量（默认 2），`enabled` 取 `builtin.enabled`。
 
 - `search_mode` 由服务端下发，客户端据此选择搜索方式：`catalog` = 目录本身是完整列表，客户端在本地过滤（联想目录约 5111 款、内置精选取白名单）；`api` = 目录只是热门子集，客户端输入时调用服务端搜索 API（360 目录是各分类热门子集，搜索接口覆盖 360 全量目录）。当前取值：`lenovo`=`catalog`、`builtin`=`catalog`、`soft360`=`api`。
 - `online_search` 是给旧客户端的兼容字段（新客户端优先 `search_mode`）：联想源为 `false`（完整目录不需要 API 在线搜索）、360 源为 `true`、内置精选为 `false`；与 `enabled` 无关。
+- `capabilities` 是客户端选择接口的唯一依据（不再按来源 ID 判断）：联想九项全为 `true`；360 为 `categories`/`catalog`/`search`/`details`/`download`/`screenshots`/`refresh`=true，`cover`/`video`=false；内置精选为 `categories`/`catalog`/`details`/`download`=true，`search`/`screenshots`/`cover`/`video`/`refresh`=false。
 
 联想源未启用（`lenovo.enabled=false`）时 `/sources` 仍会列出它但 `enabled=false`，所有 `/store/lenovo/*` 路由返回 503 `{"detail":"联想应用商店源未启用。"}`；360 源未启用（`soft360.enabled=false`）时同理，`/store/360/*` 返回 503 `{"detail":"360 软件源未启用。"}`。
+
+### 统一软件源 API（`/api/v1/sources/{source_id}/...`）
+
+目的：**客户端不硬编码任何软件源**。客户端只读取 `GET /api/v1/sources`（来源描述 + `capabilities`），所有来源共用同一组路径和同一套 JSON 字段；新增来源只需要在服务端注册一个适配器，客户端自动显示、切换、搜索、详情、下载。完整字段契约见 [`docs/source-api.md`](../docs/source-api.md)，实现位于 `Backend/unified/`。
+
+| 方法 | 路径（前缀 `/api/v1/sources/{source_id}`） | 说明 |
+| --- | --- | --- |
+| GET | `/categories` | 分类列表（联想按 software/game 展平并带 `group`；360 无分组；内置精选从目录派生） |
+| GET | `/apps` | 完整目录 `{"source","source_name","updated_at","stale","total","items"}`；只读来源快照，不触发抓取 |
+| GET | `/search?q=&limit=` | 服务端搜索（`search_mode=api` 使用；`q` 1–100、`limit` 1–50） |
+| GET | `/apps/{app_id}` | 详情（目录字段 + `long_description`/`release_notes`/`screenshots`/`cover_url`/`labels`/`ranking`/`detail_tags`） |
+| GET | `/apps/{app_id}/download?architecture=x64` | 下载地址（`Release`，`Cache-Control: no-store`） |
+| POST | `/refresh` | 刷新目录（仅 `capabilities.refresh=true` 的来源；同步等待并返回来源统计） |
+| GET | `/apps/{app_id}/icon` | 图标代理（长 TTL + `ETag`/304） |
+| GET | `/apps/{app_id}/screenshots/{index}` | 截图代理（长 TTL + `ETag`/304） |
+| GET | `/apps/{app_id}/cover` | 封面代理（长 TTL + `ETag`/304，仅联想支持） |
+| GET / HEAD | `/apps/{app_id}/screenshots/{index}/video` | 视频流代理（实时解析临时地址、透传 `Range`、返回 200/206/416，`no-store`；HEAD 只返回响应头，仅联想支持） |
+
+实现要点：
+
+- `id` 是**来源内应用 ID**（联想 `softID` 如 `L105867`/`11488`、360 `soft_id` 如 `1010`、内置精选用目录 ID 如 `qq`），保留原始大小写；统一详情/下载直接用它，不再需要客户端拼接来源前缀或旧主键。
+- 三个适配器只做“模型转换 + 错误翻译”，复用既有服务与缓存：`lenovo_adapter.py` → `LenovoStoreService`、`soft360_adapter.py` → `Soft360StoreService`、`builtin_adapter.py` → `CatalogRepository` + `ReleaseService` + `IconService`（**不通过 HTTP 递归调用统一路由，也不调用旧路由**）。因此统一接口与旧接口共享同一份目录/详情/图片缓存，不会重复抓取。
+- 目录/详情/下载里返回的 `icon_proxy_url`、`screenshots[].proxy_url`、`cover_proxy_url` 都是统一前缀下的后端相对路径，客户端可直接请求；视频截图的 `video_proxy_url` 指向统一视频代理（Range/206），客户端直接播放。`icon_url`/截图 `url`/`cover_url` 仍优先给出可直连的安全公网 CDN 地址（不安全时为 `null`），代理字段作为兜底。
+- 统一模型字段与旧来源模型的差异：`is_recommended`/`is_beta` 恒为布尔（360/内置精选没有信息时为 `false`，避免严格客户端无法反序列化 `null`）；`version` 在 360 目录/搜索里为 `null`（详情才有）；内置精选 `icon_url=null`、`icon_proxy_url` 指向统一图标接口；`website_url`/`download_page_url` 只有内置精选提供。
+- 错误映射：未知/禁用来源 404 `{"detail":"软件源不存在或未启用"}`；来源不支持的能力 404 `{"detail":"该软件源不支持此能力。"}`（客户端本应依据 `capabilities` 不请求）；来源内资源不存在 404；上游协议/网络错误 502、超时 504（沿用全局 `ProviderError` 处理器）。统一 API **不复用**旧路由的 503“源未启用”语义。
+- 响应缓存与旧路由一致：目录/分类/详情/搜索/下载/刷新/视频都是 `Cache-Control: no-store`（下载地址不缓存、不写日志），图片是 `public, max-age=86400` + `ETag`，`If-None-Match` 命中返回 304。
+
+**新增一个软件源（只改服务端）**：
+
+1. 新建 `Backend/unified/<source>_adapter.py`，继承 `SourceAdapter`，声明 `source_id`/`source_name`/`source_description`/`search_mode`/`is_default`/`capabilities`，覆盖需要的 `list_categories`/`list_apps`/`search`/`get_app`/`get_download`/`refresh`/`icon_response`/`screenshot_response`/`cover_response`/`open_video`；
+2. 在 `Backend/unified/factory.py` 的 `create_source_registry()` 中注册实例（需要新服务/开关时再按联想/360 的方式在 `Backend/main.py` lifespan 中创建服务并传入，并在 `config.py` 增加配置）；
+3. 客户端无需任何改动：`/sources` 自动出现新来源，统一路由自动可用，未实现的能力自动 404。
 
 ### 图片 URL 安全策略（联想 / 360 共用）
 
@@ -196,7 +229,17 @@ python -m venv .venv
 | 方法 | 路径 | 返回内容 |
 | --- | --- | --- |
 | GET | `/health` | `{"status":"ok"}` |
-| GET | `/sources` | 软件源列表：联想应用商店（默认）、内置精选与 360软件管家的启用状态、搜索方式（`search_mode`：联想/内置精选为 `catalog` 本地搜索、360 为 `api` 服务端搜索；旧字段 `online_search` 兼容保留，联想/内置精选为 `false`、360 为 `true`）、软件数量与更新时间（内置精选数量受 `builtin.app_ids` 过滤） |
+| GET | `/sources` | 软件源列表：联想应用商店（默认）、内置精选与 360软件管家的启用状态、搜索方式（`search_mode`：联想/内置精选为 `catalog` 本地搜索、360 为 `api` 服务端搜索；旧字段 `online_search` 兼容保留，联想/内置精选为 `false`、360 为 `true`）、软件数量与更新时间（内置精选数量受 `builtin.app_ids` 过滤），以及 `capabilities`（categories/catalog/search/details/download/screenshots/cover/video/refresh） |
+| GET | `/sources/{source_id}/categories` | 统一来源分类列表；联想按 software/game 展平并带 `group`，360 无分组，内置精选从目录派生 |
+| GET | `/sources/{source_id}/apps` | 统一来源完整目录 `{"source","source_name","updated_at","stale","total","items"}`；只读来源快照，不触发抓取 |
+| GET | `/sources/{source_id}/search?q=&limit=` | 统一来源服务端搜索（`search_mode=api` 的来源使用，`q` 1–100、`limit` 1–50） |
+| GET | `/sources/{source_id}/apps/{app_id}` | 统一来源详情（目录字段 + 详情字段，`video_proxy_url` 只出现在视频截图） |
+| GET | `/sources/{source_id}/apps/{app_id}/download?architecture=x64` | 统一来源下载地址（`Release`，`Cache-Control: no-store`） |
+| POST | `/sources/{source_id}/refresh` | 统一来源目录刷新（仅 `capabilities.refresh=true`：联想、360） |
+| GET | `/sources/{source_id}/apps/{app_id}/icon` | 统一图标代理（长 TTL + `ETag`/304；内置精选直接复用同一份图标文件与 `IconService`，不递归调用旧路由） |
+| GET | `/sources/{source_id}/apps/{app_id}/screenshots/{index}` | 统一截图代理（长 TTL + `ETag`/304；联想、360） |
+| GET | `/sources/{source_id}/apps/{app_id}/cover` | 统一封面代理（长 TTL + `ETag`/304；仅联想） |
+| GET / HEAD | `/sources/{source_id}/apps/{app_id}/screenshots/{index}/video` | 统一视频流代理（Range/206、`no-store`、HEAD 只返回响应头；仅联想） |
 | GET | `/status` | 诊断信息：每个软件的预热/可用性状态与定时刷新统计 |
 | GET | `/cache` | 内存/磁盘缓存统计、预热与定时刷新状态、`lenovo`/`soft360` 目录缓存状态、日志文件统计和本次启动生效的配置 |
 | DELETE | `/cache` | 清理内存和磁盘版本缓存，并追加清理联想与 360 源的目录/详情/图片缓存 |
@@ -238,7 +281,7 @@ python -m venv .venv
 
 版本集合 `/apps/{app_id}/releases` 默认返回全部可用架构，也可用 `architecture` 筛选。不支持的架构值返回 422，某个软件没有对应架构时，集合为空，latest 资源返回 404。`latest` 是当前版本的资源别名，响应中的 `id` 仍是实际版本 ID，例如 `9.9.37-windows-x64`。
 
-`total` 表示本次实际返回的条目数：列表逐个软件解析，单个软件抓取失败只会把它从本次响应中略过（记 warning 日志），接口整体仍返回 200；非强制刷新的列表与详情在 provider 暂时不可用时会回退到持久化缓存中的旧快照，带 `refresh=true` 时先强制刷新，失败的软件再按非强制刷新回退一次（有旧快照就不会被略过）；详情与 `/releases/latest` 的强制刷新失败仍会报错（502/504）。预热阶段既抓取失败又没有可用快照的软件不会出现在列表里（`refresh.drop_unavailable_apps` 默认开启），其详情返回 503。缺失的软件、版本或未配置的图标返回 404，查询参数不合法返回 422。上游 HTTP 或数据协议异常返回 502，超时返回 504。旧图标地址 `/icon/qq.png` 保留兼容。联想商店使用独立前缀 `/api/v1/store/lenovo`，360 软件管家使用 `/api/v1/store/360`，源未启用时返回 503，其接口与错误映射见“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节；`/sources`、联想与 360 的目录/分类/详情/搜索/下载/刷新（以及联想视频代理）响应都是 `Cache-Control: no-store`，只有图片使用长 TTL + ETag。
+`total` 表示本次实际返回的条目数：列表逐个软件解析，单个软件抓取失败只会把它从本次响应中略过（记 warning 日志），接口整体仍返回 200；非强制刷新的列表与详情在 provider 暂时不可用时会回退到持久化缓存中的旧快照，带 `refresh=true` 时先强制刷新，失败的软件再按非强制刷新回退一次（有旧快照就不会被略过）；详情与 `/releases/latest` 的强制刷新失败仍会报错（502/504）。预热阶段既抓取失败又没有可用快照的软件不会出现在列表里（`refresh.drop_unavailable_apps` 默认开启），其详情返回 503。缺失的软件、版本或未配置的图标返回 404，查询参数不合法返回 422。上游 HTTP 或数据协议异常返回 502，超时返回 504。旧图标地址 `/icon/qq.png` 保留兼容。联想商店使用独立前缀 `/api/v1/store/lenovo`，360 软件管家使用 `/api/v1/store/360`，源未启用时返回 503，其接口与错误映射见“软件源（内置精选 / 联想应用商店 / 360 软件管家）”一节；统一软件源 API 使用 `/api/v1/sources/{source_id}/...`，来源禁用/未知时返回 404，客户端优先使用它（契约见 [`docs/source-api.md`](../docs/source-api.md)）。`/sources`、联想与 360 的目录/分类/详情/搜索/下载/刷新（以及联想视频代理）与统一 API 的对应响应都是 `Cache-Control: no-store`，只有图片使用长 TTL + ETag。
 
 `GET /api/v1/status` 的 `warmup` 段列出每个软件的抓取状态（`ok`/`cached`/`unavailable`）、错误信息和检查时间，`refresh` 段给出定时刷新统计（`runs`、`failures`、`last_run_at`、`last_error` 等）。`POST /api/v1/refresh` 立即跑一轮全量刷新；已有一轮在运行时本次调用不排队，返回 `{"started":false,"reason":...}`，否则返回 `{"started":true,...}` 和本轮汇总。
 
@@ -435,3 +478,5 @@ API 测试使用注入的测试提供器，各软件插件测试使用 `httpx2.M
 日志实现由 `tests/test_logging.py` 覆盖：`logging` 段的默认值、提交的 `config.json`、文件/`config.local.json`/环境变量覆盖与非法 `level`/`max_bytes`/`backup_count`/布尔值启动失败；`configure_logging` 的写盘格式（含 UTF-8 中文）、root 级别、uvicorn 三个 logger 共用同一文件且每行只写一次、幂等不重复 handler、`enabled=false` 不建目录不写文件、目录不可用时降级为仅控制台、按 `max_bytes` 轮转出 `.1` 备份、`shutdown_logging` 释放文件、`get_log_files` 只读统计；以及 `GET /api/v1/cache` 的 `logging` 段、禁用时不创建目录、「日志初始化失败不影响服务启动」。日志测试全部注入临时目录，不写真实 `Backend/.cache`。注意：其它测试工厂注入的 `BackendSettings` 若未覆盖 `logging`，lifespan 会按默认配置在 `Backend/.cache/logs` 写测试日志（该目录已 gitignore）；新增测试建议注入临时 `logging.directory` 或 `logging.enabled=false`。
 
 360 软件源的测试同样全部离线（`httpx2.MockTransport` + 临时目录，禁止真实网络）：`tests/test_soft360_client.py` 覆盖列表 URL/查询参数、`getinfo` 逗号拼接与 50 个 ID 上限、`errno != 0`/`data=null`/非 JSON/非法包络/HTTP 错误/超时/连接错误的异常映射与参数校验；`tests/test_soft360_catalog.py` 覆盖 24 分类固定清单、分页与空数组提前结束、按 `soft_id` 去重与首分类归属、分类计数、logo 优先大图且保留 http(s)、描述截断、分类失败重试一次后整轮失败、磁盘 `catalog.json` 写入/`preload` 只读/损坏与过旧快照忽略/`clear`、以及独立 daemon 线程 `soft360-catalog-refresher` 按小间隔刷新写盘并在 `shutdown` 后退出；`tests/test_soft360_details.py` 覆盖 `getinfo` 字段映射（含整数 `baoku_cate.id`、`os.bit` 架构、`os.ver` 最低 Windows 与低于 7 按下限、`logo`→`icon_url` 与旧缓存兼容）、截图 http(s) 保留与任意安全公网地址直连/内网地址代理回退（含 `p15.qhmsg.com`；模型拒绝内网/回环/带凭据 URL）、详情内存/磁盘缓存与陈旧回退、`p2p` 的 `|||` 与 `pdown://` 内嵌 360 CDN 地址、`multi_urls` 回退、https 优先、文件名清洗与回退、大小为 `down.default.size`/`soft_size`、`sha256=None`、实时解析不写缓存以及 404/502；`tests/test_soft360_media.py` 覆盖 http 原样请求（不再强制 https）、无 CDN 域名白名单（`p15.qhmsg.com` 等未知公网域名可代理）、SSRF 拒绝（内网/回环/localhost/userinfo）、重定向逐跳校验、格式/大小/空响应、内存与磁盘缓存、`clear`、超时/HTTP 错误与 ETag 稳定性；`tests/test_soft360_api.py` 用注入的假服务覆盖 `/api/v1/sources`（三项、360 启用/未启用、`search_mode`/`online_search` 与 `app_count`）、全部 `/store/360/*` 路由（成功 JSON、GET 带 `refresh=true` 被忽略且只读缓存、空目录、404、502/504、未启用 503、图片 ETag/304、下载 `no-store`、搜索本地匹配与参数校验、`POST /refresh`）、`GET/DELETE /api/v1/cache` 的 `soft360` 段以及 lifespan 对注入服务只 `preload` 不启动线程/不 shutdown；`tests/test_soft360_config.py` 覆盖 `soft360` 段默认值、提交的 `config.json`、文件/`config.local.json`/环境变量覆盖全部字段，以及分页 0/21、并发 0/17、负数/NaN TTL、非正图片上限、非法布尔等启动失败路径。新增的 `tests/test_soft360_search.py` 覆盖 AES-128（FIPS-197 已知向量）、AES-128-CBC/PKCS#7、RSA PKCS#1 v1.5（用固定测试私钥构造 type-1/type-2 padding）与 SPKI 解析、请求 `q`/`skey`/签名排序过滤规则、响应解密、`Soft360SearchClient` 的 MockTransport 端到端与错误映射（超时/HTTP/非法 JSON/errno/解密失败/空结果）、服务层搜索映射/`limit` 截断/去重/远程失败与空结果回退本地目录、目录外软件的详情/下载/图标/截图与 404，以及 `GET /store/360/search` 路由的 200、参数 422、上游失败回退（ASGITransport，不启动 lifespan、不联网）。
+
+统一软件源 API 由 `tests/test_unified_sources.py` 覆盖（全部离线：注入假联想/360 服务与假内置 provider，不访问真实网络、不读写开发机持久缓存）：`GET /api/v1/sources` 三源描述与 `capabilities` 矩阵（联想九项全 true、360 cover/video=false、内置精选仅 categories/catalog/details/download）、禁用/未知来源 404 与禁用来源仍列出、三源的 `categories`/`apps`/`search`/详情/`download`/图标/截图/封面/视频/刷新接口形状与 `Cache-Control`（含图片 ETag/304、视频 206 + Range/HEAD、下载 `no-store`）、404/502/504 错误映射、旧路由（`/api/v1/apps`、`/store/lenovo/*`、`/store/360/*`）行为不变且与统一路由共享同一份来源服务，以及“新增来源只需 `SourceAdapter` + 注册”：自定义 adapter 注册进 `SourceRegistry`/`create_source_registry(extra_adapters=...)` 后 `/sources` 与统一路由自动可用、未实现能力自动 404；另含统一模型严格校验（必填字段、禁止多余字段、`total` 等于条目数、`video_proxy_url` 只属于视频截图、代理路径必须是后端相对路径）。

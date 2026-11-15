@@ -19,17 +19,13 @@ if __package__:
     from .catalog import CatalogRepository
     from .config import BackendSettings, RefreshConfig
     from .icons import CachedIconStaticFiles, IconService
-    from .lenovo import SOURCE_DESCRIPTION, SOURCE_NAME, create_lenovo_store_service
+    from .lenovo import create_lenovo_store_service
     from .lenovo.media import BROWSER_USER_AGENT
-    from .lenovo.models import StoreSourceInfo, StoreSourcesResponse
     from .lenovo.routes import create_lenovo_router
-    from .soft360 import (
-        SOURCE_DESCRIPTION as SOFT360_SOURCE_DESCRIPTION,
-        SOURCE_NAME as SOFT360_SOURCE_NAME,
-        create_soft360_store_service,
-    )
+    from .soft360 import create_soft360_store_service
     from .soft360.media import BROWSER_USER_AGENT as SOFT360_BROWSER_USER_AGENT
     from .soft360.routes import create_soft360_router
+    from .unified import create_source_registry, create_unified_router
     from .logging_config import configure_logging, current_log_path, get_log_files, shutdown_logging
     from .models import AppCollection, AppDefinition, AppResponse, Architecture, HealthResponse, Release, ReleaseCollection
     from .persistence import PersistentMetadataStore
@@ -43,17 +39,13 @@ else:
     from catalog import CatalogRepository
     from config import BackendSettings, RefreshConfig
     from icons import CachedIconStaticFiles, IconService
-    from lenovo import SOURCE_DESCRIPTION, SOURCE_NAME, create_lenovo_store_service
+    from lenovo import create_lenovo_store_service
     from lenovo.media import BROWSER_USER_AGENT
-    from lenovo.models import StoreSourceInfo, StoreSourcesResponse
     from lenovo.routes import create_lenovo_router
-    from soft360 import (
-        SOURCE_DESCRIPTION as SOFT360_SOURCE_DESCRIPTION,
-        SOURCE_NAME as SOFT360_SOURCE_NAME,
-        create_soft360_store_service,
-    )
+    from soft360 import create_soft360_store_service
     from soft360.media import BROWSER_USER_AGENT as SOFT360_BROWSER_USER_AGENT
     from soft360.routes import create_soft360_router
+    from unified import create_source_registry, create_unified_router
     from logging_config import configure_logging, current_log_path, get_log_files, shutdown_logging
     from models import AppCollection, AppDefinition, AppResponse, Architecture, HealthResponse, Release, ReleaseCollection
     from persistence import PersistentMetadataStore
@@ -73,10 +65,8 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "data" / "apps.json"
 ICON_DIR = BASE_DIR / "icon"
 
-# 内置精选源（原有 /apps 接口）在 /sources 里的展示信息；联想源使用 lenovo 包里的常量。
-BUILTIN_SOURCE_ID = "builtin"
-BUILTIN_SOURCE_NAME = "内置精选"
-BUILTIN_SOURCE_DESCRIPTION = "项目内置的精选软件目录。"
+# 内置精选源（原有 /apps 接口）在 /sources 里的展示信息由 unified.builtin_adapter 提供；
+# 这里只保留禁用时 /api/v1/apps* 的 503 文案。
 BUILTIN_SOURCE_DISABLED_DETAIL = "内置精选源未启用。"
 # 联想源的专用 HTTP 客户端连接超时（设计文档 3.6 固定 5 秒，总超时用 lenovo.timeout_seconds）。
 LENOVO_CONNECT_TIMEOUT_SECONDS = 5.0
@@ -409,6 +399,18 @@ def create_app(
                 interval_seconds=refresh_settings.interval_seconds if builtin_enabled else 0.0,
                 jitter_seconds=refresh_settings.jitter_seconds,
             )
+            # 统一软件源注册表：/api/v1/sources 与 /api/v1/sources/{source_id}/... 的唯一数据源。
+            # 新增来源只需在这里（create_source_registry）注册一个新的适配器，客户端无需改动；
+            # 未启用的来源仍会出现在 /sources 里（enabled=false），统一路由返回 404。
+            api.state.source_registry = create_source_registry(
+                catalog=api.state.catalog,
+                releases=api.state.releases,
+                warmup=warmup,
+                icons=api.state.icons,
+                settings=configured,
+                lenovo_service=api.state.lenovo,
+                soft360_service=api.state.soft360,
+            )
             if builtin_enabled and refresh_settings.on_startup:
                 await _warm_catalog(warmup, refresh_settings)
             if builtin_enabled:
@@ -483,64 +485,6 @@ def create_app(
     @router.get("/health", response_model=HealthResponse, tags=["Health"])
     def health() -> HealthResponse:
         return HealthResponse()
-
-    @router.get("/sources", response_model=StoreSourcesResponse, tags=["Sources"])
-    async def list_sources(request: Request, response: Response) -> StoreSourcesResponse:
-        """软件源列表：联想应用商店（默认）、内置精选与 360 软件管家。
-
-        联想源与 360 源的 ``app_count`` 只反映已缓存的数据，不会为了统计触发抓取；目录还没
-        加载时为 ``null``。内置精选源的 ``enabled`` 来自 ``builtin.enabled``，``app_count`` 是
-        ``builtin.app_ids`` 白名单过滤后的数量（禁用时也照实返回，便于客户端展示）。
-
-        ``search_mode`` 由服务端决定客户端怎么搜索：``catalog`` = 目录是完整列表，客户端本地
-        搜索（联想目录约 5111 款、内置精选取白名单）；``api`` = 目录只是子集，必须调用服务端
-        搜索 API（360 目录是各分类热门子集，搜索接口覆盖全量目录）。
-        ``online_search`` 是旧客户端的兼容字段（联想改为 false：完整目录不需要 API 搜索；
-        360 为 true；内置精选为 false），新客户端优先读 ``search_mode``。
-        """
-
-        response.headers["Cache-Control"] = "no-store"
-        configured_builtin = request.app.state.settings.builtin
-        configured_lenovo = request.app.state.settings.lenovo
-        configured_soft360 = request.app.state.settings.soft360
-        lenovo_service = getattr(request.app.state, "lenovo", None)
-        soft360_service = getattr(request.app.state, "soft360", None)
-        items = [
-            StoreSourceInfo(
-                id="lenovo",
-                name=SOURCE_NAME,
-                description=SOURCE_DESCRIPTION,
-                enabled=configured_lenovo.enabled,
-                search_mode="catalog",
-                online_search=False,
-                app_count=lenovo_service.cached_app_count() if lenovo_service is not None else None,
-                is_default=True,
-                updated_at=lenovo_service.cached_updated_at() if lenovo_service is not None else None,
-            ),
-            StoreSourceInfo(
-                id=BUILTIN_SOURCE_ID,
-                name=BUILTIN_SOURCE_NAME,
-                description=BUILTIN_SOURCE_DESCRIPTION,
-                enabled=configured_builtin.enabled,
-                search_mode="catalog",
-                online_search=False,
-                app_count=request.app.state.catalog.app_count,
-                is_default=False,
-                updated_at=None,
-            ),
-            StoreSourceInfo(
-                id="soft360",
-                name=SOFT360_SOURCE_NAME,
-                description=SOFT360_SOURCE_DESCRIPTION,
-                enabled=configured_soft360.enabled,
-                search_mode="api",
-                online_search=True,
-                app_count=soft360_service.cached_app_count() if soft360_service is not None else None,
-                is_default=False,
-                updated_at=soft360_service.cached_updated_at() if soft360_service is not None else None,
-            ),
-        ]
-        return StoreSourcesResponse(items=items, total=len(items))
 
     @router.get("/cache", tags=["Cache"])
     async def get_cache(request: Request, response: Response) -> dict:
@@ -774,6 +718,10 @@ def create_app(
         return request.app.state.icons.response(request, icon_path)
 
     api.include_router(router)
+    # 统一软件源 API：GET /sources 与 /sources/{source_id}/... 全部由来源注册表驱动；
+    # 客户端只依赖这一套接口，新增来源不需要改客户端。旧的 /store/lenovo/*、/store/360/*、
+    # /apps* 路由保持不变。
+    api.include_router(create_unified_router())
     # 联想应用商店源自带 /api/v1/store/lenovo 前缀，路由从 request.app.state.lenovo 取服务。
     api.include_router(create_lenovo_router())
     # 360 软件源自带 /api/v1/store/360 前缀，路由从 request.app.state.soft360 取服务。

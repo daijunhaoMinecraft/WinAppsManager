@@ -14,20 +14,20 @@ using System.Windows.Media.Imaging;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// 把商店图片（联想应用商店 / 360 软件管家的截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
+/// 把软件详情图片（截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
 /// <para>
-/// 图片来源有两类：①后端 <c>/api/v1/store/</c> 代理路径（相对当前服务端地址）；②任意安全公网 http(s)
-/// 图片地址（后端详情响应里的 <c>url</c> / <c>cover_url</c>，不限定 CDN 域名）。加载时优先直连图片地址，
-/// 失败再回退后端代理路径（<see cref="GetImageAsync(string?, string?, int, CancellationToken)"/>），
-/// 以减少后端图片代理带宽。两类地址都要通过 <see cref="TryMediaUri"/> 的安全校验：只接受 http(s)、
-/// 拒绝 userinfo / localhost / 私网或回环 IP 字面量 / 控制字符；后端代理路径即使在本机或内网也始终允许。
+/// 图片来源有两类：①当前服务端返回的后端相对/绝对地址（直连主机或代理路径）；②服务端详情响应里的
+/// 任意安全公网 http(s) 图片地址。加载时优先直连图片地址，失败再回退代理路径
+/// （<see cref="GetImageAsync(string?, string?, int, CancellationToken)"/>），以减少后端图片代理带宽。
+/// 两类地址都要通过 <see cref="TryMediaUri"/> 的安全校验：只接受 http(s)、拒绝 userinfo / localhost /
+/// 私网或回环 IP 字面量 / 控制字符；当前服务端（可能部署在本机或内网）上的任意路径始终允许。
 /// 上游图片地址的信任由后端负责（后端已校验并只返回安全公网地址），客户端不做域名白名单。
 /// </para>
 /// <para>
 /// 线程模型：解码在后台线程完成并 <see cref="Freezable.Freeze"/> 后返回，UI 线程只做绑定。
 /// 缓存分两层：内存 LRU（按**解码后的像素字节**计，默认 64 张 / 32 MB）与磁盘缓存
 /// <c>%LOCALAPPDATA%\WinAppsManager\Cache\store-media</c>（文件名 = sha256(URL)，默认上限 256 MB）。
-/// 联想商店截图是 1280×720 / 1920×1080，一张解码后约 3.5–8 MB，因此内存预算必须按解码后大小记账，
+/// 详情截图常见 1280×720 / 1920×1080，一张解码后约 3.5–8 MB，因此内存预算必须按解码后大小记账，
 /// 否则缓存几十张就会占用数百 MB 原生内存；相册缩略图建议用
 /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 指定解码宽度。
 /// 所有失败（网络、格式、权限）都静默返回 <see langword="null"/>，由 UI 显示占位图。
@@ -70,7 +70,6 @@ public static class StoreMediaService
 
     // 后端地址可在设置中修改，因此这里每次取当前值，不再用静态字段固化。
     private static Uri Backend => AppCatalogService.BackendUri;
-    private static string BackendRoot => AppCatalogService.BackendUri.AbsolutePath.TrimEnd('/');
     private static readonly HttpClient Client = CreateHttpClient();
     private static readonly Regex ManagedFile = new(
         "^[a-f0-9]{64}\\.(?:png|jpg|jpeg|gif|bmp|ico)$", RegexOptions.CultureInvariant);
@@ -103,11 +102,11 @@ public static class StoreMediaService
         GetImageAsync(url, 0, ct);
 
     /// <summary>
-    /// 加载一张图片，并按 <paramref name="decodePixelWidth"/> 缩窄解码宽度（0 = 原始尺寸）。
+    /// 加载一张软件图片，并按 <paramref name="decodePixelWidth"/> 缩窄解码宽度（0 = 原始尺寸）。
     /// 相册缩略图（显示约 236×148）建议传 480，解码后内存从约 3.5 MB 降到约 0.5 MB；
     /// 大图预览传 0 或目标窗口宽度。不同解码宽度的结果在内存缓存中分开保存。
     /// URL 只接受安全的绝对 http(s) 地址（不接受 userinfo、localhost、私网/回环 IP 字面量、控制字符）
-    /// 或当前后端 <c>/api/v1/store/</c> 代理路径；不限制具体域名。
+    /// 或当前服务端上的任意图片路径；不限制具体域名。
     /// </summary>
     public static async Task<ImageSource?> GetImageAsync(string? url, int decodePixelWidth, CancellationToken ct = default)
     {
@@ -171,14 +170,14 @@ public static class StoreMediaService
     }
 
     /// <summary>
-    /// 加载一张商店图片：先尝试 <paramref name="url"/>（后端详情给的安全公网图片地址），
-    /// 失败或为空时再回退 <paramref name="proxyUrl"/>（后端 <c>/api/v1/store/</c> 代理路径）。
+    /// 加载一张软件图片：先尝试 <paramref name="url"/>（服务端给的安全公网图片地址），
+    /// 失败或为空时再回退 <paramref name="proxyUrl"/>（服务端返回的代理路径）。
     /// <paramref name="decodePixelWidth"/> 语义与
     /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 相同。
     /// <para>
-    /// 两个地址都通过同一套安全 URL 校验（安全公网 http(s) 地址或当前后端代理路径），各自复用
+    /// 两个地址都通过同一套安全 URL 校验（安全公网 http(s) 地址或当前服务端路径），各自复用
     /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 的内存/磁盘缓存，
-    /// 因此直连成功时完全不会请求后端代理；两者相同、都为空或都不可用时只尝试一次。
+    /// 因此直连成功时完全不会请求代理；两者相同、都为空或都不可用时只尝试一次。
     /// 取消会向上抛出，其余失败静默返回 <see langword="null"/>。
     /// </para>
     /// </summary>
@@ -492,7 +491,7 @@ public static class StoreMediaService
 
     private static ImageSource Remember(string key, ImageSource image)
     {
-        // 关键：按解码后的像素字节记账。联想商店截图 1280×720 约 3.5 MB、1920×1080 约 8 MB，
+        // 关键：按解码后的像素字节记账。详情截图 1280×720 约 3.5 MB、1920×1080 约 8 MB，
         // 若按压缩字节（几十~几百 KB）记账，64 张全尺寸截图会保留数百 MB 原生内存。
         long bytes = DecodedBytes(image);
         lock (MemoryGate)
@@ -522,11 +521,11 @@ public static class StoreMediaService
         image is BitmapSource bitmap ? (long)bitmap.PixelWidth * bitmap.PixelHeight * 4 : 0;
 
     /// <summary>
-    /// 校验并解析商店图片地址。后端已对上游图片地址做安全校验（只返回安全的公网 http(s) 地址），
+    /// 校验并解析软件图片地址。服务端已对上游图片地址做安全校验（只返回安全的公网 http(s) 地址），
     /// 因此客户端不再维护固定 CDN 域名白名单，接受任意安全绝对 http(s) 地址：
     /// 拒绝非 http(s)、带 userinfo、含控制字符/空白/反斜杠、超长地址，以及 localhost、单标签主机名、
     /// 内网保留后缀、私网/回环 IP 字面量和伪装成主机名的数字 IP。
-    /// 当前服务端 <c>/api/v1/store/</c> 下的代理路径始终允许（后端可能就运行在本机或内网）。
+    /// 当前服务端上的任意路径始终允许（服务端可能就运行在本机或内网）。
     /// </summary>
     private static bool TryMediaUri(string? value, out Uri uri, out string key)
     {
@@ -549,26 +548,21 @@ public static class StoreMediaService
         if (parsed.UserInfo.Length != 0) return false;
         if (parsed.Port == 0) return false;
 
-        // 后端图片代理（logo/cover/screenshots 等）即使指向 127.0.0.1 / 内网地址也必须放行。
-        if (!IsBackendStoreUri(parsed) && !IsSafePublicImageUri(parsed)) return false;
+        // 当前服务端返回的图片路径（主机与端口一致）即使指向 127.0.0.1 / 内网地址也必须放行。
+        if (!IsBackendUri(parsed) && !IsSafePublicImageUri(parsed)) return false;
 
         uri = parsed;
         key = Key(parsed.AbsoluteUri);
         return true;
     }
 
-    /// <summary>是否为当前后端 <c>/api/v1/store/</c> 下的图片代理地址（logo/cover/screenshots 等）。</summary>
-    private static bool IsBackendStoreUri(Uri uri)
+    /// <summary>是否为当前服务端上的地址（服务端返回的图片路径不做具体路由限制）。</summary>
+    private static bool IsBackendUri(Uri uri)
     {
         var backend = Backend;
-        if (uri.Scheme != backend.Scheme
-            || !string.Equals(uri.Host, backend.Host, StringComparison.OrdinalIgnoreCase)
-            || uri.Port != backend.Port)
-        {
-            return false;
-        }
-
-        return uri.AbsolutePath.StartsWith(BackendRoot + "/api/v1/store/", StringComparison.Ordinal);
+        return uri.Scheme == backend.Scheme
+               && string.Equals(uri.Host, backend.Host, StringComparison.OrdinalIgnoreCase)
+               && uri.Port == backend.Port;
     }
 
     /// <summary>
@@ -648,8 +642,8 @@ public static class StoreMediaService
 
     private static HttpClient CreateHttpClient()
     {
-        // 直连联想 CDN 必须带非 curl 类 User-Agent（实测 WinAppsManager/1.0 可用，curl 会被 403）；
-        // 后端图片接口与 360 CDN 对 UA 不敏感，同一个客户端共用。
+        // 部分软件 CDN 必须带非 curl 类 User-Agent（实测 WinAppsManager/1.0 可用，curl 会被 403）；
+        // 服务端图片接口对 UA 不敏感，同一个客户端共用。
         var client = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         client.DefaultRequestHeaders.UserAgent.ParseAdd("WinAppsManager/1.0");
         return client;
@@ -712,7 +706,7 @@ public static class StoreMediaService
     private sealed record MemoryEntry(ImageSource Image, long Bytes, LinkedListNode<string> Node);
 }
 
-/// <summary>联想商店截图/封面磁盘缓存的统计结果。</summary>
+/// <summary>详情截图/封面磁盘缓存的统计结果。</summary>
 public sealed record StoreMediaCacheStatistics(int Files, long Bytes);
 
 

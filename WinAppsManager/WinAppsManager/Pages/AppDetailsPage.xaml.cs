@@ -208,42 +208,47 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
         DetailCacheStatusText.Text = AppCatalogService.CacheDescription;
     }
 
-    /// <summary>当前应用是否来自联想应用商店源：这类应用即使目录里没有 LatestRelease 也能直接开始下载。</summary>
-    private bool IsStoreSource =>
-        string.Equals(AppItem.SourceId, StoreCatalogMapper.LenovoSourceId, StringComparison.OrdinalIgnoreCase)
-        || (string.IsNullOrEmpty(AppItem.SourceId) && AppCatalogService.IsLenovoSource);
+    /// <summary>当前软件来源是否声明提供安装包下载能力（能力来自服务端 <c>/sources</c>，不按来源 ID 判断）。</summary>
+    private bool CanDownloadFromServer => AppCatalogService.SupportsDownload(AppItem.SourceId);
+
+    private string SourceNameText => string.IsNullOrWhiteSpace(AppItem.SourceName)
+        ? AppCatalogService.SourceDisplayName
+        : AppItem.SourceName!;
 
     private void RefreshDownloadAction()
     {
-        bool isStoreSource = IsStoreSource;
-        var task = DownloadCenterService.Find(AppItem.Id);
+        bool canDownload = CanDownloadFromServer;
+        var task = DownloadCenterService.Find(AppItem);
         DownloadButton.Content = task is not null
             ? task.IsActive ? "查看下载" : "在下载中心查看"
-            : (AppItem.LatestRelease is not null || isStoreSource) ? "开始下载" : "前往官网下载 ↗";
-        // 联想源的下载地址由下载中心实时解析，详情拉取失败但目录摘要里有 soft_id 时仍允许开始下载。
-        DownloadButton.IsEnabled = !_isLoading
-            && (_hasFreshDetails || (isStoreSource && !string.IsNullOrWhiteSpace(AppItem.SourceAppId)));
-        InstallFlowText.Text = isStoreSource
-            ? "安装包由联想应用商店提供，开始下载后可在下载中心查看进度；完成后可从下载中心打开安装包。"
-            : AppItem.LatestRelease is not null
-                ? "开始下载后可在下载中心查看进度；完成后可从下载中心打开安装包。"
-                : "前往软件官网下载 Windows 安装包，按软件安装向导完成安装。";
+            : canDownload ? "开始下载" : "前往官网下载 ↗";
+        // 下载地址由下载中心在开始时按“软件 ID + 来源 ID”实时解析，详情拉取失败也仍可开始下载。
+        DownloadButton.IsEnabled = !_isLoading && (canDownload || AppItem.LatestRelease is not null || _hasFreshDetails);
+        InstallFlowText.Text = canDownload
+            ? $"安装包由{SourceNameText}提供，开始下载后可在下载中心查看进度；完成后可从下载中心打开安装包。"
+            : "前往软件官网下载 Windows 安装包，按软件安装向导完成安装。";
     }
 
     private void DownloadButton_OnClick(object sender, RoutedEventArgs e)
     {
-        var existing = DownloadCenterService.Find(AppItem.Id);
+        var existing = DownloadCenterService.Find(AppItem);
         if (existing is not null)
         {
             DownloadCenterRequested?.Invoke();
             return;
         }
 
-        if (AppItem.LatestRelease is null && !IsStoreSource)
+        if (!CanDownloadFromServer && AppItem.LatestRelease is null)
         {
-            if (!ExternalLinkService.OpenWebsite(AppItem.DownloadPageUrl))
+            // 当前来源不提供下载能力：打开服务端返回的官网/下载页。
+            bool opened = ExternalLinkService.OpenWebsite(AppItem.DownloadPageUrl)
+                          || ExternalLinkService.OpenWebsite(AppItem.WebsiteUrl);
+            if (!opened)
             {
-                AppLogService.Warn($"打开软件下载页失败：{AppItem.Name}（{AppItem.Id}），地址无效或无法启动默认浏览器。");
+                AppLogService.Warn(
+                    $"打开软件官网失败：{AppItem.Name}（{AppItem.Id}），当前来源没有提供下载地址，官网地址为空或无法启动浏览器。");
+                LinkStatusText.Text = "当前来源没有提供安装包下载地址，也没有可打开的官网页面。";
+                LinkStatusText.Visibility = Visibility.Visible;
             }
             return;
         }
@@ -257,18 +262,16 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
     {
         var release = AppItem.LatestRelease;
         bool hasDirectLink = !string.IsNullOrWhiteSpace(release?.DownloadUrl);
-        bool isStoreSource = IsStoreSource;
+        bool canDownload = CanDownloadFromServer;
         string url = hasDirectLink ? release!.DownloadUrl : AppItem.DownloadPageUrl;
         bool hasLink = !string.IsNullOrWhiteSpace(url);
         DownloadLinkPanel.Visibility = hasLink ? Visibility.Visible : Visibility.Collapsed;
         DownloadLinkTextBox.Text = hasLink ? url : string.Empty;
         DownloadLinkLabelText.Text = hasDirectLink ? "下载链接" : "官网下载页";
         DownloadLinkHintText.Text = hasDirectLink
-            ? isStoreSource
-                ? "下载链接由联想应用商店提供，临时生成；开始下载时会重新解析最新地址。"
-                : "链接由软件服务临时生成；复制或下载时会重新获取最新地址。"
-            : isStoreSource
-                ? "安装包由联想应用商店提供；点击“开始下载”后由下载中心获取下载地址。"
+            ? "下载链接由软件服务临时生成；开始下载时会重新解析最新地址。"
+            : canDownload
+                ? "点击“开始下载”后由下载中心获取下载地址。"
                 : "该软件暂无安装包直链，以上为官网下载页地址。";
         OpenDownloadLinkButton.IsEnabled = hasLink;
         WebsiteButton.Visibility = string.IsNullOrWhiteSpace(AppItem.WebsiteUrl)
@@ -277,8 +280,8 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
 
     private async Task RefreshDownloadLinkAsync()
     {
-        bool isStoreSource = IsStoreSource;
-        if (AppItem.LatestRelease is null && !isStoreSource)
+        bool canDownload = CanDownloadFromServer;
+        if (AppItem.LatestRelease is null && !canDownload)
         {
             return;
         }
@@ -305,7 +308,7 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
             AppLogService.Warn(
                 $"加载下载链接失败：{AppItem.Name}（{AppItem.Id}），{exception.GetType().Name}：{exception.Message}",
                 exception);
-            DownloadLinkHintText.Text = isStoreSource
+            DownloadLinkHintText.Text = canDownload
                 ? "暂时无法获取下载链接；仍可点击“开始下载”，下载中心会在开始时重新解析地址。"
                 : "暂时无法获取最新下载链接；可点击“复制下载链接”重试。";
         }
@@ -351,7 +354,7 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
         try
         {
             string url = AppItem.DownloadPageUrl;
-            if (AppItem.LatestRelease is not null || IsStoreSource)
+            if (AppItem.LatestRelease is not null || CanDownloadFromServer)
             {
                 var release = await AppCatalogService.GetLatestReleaseAsync(AppItem, cancellation.Token);
                 url = release.DownloadUrl;
@@ -422,7 +425,7 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
     }
 
     // ---------------------------------------------------------------------------------------------
-    // 标签、更新说明与截图相册（联想源补充展示）
+    // 标签、更新说明与截图相册（来源提供时展示）
     // ---------------------------------------------------------------------------------------------
 
     private void UpdateTagChips()
@@ -460,25 +463,32 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
         Screenshots.Clear();
 
         var items = new List<AppScreenshot>();
-        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         // 横版封面作为相册第一张；它和左上角的 76px 应用图标不同，不会重复。
-        // CoverUrl 优先是 CDN 绝对地址，CoverProxyUrl 是后端代理兜底（直连失败时回退）。
-        if (!string.IsNullOrWhiteSpace(AppItem.CoverUrl) && seenUrls.Add(AppItem.CoverUrl))
+        // 封面与服务端返回的截图都可能只有直连地址、只有代理兜底，或两者都有。
+        if (!string.IsNullOrWhiteSpace(AppItem.CoverUrl) || !string.IsNullOrWhiteSpace(AppItem.CoverProxyUrl))
         {
-            items.Add(new AppScreenshot
+            var cover = new AppScreenshot
             {
                 Index = -1,
                 Kind = "image",
-                Url = AppItem.CoverUrl,
+                Url = AppItem.CoverUrl ?? string.Empty,
                 ProxyUrl = AppItem.CoverProxyUrl
-            });
+            };
+            if (seenKeys.Add(ScreenshotKey(cover)))
+            {
+                items.Add(cover);
+            }
         }
+
         foreach (var screenshot in AppItem.Screenshots)
         {
-            if (string.IsNullOrWhiteSpace(screenshot.Url) || !seenUrls.Add(screenshot.Url))
+            if ((string.IsNullOrWhiteSpace(screenshot.Url) && string.IsNullOrWhiteSpace(screenshot.ProxyUrl))
+                || !seenKeys.Add(ScreenshotKey(screenshot)))
             {
                 continue;
             }
+
             items.Add(screenshot);
         }
 
@@ -497,6 +507,10 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
                 ? "点击缩略图打开预览；视频条目可点击播放。"
                 : "点击缩略图打开预览。");
     }
+
+    /// <summary>截图去重键：优先直连地址，只有代理地址时用代理地址（避免代理-only 条目被误判重复）。</summary>
+    private static string ScreenshotKey(AppScreenshot screenshot) =>
+        !string.IsNullOrWhiteSpace(screenshot.Url) ? screenshot.Url : "proxy:" + screenshot.ProxyUrl;
 
     private async Task LoadScreenshotImageAsync(ScreenshotViewItem item, CancellationToken ct)
     {
@@ -534,8 +548,8 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
             int index = Screenshots.IndexOf(item);
             if (index >= 0 && _viewerScreenshots.Count > 0)
             {
-                // 视频播放走本机后端的联想视频代理，需要原始 soft_id；内置精选源没有视频，传 null。
-                var viewer = new ScreenshotViewerWindow(_viewerScreenshots, index, ResolveLenovoSoftId())
+                // 视频条目直接使用服务端详情返回的 video_proxy_url，客户端不拼来源专属路径。
+                var viewer = new ScreenshotViewerWindow(_viewerScreenshots, index)
                 {
                     Owner = Window.GetWindow(this)
                 };
@@ -543,21 +557,6 @@ public partial class AppDetailsPage : Page, INotifyPropertyChanged
             }
             args.Handled = true;
         }
-    }
-
-    /// <summary>
-    /// 当前详情对应的联想商店 <c>soft_id</c>（区分大小写）；内置精选或详情来自旧缓存（没有源标识）时返回
-    /// <see langword="null"/>，预览窗口据此不显示视频播放器，只保留缩略图。
-    /// </summary>
-    private string? ResolveLenovoSoftId()
-    {
-        if (!string.Equals(AppItem.SourceId, StoreCatalogMapper.LenovoSourceId, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
-
-        string softId = AppItem.SourceAppId?.Trim() ?? string.Empty;
-        return softId.Length == 0 ? null : softId;
     }
 
     /// <summary>相册只做横向滚动；鼠标位于相册上方且已滚到边界时，把纵向滚轮交还给整页。</summary>

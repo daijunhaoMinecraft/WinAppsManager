@@ -119,15 +119,18 @@
                                         CornerRadius="4" Padding="7,1" Margin="0,0,8,0" VerticalAlignment="Center">
                                     <Border.Style>
                                         <Style TargetType="Border">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Setter Property="Visibility" Value="Visible"/>
                                             <Style.Triggers>
-                                                <DataTrigger Binding="{Binding AppItem.SourceId}" Value="lenovo">
-                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                <DataTrigger Binding="{Binding AppItem.SourceName}" Value="{x:Null}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding AppItem.SourceName}" Value="">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
                                                 </DataTrigger>
                                             </Style.Triggers>
                                         </Style>
                                     </Border.Style>
-                                    <TextBlock Text="联想商店" FontSize="10.5"
+                                    <TextBlock Text="{Binding AppItem.SourceName}" FontSize="10.5"
                                                Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
                                 </Border>
                                 <Border Background="{DynamicResource Wam.AccentSoftBrush}" CornerRadius="4"
