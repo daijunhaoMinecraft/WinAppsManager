@@ -609,7 +609,8 @@ class LenovoStoreService:
         - 只有 ``200/206/416`` 会返回给客户端，其它状态抛
           :class:`LenovoUnavailableError`（502），超时抛 :class:`LenovoTimeoutError`（504）；
         - 越界/非视频/地址缺失抛 :class:`LenovoNotFoundError`（路由 404），
-          非法地址或白名单外主机抛 :class:`LenovoProtocolError`（502）；
+          非法地址或视频 CDN 白名单外主机抛 :class:`LenovoProtocolError`（502）；
+          （图片 URL 已改为无域名白名单的安全公网校验，视频来源仍保持联想视频 CDN 限制）
         - ``range_header`` 只透传合法的单段 ``bytes=``，非法值直接忽略（上游返回 200 全量）。
         """
 

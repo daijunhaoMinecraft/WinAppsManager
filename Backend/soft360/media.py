@@ -1,12 +1,15 @@
 """360 图片代理缓存（图标 / 截图）。
 
-360 的 logo 与截图都托管在图片 CDN（``qhimg.com`` / ``mediav.com`` / ``qhres2.com`` 等子域），
-客户端可以直连，后端仍提供代理作为兜底与统一缓存：
+360 的 logo 与截图托管在图片 CDN（``qhimg.com`` / ``mediav.com`` / ``qhres2.com`` /
+``qhmsg.com`` 等子域），客户端可以直连，后端仍提供代理作为兜底与统一缓存：
 
-- 拉图必须带浏览器 UA，且 URL 的 host 必须在白名单内（``*.qhimg.com``、``*.mediav.com``、
-  ``*.qhres2.com``、``*.qhres.com``），否则抛 :class:`Soft360ProtocolError`，避免 SSRF 与把
-  非 360 域名写进缓存；
-- http 地址在请求前统一规范化为 https（360 图片 CDN 同时支持两种协议）；
+- 图片地址**不再使用固定 CDN 域名白名单**：任意**安全的公网 http(s) 地址**都可以代理
+  （与模型层直连校验同一套规则，见 :mod:`Backend.url_safety`：拒绝 userinfo、localhost、
+  内网后缀、私有/回环 IP 字面量、控制字符等），因此 ``p15.qhmsg.com`` 这类名单外真实 CDN
+  也能正常加载；
+- 拉图必须带浏览器 UA；**不自动跟随重定向**，每一跳都用同一个安全校验重新验证目标地址
+  （最多 5 跳），避免 30x 跳转绕过 SSRF 防护；
+- http 与 https 都按上游原样请求，不再强制升级 https（部分 CDN 只支持 http）；
 - 用 Content-Type / URL 后缀识别 ``png/jpg/jpeg/gif/ico/bmp``，单图上限 10 MB；
 - 磁盘 ``<cache>/soft360/media/<sha256(url)>.<ext>`` + sidecar ``<sha256(url)>.json``
   （``url`` / ``content_type`` / ``fetched_at``），原子写，TTL 默认 30 天，总容量超出时按最旧
@@ -30,16 +33,19 @@ import re
 import tempfile
 import time
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import httpx2
 
-from .catalog import normalize_image_url
 from .errors import (
     Soft360ProtocolError,
     Soft360TimeoutError,
     Soft360UnavailableError,
 )
+if "." in (__package__ or ""):
+    from ..url_safety import resolve_redirect_url, validate_public_http_url
+else:
+    from url_safety import resolve_redirect_url, validate_public_http_url
 
 logger = logging.getLogger("winappsmanager.soft360")
 
@@ -53,8 +59,9 @@ BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
-ALLOWED_IMAGE_HOSTS = frozenset({"qhimg.com", "mediav.com", "qhres2.com", "qhres.com"})
-ALLOWED_IMAGE_DOMAIN_SUFFIXES = (".qhimg.com", ".mediav.com", ".qhres2.com", ".qhres.com")
+# 重定向最多跟随 5 跳，每一跳都重新做安全校验（见 url_safety.resolve_redirect_url）。
+MAX_REDIRECTS = 5
+_REDIRECT_STATUS_CODES = frozenset({301, 302, 303, 307, 308})
 
 _IMAGE_CONTENT_TYPES: dict[str, tuple[str, str]] = {
     "image/png": ("image/png", "png"),
@@ -246,22 +253,37 @@ class Soft360MediaCache:
             "User-Agent": BROWSER_USER_AGENT,
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         }
-        try:
-            response = await self._client.get(
-                url,
-                headers=headers,
-                timeout=self._timeout(),
-                follow_redirects=True,
-            )
-        except httpx2.TimeoutException:
-            raise Soft360TimeoutError("360 图片请求超时。") from None
-        except httpx2.HTTPError:
-            raise Soft360UnavailableError("360 图片服务暂时无法连接。") from None
+        # 手动处理重定向：httpx 自动跟随会在校验前就请求到目标地址，无法防止跳转到内网
+        # （SSRF）；这里逐跳校验，最多 MAX_REDIRECTS 跳。
+        current_url = url
+        redirects = 0
+        while True:
+            try:
+                response = await self._client.get(
+                    current_url,
+                    headers=headers,
+                    timeout=self._timeout(),
+                    follow_redirects=False,
+                )
+            except httpx2.TimeoutException:
+                raise Soft360TimeoutError("360 图片请求超时。") from None
+            except httpx2.HTTPError:
+                raise Soft360UnavailableError("360 图片服务暂时无法连接。") from None
+            if response.status_code not in _REDIRECT_STATUS_CODES:
+                break
+            if redirects >= MAX_REDIRECTS:
+                raise Soft360ProtocolError("360 图片重定向次数过多。")
+            location = response.headers.get("location")
+            if not isinstance(location, str) or not location.strip():
+                raise Soft360ProtocolError("360 图片重定向缺少目标地址。")
+            next_url = resolve_redirect_url(current_url, location)
+            if next_url is None:
+                raise Soft360ProtocolError(
+                    "360 图片重定向目标不是安全的公网 http(s) 地址。"
+                )
+            redirects += 1
+            current_url = next_url
 
-        # 跟随重定向后仍要保证最终地址在图片白名单内（防 SSRF 绕过）。
-        final_url = str(response.url)
-        if final_url != url:
-            validate_media_url(final_url)
         if response.status_code != 200:
             raise Soft360UnavailableError(f"360 图片请求失败（HTTP {response.status_code}）。")
         content_length = response.headers.get("content-length")
@@ -277,7 +299,7 @@ class Soft360MediaCache:
             raise Soft360ProtocolError("360 图片响应为空。")
         if len(content) > self._max_image_bytes:
             raise Soft360ProtocolError("360 图片超过单图大小上限。")
-        detected = detect_image_type(response.headers.get("content-type"), url)
+        detected = detect_image_type(response.headers.get("content-type"), current_url)
         if detected is None:
             raise Soft360ProtocolError("360 图片格式不受支持。")
         content_type, _extension = detected
@@ -410,42 +432,24 @@ class Soft360MediaCache:
 
 
 def normalize_media_url(url: Any) -> str:
-    """校验图片 URL 并把 http 规范化为 https，返回最终请求地址。"""
+    """校验图片 URL 并返回可请求地址：任意安全的公网 http(s) 地址（无域名白名单）。
 
-    normalized = normalize_image_url(url)
+    不再强制 http→https：360 的部分截图 CDN（例如 ``p15.qhmsg.com``）只给 http 地址，
+    强制升级会把真实可用的图片改坏。
+    """
+
+    if not isinstance(url, str):
+        raise Soft360ProtocolError("360 图片地址类型无效。")
+    normalized = validate_public_http_url(url)
     if normalized is None:
-        raise Soft360ProtocolError("360 图片地址无效。")
-    text = normalized.strip()
-    try:
-        parsed = urlsplit(text)
-        parsed.port
-    except ValueError:
-        raise Soft360ProtocolError("360 图片地址无效。") from None
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise Soft360ProtocolError("360 图片地址必须是 http(s) URL。")
-    if parsed.username is not None or parsed.password is not None:
-        raise Soft360ProtocolError("360 图片地址不允许包含用户信息。")
-    host = parsed.hostname.casefold()
-    if not _host_allowed(host):
-        raise Soft360ProtocolError(f"360 图片地址不在允许的域名内: {host}")
-    if parsed.scheme == "http":
-        return urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, parsed.fragment))
-    return text
+        raise Soft360ProtocolError("360 图片地址必须是安全的公网 http(s) URL。")
+    return normalized
 
 
 def validate_media_url(url: Any) -> str:
-    """校验图片 URL：http(s)、host 在白名单内、没有用户信息；返回 https 规范化地址。"""
+    """校验图片 URL：任意安全的公网 http(s) 地址（无域名白名单）；返回可请求的原始地址。"""
 
     return normalize_media_url(url)
-
-
-def _host_allowed(host: str) -> bool:
-    if host in ALLOWED_IMAGE_HOSTS:
-        return True
-    return any(
-        host.endswith(suffix) and len(host) > len(suffix)
-        for suffix in ALLOWED_IMAGE_DOMAIN_SUFFIXES
-    )
 
 
 def detect_image_type(content_type: Any, url: str) -> tuple[str, str] | None:
@@ -621,12 +625,11 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 __all__ = [
-    "ALLOWED_IMAGE_DOMAIN_SUFFIXES",
-    "ALLOWED_IMAGE_HOSTS",
     "BROWSER_USER_AGENT",
     "DEFAULT_IMAGE_CACHE_MAX_BYTES",
     "DEFAULT_IMAGE_CACHE_TTL_SECONDS",
     "ImagePayload",
+    "MAX_REDIRECTS",
     "Soft360MediaCache",
     "detect_image_type",
     "normalize_media_url",

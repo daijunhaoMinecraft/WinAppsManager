@@ -2,11 +2,12 @@
 
 覆盖：
 
-- http 图片地址规范化为 https 后再请求；host 白名单（qhimg.com / mediav.com / qhres2.com）；
+- http 与 https 地址按上游原样请求（不再强制 https）；**没有 CDN 域名白名单**，
+  ``p15.qhmsg.com`` 等任意安全公网图片地址都能代理；
+- 内网/回环/localhost/userinfo 等不安全地址被拒绝，重定向逐跳校验（跳到内网被拒）；
 - Content-Type 与 URL 后缀识别、单图大小上限、空响应；
 - 内存缓存命中、磁盘缓存跨实例复用、``clear`` 清理；
-- 非法 URL / 白名单外主机 / 重定向到白名单外主机 / 超时 / HTTP 错误的异常映射；
-- ETag 稳定性（同一 URL 恒定）。
+- 超时 / HTTP 错误的异常映射；ETag 稳定性（同一 URL 恒定）。
 """
 
 from __future__ import annotations
@@ -91,7 +92,7 @@ def make_cache(
 
 
 class MediaFetchTests(unittest.IsolatedAsyncioTestCase):
-    async def test_http_url_is_fetched_over_https_and_cached_in_memory(self):
+    async def test_http_url_is_fetched_as_is_and_cached_in_memory(self):
         upstream = FakeImageUpstream()
         clock = MutableClock()
         with tempfile.TemporaryDirectory() as directory:
@@ -101,10 +102,27 @@ class MediaFetchTests(unittest.IsolatedAsyncioTestCase):
                 cached = await cache.fetch(IMAGE_URL)
         self.assertEqual(payload.content, PNG_BYTES)
         self.assertEqual(payload.content_type, "image/png")
-        self.assertEqual(payload.etag, sha256("https://p0.qhimg.com/logo/72.png".encode()).hexdigest()[:32])
+        self.assertEqual(payload.etag, sha256(IMAGE_URL.encode()).hexdigest()[:32])
         self.assertEqual(cached, payload)
-        self.assertEqual(upstream.urls, ["https://p0.qhimg.com/logo/72.png"])
+        self.assertEqual(upstream.urls, [IMAGE_URL])
         self.assertEqual(cache.counters["hits"], 1)
+
+    async def test_unknown_public_cdn_domains_are_proxied(self):
+        """不再维护 CDN 白名单：p15.qhmsg.com 等名单外公网图片地址也能代理加载。"""
+
+        upstream = FakeImageUpstream()
+        clock = MutableClock()
+        urls = [
+            "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png",
+            "https://p10.qhmsg.com/t01e33f3a65e1d9118a.png",
+            "https://unknown-cdn.vendor-name.net/shot.jpg",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            http, cache = make_cache(upstream, Path(directory), clock)
+            async with http:
+                payloads = [await cache.fetch(url) for url in urls]
+        self.assertTrue(all(payload.content == PNG_BYTES for payload in payloads))
+        self.assertEqual(upstream.urls, urls)
 
     async def test_disk_cache_survives_a_new_instance(self):
         upstream = FakeImageUpstream()
@@ -119,7 +137,7 @@ class MediaFetchTests(unittest.IsolatedAsyncioTestCase):
             sidecar = next(media_directory.glob("*.json"))
             raw = json.loads(sidecar.read_text(encoding="utf-8"))
             self.assertEqual(raw["schema_version"], MEDIA_SCHEMA_VERSION)
-            self.assertEqual(raw["url"], "https://p0.qhimg.com/logo/72.png")
+            self.assertEqual(raw["url"], IMAGE_URL)
             http2, second = make_cache(upstream, cache_directory, clock)
             async with http2:
                 payload = await second.fetch(IMAGE_URL)
@@ -190,31 +208,39 @@ class MediaFetchTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MediaValidationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_http_is_normalized_to_https(self):
+    async def test_http_and_https_are_preserved_and_arbitrary_public_hosts_are_allowed(self):
         self.assertEqual(
-            normalize_media_url("http://p0.qhimg.com/a.png"), "https://p0.qhimg.com/a.png"
+            normalize_media_url("http://p0.qhimg.com/a.png"), "http://p0.qhimg.com/a.png"
         )
         self.assertEqual(
             normalize_media_url("https://p0.qhimg.com/a.png?x=1"), "https://p0.qhimg.com/a.png?x=1"
         )
         self.assertEqual(
-            normalize_media_url("http://s1.mediav.com/a.jpg"), "https://s1.mediav.com/a.jpg"
+            normalize_media_url("http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png"),
+            "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png",
         )
         self.assertEqual(
-            normalize_media_url("https://img.qhres2.com/a.png"), "https://img.qhres2.com/a.png"
+            normalize_media_url("https://s1.mediav.com/a.jpg"), "https://s1.mediav.com/a.jpg"
+        )
+        self.assertEqual(
+            normalize_media_url("https://unknown-cdn.vendor-name.net/a.png"),
+            "https://unknown-cdn.vendor-name.net/a.png",
         )
 
-    async def test_disallowed_hosts_and_invalid_urls_are_rejected(self):
+    async def test_unsafe_and_invalid_urls_are_rejected(self):
         upstream = FakeImageUpstream()
         clock = MutableClock()
         with tempfile.TemporaryDirectory() as directory:
             http, cache = make_cache(upstream, Path(directory), clock)
             async with http:
                 for url in (
-                    "https://evil.example.com/a.png",
-                    "http://qhimg.com.evil.example.com/a.png",
+                    "http://127.0.0.1/a.png",
+                    "http://localhost/a.png",
+                    "https://[::1]/a.png",
+                    "http://192.168.1.20/a.png",
+                    "https://printer.local/a.png",
+                    "https://user:pass@p15.qhmsg.com/a.png",
                     "ftp://p0.qhimg.com/a.png",
-                    "https://user:pass@p0.qhimg.com/a.png",
                     "not a url",
                     None,
                     123,
@@ -223,15 +249,28 @@ class MediaValidationTests(unittest.IsolatedAsyncioTestCase):
                         await cache.fetch(url)
         self.assertEqual(upstream.urls, [])
 
-    async def test_redirect_to_a_disallowed_host_is_rejected(self):
+    async def test_redirect_targets_are_validated_per_hop(self):
         upstream = FakeImageUpstream()
-        upstream.redirect_to = "https://evil.example.com/a.png"
+        upstream.redirect_to = "http://127.0.0.1/a.png"
         clock = MutableClock()
         with tempfile.TemporaryDirectory() as directory:
             http, cache = make_cache(upstream, Path(directory), clock)
             async with http:
                 with self.assertRaises(Soft360ProtocolError):
                     await cache.fetch(IMAGE_URL)
+
+    async def test_redirect_to_another_public_cdn_is_followed(self):
+        upstream = FakeImageUpstream()
+        upstream.redirect_to = "http://p15.qhmsg.com/real.png"
+        clock = MutableClock()
+        with tempfile.TemporaryDirectory() as directory:
+            http, cache = make_cache(upstream, Path(directory), clock)
+            async with http:
+                payload = await cache.fetch(IMAGE_URL)
+        self.assertEqual(payload.content, PNG_BYTES)
+        self.assertEqual(
+            upstream.urls, [IMAGE_URL, "http://p15.qhmsg.com/real.png"]
+        )
 
     async def test_timeout_and_http_errors_are_mapped(self):
         clock = MutableClock()

@@ -317,8 +317,16 @@ public sealed class StoreSourceInfo
     /// <summary>
     /// 服务端是否提供“在线搜索”（JSON 字段 <c>online_search</c>）。
     /// 旧服务端没有该字段时为 <see langword="null"/>，客户端回退到按源判断（联想/360 = true、内置精选 = false）。
+    /// 新服务端同时下发 <see cref="SearchMode"/> 时以搜索模式为准，该字段只作为旧服务端兼容回退。
     /// </summary>
     public bool? OnlineSearch { get; set; }
+
+    /// <summary>
+    /// 服务端搜索模式（JSON 字段 <c>search_mode</c>）：<c>catalog</c> 表示目录完整、客户端本地搜索即可；
+    /// <c>api</c> 表示目录只是热门子集，搜索必须调用服务端搜索 API。
+    /// 旧服务端没有该字段时为 <see langword="null"/>，客户端回退到按源判断（联想/内置精选 = catalog、360 = api）。
+    /// </summary>
+    public string? SearchMode { get; set; }
 }
 
 /// <summary><c>GET /api/v1/sources</c> 的响应。</summary>

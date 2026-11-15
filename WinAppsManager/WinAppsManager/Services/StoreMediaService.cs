@@ -2,7 +2,9 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -14,11 +16,12 @@ namespace WinAppsManager.Services;
 /// <summary>
 /// 把商店图片（联想应用商店 / 360 软件管家的截图、视频缩略图、封面）加载为可冻结的 <see cref="ImageSource"/>。
 /// <para>
-/// 图片来源有两类：①后端 <c>/api/v1/store/</c> 代理路径（相对当前服务端地址）；②联想/360 图片 CDN 的
-/// 绝对地址（后端详情响应里的 <c>url</c> / <c>cover_url</c>）。加载时优先直连 CDN，
+/// 图片来源有两类：①后端 <c>/api/v1/store/</c> 代理路径（相对当前服务端地址）；②任意安全公网 http(s)
+/// 图片地址（后端详情响应里的 <c>url</c> / <c>cover_url</c>，不限定 CDN 域名）。加载时优先直连图片地址，
 /// 失败再回退后端代理路径（<see cref="GetImageAsync(string?, string?, int, CancellationToken)"/>），
-/// 以减少后端图片代理带宽；两类地址都必须通过 <see cref="TryMediaUri"/> 的主机白名单校验，
-/// 避免把任意 URL 当成图片去请求。
+/// 以减少后端图片代理带宽。两类地址都要通过 <see cref="TryMediaUri"/> 的安全校验：只接受 http(s)、
+/// 拒绝 userinfo / localhost / 私网或回环 IP 字面量 / 控制字符；后端代理路径即使在本机或内网也始终允许。
+/// 上游图片地址的信任由后端负责（后端已校验并只返回安全公网地址），客户端不做域名白名单。
 /// </para>
 /// <para>
 /// 线程模型：解码在后台线程完成并 <see cref="Freezable.Freeze"/> 后返回，UI 线程只做绑定。
@@ -42,18 +45,28 @@ public static class StoreMediaService
     public const long DiskByteLimit = 256L * 1024 * 1024;
 
     private const int MaxImageBytes = 12 * 1024 * 1024;
+
+    /// <summary>单个图片 URL 的字符上限（与后端安全校验一致，避免异常超长地址）。</summary>
+    private const int MaxMediaUrlLength = 4096;
+
     private const string TemporaryExtension = ".tmp";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(12);
     private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico"];
 
     /// <summary>
-    /// 联想图片 CDN 主机白名单（含子域）：logo/截图在 <c>lsw-fast.lenovo.com.cn</c>，
-    /// 详情封面与视频缩略图在 <c>imgs.lenovomm.cn</c>，部分 logo 在第三方图床 <c>pc1.gtimg.com</c>。
+    /// 形如 <c>2130706433</c>、<c>0x7f.0.0.1</c> 的“数字 IP”主机名：部分 HTTP 栈会把它解析成
+    /// 对应的内网地址，因此即使 <see cref="IPAddress.TryParse(string?, out IPAddress?)"/> 不认识也一律拒绝。
     /// </summary>
-    private static readonly string[] LenovoCdnHosts = ["lenovo.com.cn", "lenovomm.cn", "gtimg.com"];
+    private static readonly Regex NumericHostPattern = new(
+        @"^(?:0x[0-9a-f]+|\d+)(?:\.(?:0x[0-9a-f]+|\d+)){0,3}$",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    /// <summary>360 图片 CDN 域名白名单（含子域）：logo 与 snapshot 在 qhimg.com，个别在 mediav.com。</summary>
-    private static readonly string[] Soft360CdnHosts = ["qhimg.com", "mediav.com", "qhres2.com", "qhres.com"];
+    /// <summary>只用于本机/内网/保留用途的主机后缀：公网图片地址不应出现。</summary>
+    private static readonly string[] InternalHostSuffixes =
+    [
+        ".localhost", ".local", ".localdomain", ".internal", ".intranet", ".lan",
+        ".corp", ".home", ".home.arpa", ".private", ".onion", ".test", ".invalid", ".example"
+    ];
 
     // 后端地址可在设置中修改，因此这里每次取当前值，不再用静态字段固化。
     private static Uri Backend => AppCatalogService.BackendUri;
@@ -93,7 +106,8 @@ public static class StoreMediaService
     /// 加载一张图片，并按 <paramref name="decodePixelWidth"/> 缩窄解码宽度（0 = 原始尺寸）。
     /// 相册缩略图（显示约 236×148）建议传 480，解码后内存从约 3.5 MB 降到约 0.5 MB；
     /// 大图预览传 0 或目标窗口宽度。不同解码宽度的结果在内存缓存中分开保存。
-    /// URL 只接受后端 <c>/api/v1/store/</c> 代理路径或联想/360 图片 CDN 白名单主机。
+    /// URL 只接受安全的绝对 http(s) 地址（不接受 userinfo、localhost、私网/回环 IP 字面量、控制字符）
+    /// 或当前后端 <c>/api/v1/store/</c> 代理路径；不限制具体域名。
     /// </summary>
     public static async Task<ImageSource?> GetImageAsync(string? url, int decodePixelWidth, CancellationToken ct = default)
     {
@@ -157,12 +171,12 @@ public static class StoreMediaService
     }
 
     /// <summary>
-    /// 加载一张商店图片：先尝试 <paramref name="url"/>（后端详情给的 CDN 绝对地址），
+    /// 加载一张商店图片：先尝试 <paramref name="url"/>（后端详情给的安全公网图片地址），
     /// 失败或为空时再回退 <paramref name="proxyUrl"/>（后端 <c>/api/v1/store/</c> 代理路径）。
     /// <paramref name="decodePixelWidth"/> 语义与
     /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 相同。
     /// <para>
-    /// 两个地址都通过同一套主机白名单校验（CDN 主机或当前后端代理路径），各自复用
+    /// 两个地址都通过同一套安全 URL 校验（安全公网 http(s) 地址或当前后端代理路径），各自复用
     /// <see cref="GetImageAsync(string?, int, CancellationToken)"/> 的内存/磁盘缓存，
     /// 因此直连成功时完全不会请求后端代理；两者相同、都为空或都不可用时只尝试一次。
     /// 取消会向上抛出，其余失败静默返回 <see langword="null"/>。
@@ -508,19 +522,36 @@ public static class StoreMediaService
         image is BitmapSource bitmap ? (long)bitmap.PixelWidth * bitmap.PixelHeight * 4 : 0;
 
     /// <summary>
-    /// 校验并解析商店图片地址：只允许 ①当前服务端 <c>/api/v1/store/</c> 下的代理路径，
-    /// 或 ②联想/360 图片 CDN 白名单主机（含子域）的 http(s) 绝对地址。
-    /// 拒绝非 http(s)、带 userinfo 的地址，避免把任意 URL 当成图片去请求。
+    /// 校验并解析商店图片地址。后端已对上游图片地址做安全校验（只返回安全的公网 http(s) 地址），
+    /// 因此客户端不再维护固定 CDN 域名白名单，接受任意安全绝对 http(s) 地址：
+    /// 拒绝非 http(s)、带 userinfo、含控制字符/空白/反斜杠、超长地址，以及 localhost、单标签主机名、
+    /// 内网保留后缀、私网/回环 IP 字面量和伪装成主机名的数字 IP。
+    /// 当前服务端 <c>/api/v1/store/</c> 下的代理路径始终允许（后端可能就运行在本机或内网）。
     /// </summary>
     private static bool TryMediaUri(string? value, out Uri uri, out string key)
     {
         uri = null!;
         key = string.Empty;
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed)) return false;
-        // 直连 CDN 时 http/https 都接受（后端契约给的是 https），但拒绝 file:// 等其它协议。
+        string text = value?.Trim() ?? string.Empty;
+        if (text.Length == 0) return false;
+        if (text.Length > MaxMediaUrlLength) return false;
+        // 控制字符（含换行、制表符）与空白不是合法 URL 的一部分：直接拒绝，避免把拼接内容当成地址请求；
+        // 反斜杠会被部分 HTTP 栈当作路径分隔符，同样拒绝（与后端安全校验一致）。
+        foreach (char character in text)
+        {
+            if (char.IsControl(character) || char.IsWhiteSpace(character)) return false;
+        }
+
+        if (text.Contains('\\')) return false;
+        if (!Uri.TryCreate(text, UriKind.Absolute, out var parsed)) return false;
+        // 图片地址 http/https 都接受（后端返回的通常是 https），拒绝 file:// 等其它协议。
         if (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) return false;
         if (parsed.UserInfo.Length != 0) return false;
-        if (!IsBackendStoreUri(parsed) && !IsStoreCdnHost(parsed.Host)) return false;
+        if (parsed.Port == 0) return false;
+
+        // 后端图片代理（logo/cover/screenshots 等）即使指向 127.0.0.1 / 内网地址也必须放行。
+        if (!IsBackendStoreUri(parsed) && !IsSafePublicImageUri(parsed)) return false;
+
         uri = parsed;
         key = Key(parsed.AbsoluteUri);
         return true;
@@ -541,27 +572,79 @@ public static class StoreMediaService
     }
 
     /// <summary>
-    /// 是否为联想/360 图片 CDN 的白名单主机（本域或任意子域）。
-    /// 详情截图与封面可以直接从这些主机取图，失败再回退后端代理。
+    /// 是否是可以安全直连的公网图片地址：拒绝 localhost / 内网保留域名，以及私网、回环、链路本地、
+    /// 组播等 IP 字面量。域名本身不做限制（上游地址的可信校验由后端负责），这里只做客户端侧的
+    /// SSRF 基础防护，避免后端返回的地址被用来访问本机或内网服务。
     /// </summary>
-    private static bool IsStoreCdnHost(string host)
+    private static bool IsSafePublicImageUri(Uri uri)
     {
-        foreach (var domain in LenovoCdnHosts)
+        string host = uri.Host.Trim();
+        if (host.Length == 0) return false;
+        // Uri.Host 对 IPv6 字面量会带方括号（例如 [::1]），IPAddress.TryParse 需要去掉；
+        // 末尾的点（FQDN 写法）会让部分解析器把 "127.0.0.1." 当成主机名，先规整掉。
+        string candidate = host.Length > 1 && host[0] == '[' && host[^1] == ']' ? host[1..^1] : host;
+        candidate = candidate.TrimEnd('.');
+        if (candidate.Length is 0 or > 253) return false;
+        // 百分号编码的主机名（含 IPv6 zone id，如 fe80::1%eth0）容易被不同解析器区别对待，直接拒绝。
+        if (candidate.Contains('%')) return false;
+        if (candidate.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
+
+        if (IPAddress.TryParse(candidate, out var address))
         {
-            if (IsHostOrSubdomain(host, domain)) return true;
+            return IsPublicAddress(address);
         }
 
-        foreach (var domain in Soft360CdnHosts)
+        // 2130706433 / 0x7f.0.0.1 这类“数字 IP”写法会被部分 HTTP 栈解析成内网地址，一律拒绝。
+        if (NumericHostPattern.IsMatch(candidate)) return false;
+        // 单标签主机名（intranet、fileserver）通常是内网机器名；公网图片域名至少带一个点。
+        if (!candidate.Contains('.')) return false;
+        foreach (string suffix in InternalHostSuffixes)
         {
-            if (IsHostOrSubdomain(host, domain)) return true;
+            if (candidate.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return false;
         }
 
-        return false;
+        // 域名：客户端不做 DNS 解析，公网安全性由后端校验与操作系统网络策略保证。
+        return true;
     }
 
-    private static bool IsHostOrSubdomain(string host, string domain) =>
-        host.Equals(domain, StringComparison.OrdinalIgnoreCase)
-        || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase);
+    /// <summary>判断 IP 字面量是否属于公网可路由地址：拒绝私网、回环、链路本地、组播与保留段。</summary>
+    private static bool IsPublicAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
+        if (IPAddress.IsLoopback(address)) return false;
+
+        if (address.AddressFamily == AddressFamily.InterNetworkV6)
+        {
+            byte[] v6 = address.GetAddressBytes();
+            // IPv4-compatible IPv6（::a.b.c.d，已废弃）：按内嵌的 IPv4 地址判断。
+            if (v6[0] == 0 && v6[1] == 0 && v6[2] == 0 && v6[3] == 0 && v6[4] == 0 && v6[5] == 0
+                && v6[6] == 0 && v6[7] == 0 && v6[8] == 0 && v6[9] == 0 && v6[10] == 0 && v6[11] == 0)
+            {
+                return IsPublicAddress(new IPAddress(v6[12..]));
+            }
+
+            if (v6[0] == 0xFF) return false;                            // ff00::/8 组播
+            if ((v6[0] & 0xFE) == 0xFC) return false;                   // fc00::/7 唯一本地（IPv6 私网）
+            if (v6[0] == 0xFE && (v6[1] & 0xC0) == 0x80) return false;  // fe80::/10 链路本地
+            if (v6[0] == 0xFE && (v6[1] & 0xC0) == 0xC0) return false;  // fec0::/10 站点本地（已废弃）
+            return true;
+        }
+
+        if (address.AddressFamily != AddressFamily.InterNetwork) return false;
+        byte[] v4 = address.GetAddressBytes();
+        byte first = v4[0];
+        if (first == 0 || first == 10 || first == 127) return false;                  // 本网络 / 私网 / 回环
+        if (first == 100 && v4[1] >= 64 && v4[1] <= 127) return false;                // 100.64.0.0/10 运营商级 NAT
+        if (first == 169 && v4[1] == 254) return false;                               // 169.254.0.0/16 链路本地
+        if (first == 172 && v4[1] >= 16 && v4[1] <= 31) return false;                 // 172.16.0.0/12 私网
+        if (first == 192 && v4[1] == 0 && (v4[2] == 0 || v4[2] == 2)) return false;   // 192.0.0.0/24、192.0.2.0/24 保留/文档
+        if (first == 192 && v4[1] == 168) return false;                               // 192.168.0.0/16 私网
+        if (first == 198 && (v4[1] == 18 || v4[1] == 19)) return false;               // 198.18.0.0/15 基准测试
+        if (first == 198 && v4[1] == 51 && v4[2] == 100) return false;                // 198.51.100.0/24 文档
+        if (first == 203 && v4[1] == 0 && v4[2] == 113) return false;                 // 203.0.113.0/24 文档
+        if (first >= 224) return false;                                               // 组播 / 保留 / 广播
+        return true;
+    }
 
     private static HttpClient CreateHttpClient()
     {

@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -37,14 +38,6 @@ public sealed class ClientCacheStore
     /// <summary>WPF 原生可解码的图标格式；联想商店的 logo 实际出现 png/jpg/gif/ico/bmp。</summary>
     private static readonly string[] ImageExtensions = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp"];
 
-    /// <summary>360 图片 CDN 域名白名单（logo/icon 直连用，匹配本域或任意子域）。</summary>
-    private static readonly string[] Soft360CdnDomains =
-    [
-        "qhimg.com",
-        "mediav.com",
-        "qhres2.com",
-        "qhres.com"
-    ];
 
     private static readonly Regex ManagedFile = new(
         "^[a-f0-9]{64}(?:\\.(?:json|png|ico|jpg|jpeg|gif|bmp)|\\.meta\\.json|\\.[a-f0-9]{32}\\.tmp)$", RegexOptions.CultureInvariant);
@@ -651,73 +644,88 @@ public sealed class ClientCacheStore
             || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps)
             || parsed.UserInfo.Length != 0) return false;
 
-        // 联想应用商店的 icon_url 是联想 CDN 的绝对地址，客户端直连取图（不再经过后端代理）；
-        // 只允许已知 CDN 主机，避免把任意 URL 当图标下载。
-        if (IsLenovoCdnHost(parsed.Host))
+        // 后端自身提供的图标路径（内置源图标、商店图标兜底）始终允许。
+        // 必须先于公网校验，因为后端可能部署在局域网/回环地址上。
+        if (parsed.Scheme == _backend.Scheme
+            && parsed.Host == _backend.Host
+            && parsed.Port == _backend.Port)
         {
-            uri = parsed;
-            return true;
-        }
-
-        // 360 软件管家目录的 icon_url（兼容旧契约的 logo_url）同样是 360 图片 CDN 的绝对地址
-        // （qhimg.com / mediav.com / qhres2.com 等），客户端直连取图并本地缓存；
-        // 失败时回退后端 icon_proxy_url 代理（下面按后端路径放行）。
-        if (IsSoft360CdnHost(parsed.Host))
-        {
-            uri = parsed;
-            return true;
-        }
-
-        // 内置源图标与商店源的 icon_proxy_url 仍由后端提供，只允许后端自身地址下的已知图标路径。
-        if (parsed.Scheme != _backend.Scheme || parsed.Host != _backend.Host || parsed.Port != _backend.Port)
-        {
-            return false;
-        }
-
-        var root = _backend.AbsolutePath.TrimEnd('/');
-        bool allowed = parsed.AbsolutePath.StartsWith(root + "/api/v1/apps/", StringComparison.Ordinal)
-                       && parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal);
-        if (!allowed && parsed.AbsolutePath.StartsWith(root + "/icon/", StringComparison.Ordinal))
-        {
-            allowed = true;
-        }
-
-        // 联想/360 商店的截图、封面与图标兜底仍由后端代理；图标代理路径是 CDN 直连失败时的兜底。
-        if (!allowed && parsed.AbsolutePath.StartsWith(root + "/api/v1/store/", StringComparison.Ordinal))
-        {
-            allowed = parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal)
-                      || parsed.AbsolutePath.EndsWith("/cover", StringComparison.Ordinal)
-                      || parsed.AbsolutePath.Contains("/screenshots/", StringComparison.Ordinal);
-        }
-
-        if (!allowed) return false;
-        uri = parsed;
-        return true;
-    }
-
-    /// <summary>联想 CDN 主机白名单（icon_url 直连用）。</summary>
-    private static bool IsLenovoCdnHost(string host) =>
-        host.Equals("lsw-fast.lenovo.com.cn", StringComparison.OrdinalIgnoreCase)
-        || host.Equals("imgs.lenovomm.cn", StringComparison.OrdinalIgnoreCase)
-        || host.Equals("pc1.gtimg.com", StringComparison.OrdinalIgnoreCase)
-        || host.EndsWith(".lenovomm.cn", StringComparison.OrdinalIgnoreCase)
-        || host.EndsWith(".lenovo.com.cn", StringComparison.OrdinalIgnoreCase);
-
-    /// <summary>360 软件管家图标 CDN 的主机白名单（qhimg.com / mediav.com / qhres2.com 等子域）。</summary>
-    private static bool IsSoft360CdnHost(string host)
-    {
-        foreach (string domain in Soft360CdnDomains)
-        {
-            if (host.Equals(domain, StringComparison.OrdinalIgnoreCase)
-                || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase))
+            var root = _backend.AbsolutePath.TrimEnd('/');
+            bool allowed = parsed.AbsolutePath.StartsWith(root + "/api/v1/apps/", StringComparison.Ordinal)
+                           && parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal);
+            if (!allowed && parsed.AbsolutePath.StartsWith(root + "/icon/", StringComparison.Ordinal))
             {
+                allowed = true;
+            }
+
+            // 商店源的 icon_proxy_url / cover / screenshots 也是后端兜底路径。
+            if (!allowed && parsed.AbsolutePath.StartsWith(root + "/api/v1/store/", StringComparison.Ordinal))
+            {
+                allowed = parsed.AbsolutePath.EndsWith("/icon", StringComparison.Ordinal)
+                          || parsed.AbsolutePath.EndsWith("/cover", StringComparison.Ordinal)
+                          || parsed.AbsolutePath.Contains("/screenshots/", StringComparison.Ordinal);
+            }
+
+            if (allowed)
+            {
+                uri = parsed;
                 return true;
             }
         }
 
-        return false;
+        // 图标/CDN 地址不再维护固定域名白名单：后端只会下发可信来源的绝对 URL，
+        // 客户端按“安全公网地址”规则校验后直连；未知厂商 CDN（如 qhmsg.com）也可用。
+        if (!IsSafePublicHost(parsed.Host)) return false;
+        uri = parsed;
+        return true;
     }
 
+    /// <summary>
+    /// 安全公网主机校验：拒绝 localhost、内网后缀、回环/私网/链路本地/组播/保留 IP。
+    /// 不做 DNS 解析（客户端只负责直连后端下发的 CDN 图标），解析后的 IP 仍由系统网络栈决定。
+    /// </summary>
+    private static bool IsSafePublicHost(string host)
+    {
+        if (string.IsNullOrWhiteSpace(host)) return false;
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)) return false;
+
+        string[] blockedSuffixes = [".local", ".internal", ".lan", ".home.arpa", ".localdomain", ".corp"];
+        foreach (string suffix in blockedSuffixes)
+        {
+            if (host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+
+        if (IPAddress.TryParse(host, out var address))
+        {
+            if (IPAddress.IsLoopback(address)) return false;
+            if (address.AddressFamily == AddressFamily.InterNetwork)
+            {
+                byte[] bytes = address.GetAddressBytes();
+                int first = bytes[0];
+                int second = bytes[1];
+                if (first is 0 or 10 or 127
+                    || (first == 169 && second == 254)
+                    || (first == 172 && second is >= 16 and <= 31)
+                    || (first == 192 && second == 168)
+                    || (first == 100 && second is >= 64 and <= 127)
+                    || first >= 224)
+                {
+                    return false;
+                }
+            }
+            else if (address.AddressFamily == AddressFamily.InterNetworkV6)
+            {
+                if (address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || address.IsIPv6Multicast) return false;
+                byte[] bytes = address.GetAddressBytes();
+                if ((bytes[0] & 0xfe) == 0xfc) return false; // fc00::/7 ULA
+            }
+
+            return true;
+        }
+
+        // 单标签主机名（如 printer、intranet）一律拒绝；公网域名至少包含一个点。
+        return host.Contains('.');
+    }
     private static string? ImageExtension(ReadOnlySpan<byte> bytes)
     {
         if (bytes.Length >= 24 && bytes[..8].SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) return ".png";

@@ -134,7 +134,12 @@ def normalize_soft_id(value: Any) -> str | None:
 
 
 def normalize_image_url(value: Any) -> str | None:
-    """校验图片地址并优先规范化为 https（360 图片 CDN 同时支持 http/https）。"""
+    """校验图片地址并原样返回（http / https 都保留，不再强制升级为 https）。
+
+    360 的 logo/snapshot 有些落在 ``p15.qhmsg.com`` 等非 qhimg 子域，且部分 CDN 只支持
+    http；强制升级 https 会把真实可用的图片改坏，因此这里只做绝对地址与安全字符校验，
+    是否允许代理/直连由模型层的 :func:`Backend.url_safety.validate_public_http_url` 决定。
+    """
 
     text = _text(value)
     if not text or len(text) > 1024 or any(ord(character) < 32 for character in text):
@@ -148,8 +153,6 @@ def normalize_image_url(value: Any) -> str | None:
         return None
     if parsed.username is not None or parsed.password is not None:
         return None
-    if parsed.scheme == "http":
-        return "https" + text[len("http") :]
     return text
 
 

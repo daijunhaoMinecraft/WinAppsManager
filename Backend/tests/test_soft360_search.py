@@ -906,7 +906,7 @@ class DirectoryOutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.long_description, "微信是一款跨平台的通讯工具")
         self.assertEqual(details.size_bytes, 259798216)
         self.assertEqual(details.score, 90)
-        # getinfo 的 http logo 被规范化成 https，并覆盖 summary 的兜底图标。
+        # getinfo 的 logo 优先大图；http/https 按上游原样保留，覆盖 summary 的兜底图标。
         self.assertEqual(details.icon_url, "https://p0.qhimg.com/logo/72.png")
         self.assertEqual(details.icon_proxy_url, "/api/v1/store/360/apps/600001358/icon")
         self.assertEqual(details.architectures, ["x64"])
@@ -915,7 +915,7 @@ class DirectoryOutTests(unittest.IsolatedAsyncioTestCase):
             [(shot.url, shot.proxy_url) for shot in details.screenshots],
             [
                 (
-                    "https://p0.qhimg.com/shot1.png",
+                    "http://p0.qhimg.com/shot1.png",
                     "/api/v1/store/360/apps/600001358/screenshots/0",
                 ),
                 (
@@ -969,6 +969,24 @@ class DirectoryOutTests(unittest.IsolatedAsyncioTestCase):
         fetched = [str(request.url) for request in upstream.requests]
         self.assertIn("https://p0.qhimg.com/logo/72.png", fetched)
         self.assertIn("https://p0.qhimg.com/shot2.png", fetched)
+
+    async def test_p15_qhmsg_screenshot_is_returned_directly_and_can_be_proxied(self):
+        """名单外的 p15.qhmsg.com 截图：详情直连地址 + 代理兜底都能用（不再 422/502）。"""
+
+        payload = info_payload(
+            snapshot=["http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png"]
+        )
+        async with self._service({"600001358": payload}) as (service, upstream):
+            details = await service.get_details("600001358")
+            screenshot = await service.get_screenshot("600001358", 0)
+        shot = details.screenshots[0]
+        self.assertEqual(shot.url, "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png")
+        self.assertEqual(shot.proxy_url, "/api/v1/store/360/apps/600001358/screenshots/0")
+        self.assertEqual(screenshot.content, PNG_BYTES)
+        self.assertIn(
+            "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png",
+            [str(request.url) for request in upstream.requests],
+        )
 
     async def test_a_catalog_entry_still_uses_the_catalog_summary(self):
         pages = {("149", 1): [list_item("1010", "微信")]}
@@ -1092,7 +1110,7 @@ class DirectoryOutRouteTests(unittest.IsolatedAsyncioTestCase):
             [(shot["url"], shot["proxy_url"]) for shot in payload["screenshots"]],
             [
                 (
-                    "https://p0.qhimg.com/shot1.png",
+                    "http://p0.qhimg.com/shot1.png",
                     "/api/v1/store/360/apps/600001358/screenshots/0",
                 ),
                 (

@@ -5,10 +5,10 @@
   ``snapshot`` 截图列表；缓存里只保存规范化后的展示字段，**绝不保存下载地址**（下载地址每次
   实时解析）。详情与下载接口对**目录外**软件（搜索结果里出现、但不在热门目录快照里）同样
   可用：服务层用这里返回的字段现场合成 summary。
-- 截图：``snapshot[]`` 里的图片地址统一规范化为 https，模型里 ``url`` **优先 360 图片 CDN
-  的绝对 https 原图**（客户端直连取图，降低后端图片带宽），地址不合格时回退后端代理路径
-  ``/api/v1/store/360/apps/{soft_id}/screenshots/{index}``；``proxy_url`` 始终是代理路径，供
-  客户端直连失败时兜底。360 没有视频。
+- 截图：``snapshot[]`` 里的图片地址保留上游 http(s) 协议（不再强制升级 https），模型里
+  ``url`` **优先安全的公网 http(s) 绝对原图**（客户端直连取图，降低后端图片带宽），地址不安全
+  时回退后端代理路径 ``/api/v1/store/360/apps/{soft_id}/screenshots/{index}``；``proxy_url``
+  始终是代理路径，供客户端直连失败时兜底。360 没有视频。
 - 下载：``resolve_download`` 每次都实时请求 ``getinfo``（不读也不写详情缓存），从
   ``edition_info.default_edition.down.default`` 的 ``p2p`` / ``multi_urls`` / ``multi_down``
   里提取 http(s) 地址，优先 https，扩展名只允许 ``.exe/.msi/.msix/.appx``；文件名用
@@ -229,8 +229,8 @@ class Soft360DetailsProvider:
     ) -> Soft360AppDetails:
         """把目录 summary 与详情字段合并成 :class:`Soft360AppDetails`。
 
-        截图优先返回 360 图片 CDN 的绝对 https 地址（客户端直连，降低后端图片带宽）；地址
-        不合格时回退后端相对代理路径。``proxy_url`` 始终是代理路径，供客户端兜底。
+        截图优先返回安全的公网 http(s) 绝对地址（任意 CDN 子域，客户端直连，降低后端图片
+        带宽）；地址不安全时回退后端相对代理路径。``proxy_url`` 始终是代理路径，供客户端兜底。
         """
 
         encoded_soft_id = quote(summary.soft_id, safe="")
@@ -492,7 +492,7 @@ class Soft360DetailsProvider:
 def _build_screenshot(
     encoded_soft_id: str, screenshot: Soft360ScreenshotSource
 ) -> Soft360Screenshot:
-    """构造截图契约：360 CDN 绝对 https 优先，否则回退后端相对代理路径。"""
+    """构造截图契约：安全的公网 http(s) 绝对地址优先，否则回退后端相对代理路径。"""
 
     proxy_url = f"/api/v1/store/360/apps/{encoded_soft_id}/screenshots/{screenshot.index}"
     return Soft360Screenshot(

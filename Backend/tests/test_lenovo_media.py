@@ -1,4 +1,4 @@
-"""联想图片代理缓存测试：UA、host 白名单、格式、磁盘往返、TTL、淘汰、ETag。"""
+"""联想图片代理缓存测试：UA、公网 URL 安全策略、格式、磁盘往返、TTL、淘汰、ETag。"""
 
 from __future__ import annotations
 
@@ -94,7 +94,9 @@ class LenovoMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload.etag, expected)
         self.assertEqual(LenovoMediaCache.etag_for(url), expected)
 
-    def test_host_whitelist(self):
+    def test_public_image_urls_are_allowed_without_domain_allowlist(self):
+        """不再维护 CDN 域名白名单：任意安全公网 http(s) 地址都可以代理。"""
+
         allowed = [
             "https://lsw-fast.lenovo.com.cn/a.png",
             "http://imgs.lenovomm.cn/a.jpg",
@@ -102,20 +104,25 @@ class LenovoMediaTests(unittest.IsolatedAsyncioTestCase):
             "https://pc-store-video.lenovomm.cn/a.png",
             "https://cdn.lenovomm.cn/a.png",
             "https://foo.lenovo.com.cn/a.png",
+            "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png",
+            "https://p10.qhmsg.com/a.png",
+            "https://unknown-cdn.vendor-name.net/shot.jpg",
         ]
         for url in allowed:
             with self.subTest(url=url):
                 self.assertEqual(validate_media_url(url), url)
 
         rejected = [
-            "https://evil.example/a.png",
-            "https://lenovomm.cn/a.png",
-            "https://imgs.lenovomm.cn.evil.com/a.png",
-            "https://evil.com/imgs.lenovomm.cn/a.png",
-            "https://evil-lenovomm.cn/a.png",
+            "http://127.0.0.1/a.png",
+            "http://localhost/a.png",
+            "https://[::1]/a.png",
+            "http://10.0.0.8/a.png",
+            "http://192.168.1.20/a.png",
+            "https://printer.local/a.png",
+            "https://nas.home.arpa/a.png",
+            "https://user:pass@imgs.lenovomm.cn/a.png",
             "ftp://imgs.lenovomm.cn/a.png",
             "file:///C:/Windows/a.png",
-            "https://user:pass@imgs.lenovomm.cn/a.png",
             "https:///a.png",
             "not a url",
             "",
@@ -126,11 +133,18 @@ class LenovoMediaTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(url=url), self.assertRaises(LenovoProtocolError):
                 validate_media_url(url)
 
-    async def test_non_whitelisted_host_is_rejected_without_request(self):
+    async def test_non_public_host_is_rejected_without_request(self):
         cache = self.make_cache()
         with self.assertRaises(LenovoProtocolError):
-            await cache.fetch("https://evil.example/a.png")
+            await cache.fetch("http://127.0.0.1/a.png")
         self.assertEqual(self.server.requests, [])
+
+    async def test_unknown_public_domain_is_fetched(self):
+        cache = self.make_cache(cache_enabled=False)
+        url = "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png"
+        payload = await cache.fetch(url)
+        self.assertEqual(payload.content, PNG_BYTES)
+        self.assertEqual(str(self.server.requests[0].url), url)
 
     async def test_format_detection_via_content_type_and_url_suffix(self):
         cases = [
@@ -274,12 +288,12 @@ class LenovoMediaTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.directory / "media").exists())
         self.assertEqual(cache.counters["memory_entries"], 0)
 
-    async def test_redirects_must_stay_inside_the_whitelist(self):
+    async def test_redirects_are_validated_per_hop(self):
         def handler(request: httpx2.Request) -> httpx2.Response:
             if request.url.host == "lsw-fast.lenovo.com.cn":
                 return httpx2.Response(
                     302,
-                    headers={"location": "https://imgs.lenovomm.cn/new.png"},
+                    headers={"location": "http://p15.qhmsg.com/new.png"},
                     request=request,
                 )
             return httpx2.Response(
@@ -292,20 +306,32 @@ class LenovoMediaTests(unittest.IsolatedAsyncioTestCase):
         payload = await cache.fetch("https://lsw-fast.lenovo.com.cn/old.png")
         self.assertEqual(payload.content, PNG_BYTES)
 
-        def evil_redirect(request: httpx2.Request) -> httpx2.Response:
+        def private_redirect(request: httpx2.Request) -> httpx2.Response:
             if request.url.host == "lsw-fast.lenovo.com.cn":
                 return httpx2.Response(
-                    302, headers={"location": "https://evil.example/new.png"}, request=request
+                    302, headers={"location": "http://192.168.1.20/new.png"}, request=request
                 )
             return httpx2.Response(
                 200, content=PNG_BYTES, headers={"content-type": "image/png"}, request=request
             )
 
-        evil_client = httpx2.AsyncClient(transport=httpx2.MockTransport(evil_redirect))
-        self.addAsyncCleanup(evil_client.aclose)
-        evil_cache = LenovoMediaCache(evil_client, None)
+        private_client = httpx2.AsyncClient(transport=httpx2.MockTransport(private_redirect))
+        self.addAsyncCleanup(private_client.aclose)
+        private_cache = LenovoMediaCache(private_client, None)
         with self.assertRaises(LenovoProtocolError):
-            await evil_cache.fetch("https://lsw-fast.lenovo.com.cn/old.png")
+            await private_cache.fetch("https://lsw-fast.lenovo.com.cn/old.png")
+
+    async def test_redirect_loops_are_rejected(self):
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            return httpx2.Response(
+                302, headers={"location": "/loop.png"}, request=request
+            )
+
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+        self.addAsyncCleanup(client.aclose)
+        cache = LenovoMediaCache(client, None)
+        with self.assertRaises(LenovoProtocolError):
+            await cache.fetch("https://lsw-fast.lenovo.com.cn/loop.png")
 
     async def test_clear_removes_disk_and_memory(self):
         cache = self.make_cache()

@@ -491,8 +491,12 @@ def create_app(
         联想源与 360 源的 ``app_count`` 只反映已缓存的数据，不会为了统计触发抓取；目录还没
         加载时为 ``null``。内置精选源的 ``enabled`` 来自 ``builtin.enabled``，``app_count`` 是
         ``builtin.app_ids`` 白名单过滤后的数量（禁用时也照实返回，便于客户端展示）。
-        ``online_search`` 表示该源是否支持服务端在线搜索：联想与 360 为 ``true``，内置精选为
-        ``false``；客户端据此决定是否显示在线搜索入口，与 ``enabled`` 无关。
+
+        ``search_mode`` 由服务端决定客户端怎么搜索：``catalog`` = 目录是完整列表，客户端本地
+        搜索（联想目录约 5111 款、内置精选取白名单）；``api`` = 目录只是子集，必须调用服务端
+        搜索 API（360 目录是各分类热门子集，搜索接口覆盖全量目录）。
+        ``online_search`` 是旧客户端的兼容字段（联想改为 false：完整目录不需要 API 搜索；
+        360 为 true；内置精选为 false），新客户端优先读 ``search_mode``。
         """
 
         response.headers["Cache-Control"] = "no-store"
@@ -507,7 +511,8 @@ def create_app(
                 name=SOURCE_NAME,
                 description=SOURCE_DESCRIPTION,
                 enabled=configured_lenovo.enabled,
-                online_search=True,
+                search_mode="catalog",
+                online_search=False,
                 app_count=lenovo_service.cached_app_count() if lenovo_service is not None else None,
                 is_default=True,
                 updated_at=lenovo_service.cached_updated_at() if lenovo_service is not None else None,
@@ -517,6 +522,7 @@ def create_app(
                 name=BUILTIN_SOURCE_NAME,
                 description=BUILTIN_SOURCE_DESCRIPTION,
                 enabled=configured_builtin.enabled,
+                search_mode="catalog",
                 online_search=False,
                 app_count=request.app.state.catalog.app_count,
                 is_default=False,
@@ -527,6 +533,7 @@ def create_app(
                 name=SOFT360_SOURCE_NAME,
                 description=SOFT360_SOURCE_DESCRIPTION,
                 enabled=configured_soft360.enabled,
+                search_mode="api",
                 online_search=True,
                 app_count=soft360_service.cached_app_count() if soft360_service is not None else None,
                 is_default=False,

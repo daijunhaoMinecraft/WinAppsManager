@@ -142,8 +142,7 @@ GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo
 - logo 与 `snapshot` 都在 `*.qhimg.com`（个别在 `*.mediav.com`），http/https 均可直接访问；
   后端返回详情截图时优先给出 **https CDN 绝对地址**（客户端直连，减少后端带宽），同时附
   `proxy_url`（`/api/v1/store/360/...`）作为直连失败时的兜底；图标同理（`icon_url` + `icon_proxy_url`）。
-- 后端 media 白名单：`*.qhimg.com`、`*.mediav.com`、`*.qhres2.com`、`*.qhres.com`；
-  非 https 或非白名单地址回退到后端代理。
+- 不再维护固定域名白名单：`p15.qhmsg.com` 等任意安全公网 http(s) 图片域名都可直连；只拒绝 localhost、私网/回环 IP、userinfo 等不安全地址，校验失败才回退后端代理。
 
 ## 5. 搜索与限制
 

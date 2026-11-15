@@ -105,8 +105,8 @@ SEARCH_MIN_LIMIT = 1
 SEARCH_MAX_LIMIT = 50
 SEARCH_DEFAULT_LIMIT = 30
 # 目录外软件现场合成 summary 时的图标兜底：真实 getinfo 总会带 logo，这里只是防御性占位，
-# 让模型契约（icon_url 必须是绝对 http(s) URL）始终成立。360 官网主机不在客户端/图片代理的
-# CDN 白名单里，取图会立即回退为字母徽章，不会额外发起图片请求。
+# 让模型契约（icon_url 必须是绝对 http(s) URL）始终成立。图片代理已改为无域名白名单的安全
+# 公网校验，这个兜底地址也能由后端代理加载（正常流程不会用到）。
 DEFAULT_ICON_URL = "https://www.360.cn/favicon.ico"
 # 目录后台刷新线程：名称固定，便于诊断/测试；daemon 保证进程退出不被它拖住。
 CATALOG_REFRESHER_THREAD_NAME = "soft360-catalog-refresher"

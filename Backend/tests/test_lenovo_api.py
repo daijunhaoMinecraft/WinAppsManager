@@ -337,13 +337,16 @@ class SourcesApiTests(unittest.TestCase):
             lenovo, builtin, soft360 = payload["items"]
             self.assertEqual(soft360["id"], "soft360")
             self.assertFalse(soft360["is_default"])
-            # 在线搜索由服务端下发：联想 / 360 支持，内置精选不支持。
+            # 搜索方式由服务端下发：联想目录完整 → catalog（本地搜索），不再需要 API 在线搜索；
+            # 360 目录是子集 → api（必须服务端搜索）；online_search 保留给旧客户端兼容。
+            self.assertEqual(soft360["search_mode"], "api")
             self.assertTrue(soft360["online_search"])
             self.assertEqual(lenovo["id"], "lenovo")
             self.assertEqual(lenovo["name"], "联想应用商店")
             self.assertEqual(lenovo["description"], "联想官方 PC 应用商店目录，含软件与游戏。")
             self.assertTrue(lenovo["enabled"])
-            self.assertTrue(lenovo["online_search"])
+            self.assertEqual(lenovo["search_mode"], "catalog")
+            self.assertFalse(lenovo["online_search"])
             self.assertEqual(lenovo["app_count"], 5111)
             self.assertTrue(lenovo["is_default"])
             self.assertTrue(lenovo["updated_at"].startswith("2026-11-14T09:00:00"))
@@ -352,6 +355,7 @@ class SourcesApiTests(unittest.TestCase):
                 "name": "内置精选",
                 "description": "项目内置的精选软件目录。",
                 "enabled": True,
+                "search_mode": "catalog",
                 "online_search": False,
                 "app_count": 8,
                 "is_default": False,

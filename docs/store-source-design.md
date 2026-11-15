@@ -500,3 +500,11 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
    CDN 的任意子域，拒绝 userinfo/非 http(s)/任意主机；直连失败静默回退代理。
 5. **安全**：后端只暴露白名单 CDN 的 https 图片地址；联想视频缩略图虽可能带临时 `auth_key`，但视频
    播放仍走原后端代理，不暴露视频地址。
+
+## 10. 增量变更（2026-11）：搜索模式与去域名白名单
+
+1. **`/sources` 新增 `search_mode`**：lenovo=`catalog`（完整 5111 款目录，本地搜索，不再需要 API 搜索；`online_search=false`）、soft360=`api`（目录是热门子集，客户端输入时自动调用服务端搜索 API）、builtin=`catalog`。客户端读取该字段决定搜索方式；旧服务端缺少字段时按源回退。
+2. **图片不再依赖固定域名白名单**：联想/360 详情截图与封面返回任意安全公网 http(s) CDN 绝对地址，`p15.qhmsg.com` 等新域名无需改代码；后端图片代理用 `Backend/url_safety.py` 做 SSRF 防护（拒绝 localhost/私网/回环/数字 IP 伪装/userinfo/内网后缀；重定向逐跳校验），不再使用 `qhimg/mediav/lenovo` 域名清单。
+3. **代理兜底保留**：`proxy_url`/`cover_proxy_url` 始终存在，客户端直连失败时回退；`icon_url` 图标同理，未知 CDN 图标可直连，失败回退 `icon_proxy_url`。
+4. **客户端图片校验**：`StoreMediaService`/`ClientCacheStore` 只做安全公网 URL 校验，不再维护 CDN 域名白名单；后端代理路径始终放行（后端可能在局域网/回环）。
+5. **已知限制**：客户端不做 DNS 解析，SSRF 防护针对 URL/主机/IP 字面量；后端只监听本机，图片代理重定向已逐跳校验。

@@ -3,7 +3,7 @@
 覆盖：
 
 - ``getinfo`` 字段映射：名称/厂商/描述/大小/评分/分类、``os.bit`` 架构、``os.ver`` 最低
-  Windows（低于 7 按下限）、``snapshot`` 截图 https 规范化与代理路径；
+  Windows（低于 7 按下限）、``snapshot`` 截图 http(s) 保留与代理路径回退；
 - 详情内存/磁盘缓存、TTL、抓取失败回退陈旧详情、``clear``；
 - ``resolve_download``：``p2p`` 的 ``|||`` 分隔、``multi_urls`` 回退、https 优先、扩展名过滤、
   文件名清洗与回退、大小/版本/架构/``sha256=None``；实时解析不写缓存；
@@ -181,10 +181,10 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fields.icon_url, "https://p0.qhimg.com/1010/72.png")
         self.assertEqual(fields.architectures, ("x64",))
         self.assertEqual(fields.minimum_windows, "7")
-        # 截图：只保留合法图片地址，http 统一规范化成 https，索引是 snapshot 原始顺序。
+        # 截图：只保留合法图片地址，http 与 https 都按上游原样保留，索引是 snapshot 原始顺序。
         self.assertEqual(
             [(item.index, item.source_url) for item in fields.screenshots],
-            [(0, "https://p0.qhimg.com/shot1.png"), (1, "https://p0.qhimg.com/shot2.png")],
+            [(0, "http://p0.qhimg.com/shot1.png"), (1, "https://p0.qhimg.com/shot2.png")],
         )
         self.assertEqual(details.version, "3.9.12")
         self.assertEqual(details.publisher, "腾讯")
@@ -192,12 +192,12 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.architectures, ["x64"])
         self.assertEqual(details.minimum_windows, "7")
         self.assertEqual(details.size_bytes, 123456789)
-        # 截图优先 360 图片 CDN 绝对 https 地址，proxy_url 始终是后端代理路径。
+        # 截图优先安全的公网 http(s) 绝对地址（任意 CDN 子域），proxy_url 始终是后端代理路径。
         self.assertEqual(
             [(shot.url, shot.proxy_url) for shot in details.screenshots],
             [
                 (
-                    "https://p0.qhimg.com/shot1.png",
+                    "http://p0.qhimg.com/shot1.png",
                     "/api/v1/store/360/apps/1010/screenshots/0",
                 ),
                 (
@@ -208,7 +208,7 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_non_direct_image_urls_fall_back_to_the_proxy_path(self):
-        """不是 https 或 host 不在 360 CDN 白名单的截图地址回退后端代理路径。"""
+        """内网/回环等不安全的截图地址回退后端代理路径；任意公网 CDN 直接返回原地址。"""
 
         upstream = FakeInfoUpstream({"1010": info_payload()})
         clock = MutableClock()
@@ -218,16 +218,22 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
                 fields = await provider.get_fields("1010")
         self.assertEqual(
             [item.source_url for item in fields.screenshots],
-            ["https://p0.qhimg.com/shot1.png", "https://p0.qhimg.com/shot2.png"],
+            ["http://p0.qhimg.com/shot1.png", "https://p0.qhimg.com/shot2.png"],
         )
         cases = (
+            # 360 CDN 与名单外真实 CDN（p15.qhmsg.com / 任意厂商子域）都直连，http/https 原样保留。
             ("https://p0.qhimg.com/a.png", "https://p0.qhimg.com/a.png"),
+            ("http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png", "http://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png"),
+            ("https://p10.qhmsg.com/a.png", "https://p10.qhmsg.com/a.png"),
             ("https://img.qhres2.com/a.png", "https://img.qhres2.com/a.png"),
             ("https://s1.mediav.com/a.png", "https://s1.mediav.com/a.png"),
-            ("https://qhimg.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
-            ("https://evil.example.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
-            ("https://p0.qhimg.com.evil.example.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
-            ("http://p0.qhimg.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("https://qhimg.com/a.png", "https://qhimg.com/a.png"),
+            ("https://unknown-cdn.vendor-name.net/a.png", "https://unknown-cdn.vendor-name.net/a.png"),
+            # 不安全地址（私网/回环/localhost/userinfo）回退后端代理路径。
+            ("http://127.0.0.1/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("http://192.168.1.20/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("https://printer.local/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
+            ("https://user:pass@p0.qhimg.com/a.png", "/api/v1/store/360/apps/1010/screenshots/0"),
         )
         for source_url, expected in cases:
             with self.subTest(source_url=source_url):
@@ -244,14 +250,17 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
                     "/api/v1/store/360/apps/1010/screenshots/0",
                 )
 
-    async def test_screenshot_urls_cannot_be_arbitrary_addresses(self):
-        """模型层拒绝任意 URL 注入：url 只能是 360 CDN https 或本后端代理路径。"""
+    async def test_screenshot_urls_reject_internal_and_malformed_addresses(self):
+        """模型层拒绝内网/回环/带凭据等不安全 URL：url 只能是安全公网 http(s) 或本后端代理路径。"""
 
         valid = [
+            "http://p0.qhimg.com/a.png",
             "https://p0.qhimg.com/a.png",
+            "http://p15.qhmsg.com/a.png",
             "https://img.qhres2.com/a.png",
             "https://img.qhres.com/a.png",
             "https://s1.mediav.com/a.png",
+            "https://unknown-cdn.vendor-name.net/a.png",
             "/api/v1/store/360/apps/1010/screenshots/0",
         ]
         for url in valid:
@@ -259,14 +268,15 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
                 screenshot = Soft360Screenshot(index=0, url=url)
                 self.assertEqual(screenshot.url, url)
         for url in (
-            "http://p0.qhimg.com/a.png",
-            "https://qhimg.com/a.png",
-            "https://evil.example.com/a.png",
-            "https://p0.qhimg.com.evil.example.com/a.png",
-            "https://p0.qhimg.com./a.png",
+            "http://127.0.0.1/a.png",
+            "http://localhost/a.png",
+            "https://[::1]/a.png",
+            "http://192.168.1.20/a.png",
+            "https://printer.local/a.png",
             "https://user:pass@p0.qhimg.com/a.png",
             "ftp://p0.qhimg.com/a.png",
             "/api/v1/store/lenovo/apps/1/screenshots/0",
+            "not a url",
         ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 Soft360Screenshot(index=0, url=url)
@@ -413,7 +423,7 @@ class DetailsMappingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raw["soft_id"], "1010")
             self.assertEqual(raw["version"], "3.9.12")
             self.assertEqual(raw["icon_url"], "https://p0.qhimg.com/1010/72.png")
-            self.assertEqual(raw["screenshots"][0]["source_url"], "https://p0.qhimg.com/shot1.png")
+            self.assertEqual(raw["screenshots"][0]["source_url"], "http://p0.qhimg.com/shot1.png")
             # 下载地址绝不写入详情缓存。
             self.assertNotIn("download_url", json.dumps(raw))
             self.assertNotIn("p2p", json.dumps(raw))

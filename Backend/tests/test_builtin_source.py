@@ -158,9 +158,13 @@ class BuiltinWhitelistTests(unittest.TestCase):
         self.assertEqual(by_id["builtin"]["enabled"], True)
         self.assertEqual(by_id["builtin"]["app_count"], 2)
         self.assertFalse(by_id["builtin"]["is_default"])
-        # 在线搜索能力由服务端下发，与 enabled 无关：内置精选不支持，联想 / 360 支持。
+        # 搜索方式由服务端下发：内置精选取白名单、联想完整目录 → catalog；360 子集 → api。
+        # online_search 只是旧客户端兼容字段。
+        self.assertEqual(by_id["builtin"]["search_mode"], "catalog")
         self.assertFalse(by_id["builtin"]["online_search"])
-        self.assertTrue(by_id["lenovo"]["online_search"])
+        self.assertEqual(by_id["lenovo"]["search_mode"], "catalog")
+        self.assertFalse(by_id["lenovo"]["online_search"])
+        self.assertEqual(by_id["soft360"]["search_mode"], "api")
         self.assertTrue(by_id["soft360"]["online_search"])
         self.assertEqual(by_id["lenovo"]["enabled"], False)
         self.assertIsNone(by_id["lenovo"]["app_count"])

@@ -21,6 +21,8 @@ public partial class AppsInstallPage : Page
     private const string AllCategories = "全部";
     private const int DefaultPageSize = 60;
 
+    /// <summary>api 模式（服务端 <c>search_mode=api</c>）搜索框输入的防抖时长：输入停顿后才请求服务端，避免逐字请求。</summary>
+    private static readonly TimeSpan ApiSearchDebounce = TimeSpan.FromMilliseconds(350);
     /// <summary>回到列表页时复用已加载目录的时间窗口，与 <c>AppCatalogService</c> 的 5 分钟内存目录缓存一致。</summary>
     private static readonly TimeSpan CatalogReuseWindow = TimeSpan.FromMinutes(5);
     private readonly StringComparer _nameComparer = StringComparer.Create(CultureInfo.GetCultureInfo("zh-CN"), true);
@@ -28,6 +30,8 @@ public partial class AppsInstallPage : Page
     private CancellationTokenSource? _loadCancellation;
     private CancellationTokenSource? _iconLoadCancellation;
     private CancellationTokenSource? _onlineSearchCancellation;
+    /// <summary>api 模式下搜索框自动调用的服务端搜索（含防抖等待）的取消令牌：新输入会取消上一轮。</summary>
+    private CancellationTokenSource? _apiSearchCancellation;
     private Task? _catalogLoadTask;
     private IReadOnlyList<AppItem> _catalogApps = Array.Empty<AppItem>();
     private IReadOnlyList<AppItem> _onlineSearchApps = Array.Empty<AppItem>();
@@ -50,12 +54,16 @@ public partial class AppsInstallPage : Page
     private bool _isPageActive;
     private bool _isLoading;
     private bool _isOnlineSearching;
+    /// <summary>是否正在执行 api 模式的服务端搜索（含防抖等待）；状态行据此显示“正在搜索…”。</summary>
+    private bool _isApiSearching;
+    /// <summary>最近一次 api 模式搜索的失败说明（成功、取消或复位时清空）。</summary>
+    private string? _apiSearchError;
     private bool _hasSuccessfulLoad;
     /// <summary>
-    /// 服务端“在线搜索能力”（<c>/api/v1/sources</c> 的 <c>online_search</c>）是否已请求过；
+    /// 服务端软件源能力（<c>/api/v1/sources</c> 的 <c>search_mode</c> 与 <c>online_search</c>）是否已请求过；
     /// 请求失败时复位，允许下一次目录加载重试（失败期间回退按源判断）。
     /// </summary>
-    private bool _onlineSearchCapabilityRequested;
+    private bool _sourceCapabilitiesRequested;
     private string _selectedCategory = AllCategories;
     private string? _onlineSearchQuery;
     private string? _onlineSearchError;
@@ -85,8 +93,8 @@ public partial class AppsInstallPage : Page
     {
         _isPageActive = true;
         AppCatalogService.CacheChanged += OnCacheChanged;
-        // 服务端下发的在线搜索能力与目录并行预取：旧服务端没有该字段时自动回退按源判断。
-        _ = RefreshOnlineSearchCapabilityAsync();
+        // 服务端下发的软件源能力（search_mode / online_search）与目录并行预取：旧服务端缺字段时自动回退按源判断。
+        _ = RefreshSourceCapabilitiesAsync();
 
         if (_catalogLoadTask is { IsCompleted: false })
         {
@@ -104,6 +112,7 @@ public partial class AppsInstallPage : Page
                 $"软件列表复用已加载目录：源={AppCatalogService.SourceDisplayName}，" +
                 $"{_catalogApps.Count} 款软件，未重复请求。");
             ApplyFilters();
+            EnsureApiSearchForCurrentQuery();
             return;
         }
 
@@ -117,6 +126,7 @@ public partial class AppsInstallPage : Page
         _loadCancellation?.Cancel();
         _iconLoadCancellation?.Cancel();
         _onlineSearchCancellation?.Cancel();
+        CancelApiSearch(clearError: false);
     }
 
     /// <summary>商店源（联想应用商店 / 360 软件管家）按需图标加载的取消令牌：页面重新显示时重建，避免取消过的令牌复用。</summary>
@@ -208,8 +218,8 @@ public partial class AppsInstallPage : Page
     /// <summary>服务端地址切换后目录缓存与内存目录都已清空：按切换软件源的同样方式清空页面状态并重新加载。</summary>
     private void OnBackendChanged(object? sender, EventArgs args)
     {
-        // 换了服务端：在线搜索能力要按新服务端重新获取（旧服务端可能根本没有 online_search 字段）。
-        _onlineSearchCapabilityRequested = false;
+        // 换了服务端：软件源能力（search_mode / online_search）要按新服务端重新获取。
+        _sourceCapabilitiesRequested = false;
         OnSourceChanged(sender, args);
     }
 
@@ -228,51 +238,111 @@ public partial class AppsInstallPage : Page
     }
 
     /// <summary>
-    /// 在线搜索是否可用由服务端 <c>GET /api/v1/sources</c> 的 <c>online_search</c> 决定：
-    /// 目录加载时静默预取一次能力表（与目录请求并行，不阻塞列表显示），拿到结果后刷新空状态里的
-    /// “在…在线搜索”按钮。旧服务端没有该字段或请求失败时保持按源判断的回退
-    /// （见 <see cref="AppCatalogService.OnlineSearchAvailable"/>），并允许下一次目录加载重试。
+    /// 服务端软件源能力由 <c>GET /api/v1/sources</c> 下发：每源的 <c>search_mode</c> 决定搜索方式是
+    /// 本地目录搜索（catalog）还是服务端搜索 API（api），<c>online_search</c> 只作为旧服务端的兼容回退。
+    /// 目录加载时静默预取一次（与目录请求并行，不阻塞列表显示），拿到结果后刷新界面；
+    /// 旧服务端缺字段或请求失败时保持按源判断的回退，并允许下一次目录加载重试
+    /// （见 <see cref="AppCatalogService.CurrentSearchMode"/> / <see cref="AppCatalogService.OnlineSearchAvailable"/>）。
     /// </summary>
-    private async Task RefreshOnlineSearchCapabilityAsync()
+    private async Task RefreshSourceCapabilitiesAsync()
     {
-        if (_onlineSearchCapabilityRequested)
+        if (_sourceCapabilitiesRequested)
         {
             return;
         }
 
-        _onlineSearchCapabilityRequested = true;
+        _sourceCapabilitiesRequested = true;
         try
         {
-            // 预取前的可搜索状态（未加载时是回退值）；只有服务端标志真正改变结果时才刷新空状态，
+            // 预取前的状态（未加载时是按源回退值）；只有服务端能力真正改变结果时才刷新界面，
             // 避免列表已显示后无意义地重建当前页。
-            bool before = AppCatalogService.OnlineSearchAvailable;
+            string? beforeMode = AppCatalogService.ServerSearchMode;
+            bool beforeOnlineSearch = AppCatalogService.OnlineSearchAvailable;
             await AppCatalogService.GetSourcesAsync();
-            if (!_isInitialized || before == AppCatalogService.OnlineSearchAvailable)
+            if (!_isInitialized)
             {
                 return;
             }
 
+            string? afterMode = AppCatalogService.ServerSearchMode;
+            bool afterOnlineSearch = AppCatalogService.OnlineSearchAvailable;
+            if (string.Equals(beforeMode, afterMode, StringComparison.Ordinal)
+                && beforeOnlineSearch == afterOnlineSearch)
+            {
+                return;
+            }
+
+            AppLogService.Info(
+                $"服务端软件源能力已更新：搜索模式 {beforeMode ?? "（按源回退）"} → {afterMode ?? "（按源回退）"}，" +
+                $"在线搜索 {beforeOnlineSearch} → {afterOnlineSearch}。");
             if (Dispatcher.CheckAccess())
             {
-                ApplyFilters();
+                OnSourceCapabilitiesChanged();
             }
             else
             {
-                _ = Dispatcher.BeginInvoke(new Action(ApplyFilters));
+                _ = Dispatcher.BeginInvoke(new Action(OnSourceCapabilitiesChanged));
             }
         }
         catch (HttpRequestException error) when (error.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // 旧服务端没有 /sources 路由：保持按源判断的回退，不需要在每次目录加载时重复请求。
-            AppLogService.Verbose("服务端没有 /sources 接口，在线搜索能力回退按源判断。");
+            AppLogService.Verbose("服务端没有 /sources 接口，搜索模式与在线搜索能力回退按源判断。");
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // 旧服务端（响应里没有 online_search 字段）或网络失败都不影响软件列表，继续用回退判断。
-            _onlineSearchCapabilityRequested = false;
+            // 旧服务端（响应里没有 search_mode / online_search 字段）或网络失败都不影响软件列表，继续用回退判断。
+            _sourceCapabilitiesRequested = false;
             AppLogService.Verbose(
-                $"获取服务端在线搜索能力失败，回退按源判断：{error.GetType().Name}：{error.Message}");
+                $"获取服务端软件源能力失败，回退按源判断：{error.GetType().Name}：{error.Message}");
         }
+    }
+
+    /// <summary>
+    /// 服务端下发的搜索模式 / 在线搜索能力变化后刷新界面：api 模式按当前关键词补一次自动搜索，
+    /// catalog 模式回到本地搜索，并重绘空状态与状态行。
+    /// </summary>
+    private void OnSourceCapabilitiesChanged()
+    {
+        if (!_isPageActive)
+        {
+            // 页面未显示时只更新能力状态；回到列表页（OnPageLoaded）会按当前关键词重新触发搜索。
+            return;
+        }
+
+        UpdateServerSearchState(SearchBox.Text.Trim());
+        ApplyFilters();
+    }
+
+    /// <summary>
+    /// api 模式（服务端说目录只是子集）下，目录加载完成 / 切换源 / 回到列表页后按搜索框里的关键词
+    /// 补一次服务端搜索，避免新目录只用客户端本地过滤而漏掉目录外软件。
+    /// 已有同一关键词的结果时不重复请求。
+    /// </summary>
+    private void EnsureApiSearchForCurrentQuery()
+    {
+        if (!_isPageActive || _isApiSearching)
+        {
+            return;
+        }
+
+        if (!AppCatalogService.UsesApiSearch)
+        {
+            return;
+        }
+
+        string query = SearchBox.Text.Trim();
+        if (query.Length == 0)
+        {
+            return;
+        }
+
+        if (string.Equals(_onlineSearchQuery, query, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ScheduleApiSearch(query, TimeSpan.Zero);
     }
 
     /// <summary>
@@ -299,8 +369,8 @@ public partial class AppsInstallPage : Page
         _loadError = null;
         UpdateLoadStatus();
         AppLogService.Info($"软件列表开始加载目录：源={AppCatalogService.SourceDisplayName}。");
-        // 与目录加载并行预取“在线搜索能力”（服务端 online_search）；不阻塞目录请求。
-        _ = RefreshOnlineSearchCapabilityAsync();
+        // 与目录加载并行预取服务端软件源能力（search_mode / online_search）；不阻塞目录请求。
+        _ = RefreshSourceCapabilitiesAsync();
 
         try
         {
@@ -405,6 +475,8 @@ public partial class AppsInstallPage : Page
                     _hasSuccessfulLoad = false;
                     _catalogApps = Array.Empty<AppItem>();
                 }
+                // api 模式的源在目录就绪后按当前关键词补一次服务端搜索（目录只是子集）。
+                EnsureApiSearchForCurrentQuery();
                 ApplyFilters();
             }
         }
@@ -412,12 +484,195 @@ public partial class AppsInstallPage : Page
 
     private void SearchBox_OnTextChanged(object sender, TextChangedEventArgs args)
     {
-        if (!_isOnlineSearching)
+        if (!_isInitialized)
+        {
+            return;
+        }
+
+        if (!_isOnlineSearching && !_isApiSearching)
         {
             _onlineSearchError = null;
         }
 
+        // 搜索方式由服务端 /api/v1/sources 的 search_mode 决定：api 模式输入即防抖调用服务端搜索 API，
+        // catalog 模式保持原有本地目录搜索（目录完整）。
+        UpdateServerSearchState(SearchBox.Text.Trim());
         ApplyFilters();
+    }
+
+    /// <summary>
+    /// 按服务端搜索模式处理搜索框输入：<c>catalog</c> 模式（目录完整）保持原有本地搜索；
+    /// <c>api</c> 模式（目录只是子集）输入即防抖调用服务端搜索 API，清空输入恢复完整目录。
+    /// 旧服务端没有 <c>search_mode</c> 时按源回退（见 <see cref="AppCatalogService.UsesApiSearch"/>）。
+    /// </summary>
+    private void UpdateServerSearchState(string query)
+    {
+        if (!AppCatalogService.UsesApiSearch)
+        {
+            // catalog 模式不需要自动 API 搜索；清掉可能残留的在途请求与错误。
+            CancelApiSearch(clearError: true);
+            return;
+        }
+
+        if (query.Length == 0)
+        {
+            // 清空搜索框：取消在途搜索并把列表恢复成完整目录。
+            CancelApiSearch(clearError: true);
+            _onlineSearchApps = Array.Empty<AppItem>();
+            _onlineSearchQuery = null;
+            _onlineSearchError = null;
+            return;
+        }
+
+        ScheduleApiSearch(query, ApiSearchDebounce);
+    }
+
+    /// <summary>安排一次防抖后的服务端搜索；会先取消上一轮（含其防抖等待），只保留最后一次输入。</summary>
+    private void ScheduleApiSearch(string query, TimeSpan delay)
+    {
+        CancelApiSearch(clearError: true);
+        var cancellation = new CancellationTokenSource();
+        _apiSearchCancellation = cancellation;
+        _isApiSearching = true;
+        _onlineSearchError = null;
+        string sourceName = AppCatalogService.SourceDisplayName;
+        OnlineSearchStatusText.Text = $"正在{sourceName}搜索“{query}”…";
+        _ = RunApiSearchAsync(query, delay, cancellation);
+    }
+
+    /// <summary>
+    /// api 模式的服务端搜索：防抖等待后调用 <see cref="AppCatalogService.SearchStoreAsync"/>，
+    /// 结果替换列表（可能包含目录外软件）。取消/超时/HTTP/格式错误都只更新状态，不抛出到 UI。
+    /// </summary>
+    private async Task RunApiSearchAsync(string query, TimeSpan delay, CancellationTokenSource cancellation)
+    {
+        CancellationToken ct = cancellation.Token;
+        string sourceName = AppCatalogService.SourceDisplayName;
+        var stopwatch = Stopwatch.StartNew();
+        AppLogService.Verbose($"{sourceName}服务端搜索开始：关键词“{query}”。");
+        try
+        {
+            if (delay > TimeSpan.Zero)
+            {
+                await Task.Delay(delay, ct);
+            }
+
+            var results = await AppCatalogService.SearchStoreAsync(query, ct);
+            ct.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(_apiSearchCancellation, cancellation))
+            {
+                // 已被更新的一轮输入取代：丢弃这次结果。
+                return;
+            }
+
+            _onlineSearchApps = results;
+            _onlineSearchQuery = query;
+            _apiSearchError = null;
+            if (_selectedCategory != AllCategories)
+            {
+                // 服务端搜索结果已经按关键词匹配，不再叠加分类过滤（与旧版在线搜索一致）。
+                _selectedCategory = AllCategories;
+                CategoryChanged?.Invoke(_selectedCategory);
+            }
+
+            AppLogService.Info(
+                $"{sourceName}服务端搜索完成：关键词“{query}”，{results.Count} 条结果，" +
+                $"耗时 {stopwatch.ElapsedMilliseconds} ms。");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 新的输入、清空搜索框、切换源或离开页面都会取消搜索，此时不覆盖当前界面状态。
+            AppLogService.Verbose(
+                $"{sourceName}服务端搜索已取消：关键词“{query}”，耗时 {stopwatch.ElapsedMilliseconds} ms。");
+        }
+        catch (OperationCanceledException)
+        {
+            SetApiSearchFailure(cancellation, query, $"{sourceName}搜索超时，请稍后重试。");
+            AppLogService.Warn(
+                $"{sourceName}服务端搜索超时：关键词“{query}”，耗时 {stopwatch.ElapsedMilliseconds} ms。");
+        }
+        catch (HttpRequestException exception)
+        {
+            SetApiSearchFailure(cancellation, query, exception.StatusCode.HasValue
+                ? $"{sourceName}搜索失败（HTTP {(int)exception.StatusCode.Value}），请稍后重试。"
+                : "无法连接软件服务，请确认服务已启动后重试。");
+            AppLogService.Warn(
+                $"{sourceName}服务端搜索失败：关键词“{query}”，" +
+                $"HTTP {(exception.StatusCode.HasValue ? ((int)exception.StatusCode.Value).ToString(CultureInfo.InvariantCulture) : "无响应")}，" +
+                $"{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+        catch (JsonException exception)
+        {
+            SetApiSearchFailure(cancellation, query, $"{sourceName}返回的搜索结果格式不正确，请稍后重试。");
+            AppLogService.Warn(
+                $"{sourceName}服务端搜索结果解析失败：关键词“{query}”，{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+        catch (System.IO.IOException exception)
+        {
+            SetApiSearchFailure(cancellation, query, "搜索时连接中断，请重试。");
+            AppLogService.Warn(
+                $"{sourceName}服务端搜索连接中断：关键词“{query}”，{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+        catch (InvalidDataException exception)
+        {
+            SetApiSearchFailure(cancellation, query, $"{sourceName}返回的搜索结果无效，请稍后重试。");
+            AppLogService.Warn(
+                $"{sourceName}服务端搜索结果无效：关键词“{query}”，{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            SetApiSearchFailure(cancellation, query, $"{sourceName}搜索失败，请稍后重试。");
+            AppLogService.Error(
+                $"{sourceName}服务端搜索出现未预期错误：关键词“{query}”，{error.GetType().Name}：{error.Message}，" +
+                $"耗时 {stopwatch.ElapsedMilliseconds} ms。",
+                error);
+            Debug.WriteLine(error);
+        }
+        finally
+        {
+            // 取消的旧请求只做资源释放，不改新请求的状态。
+            cancellation.Dispose();
+            if (ReferenceEquals(_apiSearchCancellation, cancellation))
+            {
+                _apiSearchCancellation = null;
+                _isApiSearching = false;
+                if (_isPageActive && _isInitialized)
+                {
+                    ApplyFilters();
+                }
+            }
+        }
+    }
+
+    /// <summary>记录一次服务端搜索失败：列表进入“搜索结果为空 + 错误说明”状态，而不是退回本地子集。</summary>
+    private void SetApiSearchFailure(CancellationTokenSource cancellation, string query, string message)
+    {
+        if (!ReferenceEquals(_apiSearchCancellation, cancellation))
+        {
+            return;
+        }
+
+        _onlineSearchApps = Array.Empty<AppItem>();
+        _onlineSearchQuery = query;
+        _apiSearchError = message;
+        _onlineSearchError = null;
+    }
+
+    /// <summary>取消在途的服务端搜索（含防抖等待）；令牌的实际释放交给 <see cref="RunApiSearchAsync"/> 的 finally。</summary>
+    private void CancelApiSearch(bool clearError)
+    {
+        var previous = _apiSearchCancellation;
+        _apiSearchCancellation = null;
+        previous?.Cancel();
+        _isApiSearching = false;
+        if (clearError)
+        {
+            _apiSearchError = null;
+        }
     }
 
     private void Filter_OnSelectionChanged(object sender, SelectionChangedEventArgs args) => ApplyFilters();
@@ -456,13 +711,18 @@ public partial class AppsInstallPage : Page
 
         string query = SearchBox.Text.Trim();
         string category = _selectedCategory;
-        bool online = _onlineSearchQuery is not null;
+        bool apiMode = AppCatalogService.UsesApiSearch;
+        // 服务端搜索结果：api 模式搜索框自动搜索，或旧服务端兼容的“在线搜索”按钮；显示哪个关键词的
+        // 结果由 _onlineSearchQuery 决定（为 null 时显示完整目录）。
+        bool serverSearchResults = _onlineSearchQuery is not null;
+        bool searching = _isOnlineSearching || _isApiSearching;
+        string? searchError = _apiSearchError ?? _onlineSearchError;
         string[] terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        IReadOnlyList<AppItem> sourceApps = online ? _onlineSearchApps : _catalogApps;
-        bool hasData = online || _hasSuccessfulLoad;
-        // 在线搜索结果已经是软件源按关键词匹配的结果，不再叠加本地搜索与分类过滤。
+        IReadOnlyList<AppItem> sourceApps = serverSearchResults ? _onlineSearchApps : _catalogApps;
+        bool hasData = serverSearchResults || _hasSuccessfulLoad;
+        // 服务端搜索结果已经是软件源按关键词匹配的结果，不再叠加本地搜索与分类过滤。
         IEnumerable<AppItem> matches = hasData
-            ? sourceApps.Where(app => online
+            ? sourceApps.Where(app => serverSearchResults
                 || ((category == AllCategories || app.Category == category) && MatchesSearch(app, terms)))
             : Array.Empty<AppItem>();
 
@@ -473,7 +733,7 @@ public partial class AppsInstallPage : Page
                 .ThenBy(app => app.Name, _nameComparer);
         _filteredApps = ordered.ToList();
 
-        // 筛选条件、排序、在线搜索或目录版本变化时回到第一页；仅翻页/改每页数量时保持当前页。
+        // 筛选条件、排序、服务端搜索或目录版本变化时回到第一页；仅翻页/改每页数量时保持当前页。
         string signature = string.Join("\u0001", new[]
         {
             query, category, sort ?? string.Empty, _onlineSearchQuery ?? string.Empty,
@@ -487,47 +747,91 @@ public partial class AppsInstallPage : Page
 
         ShowCurrentPage();
 
-        bool hasFilters = query.Length > 0 || category != AllCategories || sort == "name" || online;
+        bool hasFilters = query.Length > 0 || category != AllCategories || sort == "name" || serverSearchResults;
         string sourceName = AppCatalogService.SourceDisplayName;
-        ResultsTitle.Text = online ? $"{sourceName}在线搜索结果"
+        ResultsTitle.Text = serverSearchResults
+            ? apiMode ? $"“{_onlineSearchQuery}” 的搜索结果" : $"{sourceName}在线搜索结果"
             : query.Length > 0 ? $"“{query}” 的搜索结果"
             : category == AllCategories ? "全部软件" : category;
         int hiddenIncompatible = AppCatalogService.HiddenIncompatibleCount;
-        string hiddenSuffix = !online && hiddenIncompatible > 0
+        string hiddenSuffix = !serverSearchResults && hiddenIncompatible > 0
             ? $"（已按当前系统隐藏 {hiddenIncompatible} 款不兼容的软件）" : string.Empty;
-        ResultsCount.Text = !hasData ? "目录尚未加载"
-            : online
-                ? $"找到 {_filteredApps.Count} 款在线结果"
-                : query.Length > 0 || category != AllCategories
-                    ? $"找到 {_filteredApps.Count} 款，共 {_catalogApps.Count} 款软件{hiddenSuffix}"
-                    : $"共 {_filteredApps.Count} 款软件{hiddenSuffix}";
-        ResetFiltersButton.Visibility = hasFilters ? Visibility.Visible : Visibility.Collapsed;
-        ReturnToCatalogButton.Visibility = online ? Visibility.Visible : Visibility.Collapsed;
+        if (searching)
+        {
+            // api 模式输入即显示“正在搜索…”，结果返回后换成条数。
+            ResultsCount.Text = apiMode && query.Length > 0 ? $"正在搜索“{query}”…" : "正在在线搜索…";
+        }
+        else if (!hasData)
+        {
+            ResultsCount.Text = "目录尚未加载";
+        }
+        else if (apiMode && serverSearchResults && _apiSearchError is not null)
+        {
+            ResultsCount.Text = "搜索失败，请稍后重试。";
+        }
+        else if (serverSearchResults)
+        {
+            ResultsCount.Text = apiMode
+                ? $"搜索结果共 {_filteredApps.Count} 款"
+                : $"找到 {_filteredApps.Count} 款在线结果";
+        }
+        else if (query.Length > 0 || category != AllCategories)
+        {
+            ResultsCount.Text = $"找到 {_filteredApps.Count} 款，共 {_catalogApps.Count} 款软件{hiddenSuffix}";
+        }
+        else
+        {
+            ResultsCount.Text = $"共 {_filteredApps.Count} 款软件{hiddenSuffix}";
+        }
 
-        bool showEmpty = hasData && _filteredApps.Count == 0;
+        ApiSearchProgress.Visibility = _isApiSearching ? Visibility.Visible : Visibility.Collapsed;
+        ResetFiltersButton.Visibility = hasFilters ? Visibility.Visible : Visibility.Collapsed;
+        // 只有旧服务端兼容的“在线搜索”结果才需要“返回本地目录”；api 模式靠清空搜索框恢复目录。
+        ReturnToCatalogButton.Visibility = serverSearchResults && !apiMode ? Visibility.Visible : Visibility.Collapsed;
+
+        // api 模式第一次搜索时目录可能还没加载完：用空状态承载“正在搜索…”，避免误显示“目录尚未加载”。
+        bool showEmpty = _filteredApps.Count == 0 && (hasData || (apiMode && _isApiSearching));
         EmptyState.Visibility = showEmpty ? Visibility.Visible : Visibility.Collapsed;
-        // 是否提供在线搜索由服务端 /api/v1/sources 的 online_search 决定（旧服务端回退按源判断，
-        // 见 AppCatalogService.OnlineSearchAvailable）；页面不再硬编码“联想/360 才有在线搜索”。
-        bool canOnlineSearch = !online && query.Length > 0 && _hasSuccessfulLoad && AppCatalogService.OnlineSearchAvailable;
+        // 旧服务端兼容按钮：服务端没下发 search_mode 且 online_search 允许时才显示；catalog 模式目录完整
+        // 本地搜索即可，api 模式搜索框自动请求服务端搜索 API，两者都不显示按钮。
+        bool canOnlineSearch = !serverSearchResults && !apiMode && !searching && query.Length > 0
+            && _hasSuccessfulLoad && AppCatalogService.OnlineSearchAvailable;
         string onlineSearchText = $"在{sourceName}在线搜索";
-        OnlineSearchButton.Visibility = showEmpty && canOnlineSearch && !_isOnlineSearching
+        OnlineSearchButton.Visibility = showEmpty && canOnlineSearch
             ? Visibility.Visible : Visibility.Collapsed;
         OnlineSearchButton.IsEnabled = !_isOnlineSearching;
         OnlineSearchButton.Content = onlineSearchText;
         AutomationProperties.SetName(OnlineSearchButton, onlineSearchText);
-        bool showOnlineStatus = showEmpty && (_isOnlineSearching || _onlineSearchError is not null);
+        bool showOnlineStatus = showEmpty && (searching || (!apiMode && searchError is not null));
         OnlineSearchStatusPanel.Visibility = showOnlineStatus ? Visibility.Visible : Visibility.Collapsed;
-        OnlineSearchProgress.Visibility = _isOnlineSearching ? Visibility.Visible : Visibility.Collapsed;
-        if (showOnlineStatus && !_isOnlineSearching && _onlineSearchError is not null)
+        OnlineSearchProgress.Visibility = searching ? Visibility.Visible : Visibility.Collapsed;
+        if (showOnlineStatus && !searching && !apiMode && searchError is not null)
         {
-            OnlineSearchStatusText.Text = _onlineSearchError;
+            OnlineSearchStatusText.Text = searchError;
         }
 
-        if (online)
+        if (showEmpty && apiMode && _isApiSearching)
+        {
+            EmptyTitleText.Text = $"正在{sourceName}搜索…";
+            EmptyDescriptionText.Text = query.Length > 0 ? $"正在搜索“{query}”，请稍候。" : "请稍候。";
+        }
+        else if (serverSearchResults && apiMode)
+        {
+            EmptyTitleText.Text = _apiSearchError is not null ? "搜索失败" : "没有找到相关软件";
+            EmptyDescriptionText.Text = _apiSearchError is not null
+                ? $"{_apiSearchError} 可以稍后重试，或清空搜索查看完整目录。"
+                : "可以换一个关键词后重试，或清空搜索查看完整目录。";
+        }
+        else if (serverSearchResults)
         {
             EmptyTitleText.Text = $"{sourceName}没有找到相关软件";
             EmptyDescriptionText.Text = string.IsNullOrWhiteSpace(_onlineSearchError)
                 ? "可以返回本地目录，或换一个关键词后再试。" : _onlineSearchError;
+        }
+        else if (searching)
+        {
+            EmptyTitleText.Text = "正在搜索…";
+            EmptyDescriptionText.Text = "请稍候。";
         }
         else
         {
@@ -536,7 +840,8 @@ public partial class AppsInstallPage : Page
                 ? "稍后重新打开软件列表，查看新加入的软件。"
                 : canOnlineSearch ? $"本地目录没有匹配结果，可以在{sourceName}在线搜索。" : "试试其他关键词，或清空分类和搜索条件。";
         }
-        EmptyResetButton.Content = online ? "返回本地目录" : "显示全部软件";
+        EmptyResetButton.Content = apiMode && (serverSearchResults || _isApiSearching) ? "清空搜索"
+            : serverSearchResults ? "返回本地目录" : "显示全部软件";
         AppsList.Visibility = hasData && _filteredApps.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdateLoadStatus();
     }
@@ -638,9 +943,21 @@ public partial class AppsInstallPage : Page
     private string BuildSourceStatusText()
     {
         string sourceName = AppCatalogService.SourceDisplayName;
+        if (_isApiSearching)
+        {
+            return $"{sourceName} · 正在搜索";
+        }
+
+        if (_apiSearchError is not null && _onlineSearchQuery is not null)
+        {
+            return $"{sourceName} · 搜索失败";
+        }
+
         if (_onlineSearchQuery is not null)
         {
-            return $"{sourceName} · 在线搜索结果";
+            return AppCatalogService.UsesApiSearch
+                ? $"{sourceName} · 服务端搜索结果"
+                : $"{sourceName} · 在线搜索结果";
         }
 
         if (!_hasSuccessfulLoad)
@@ -710,8 +1027,10 @@ public partial class AppsInstallPage : Page
     private async void OnlineSearch_OnClick(object sender, RoutedEventArgs args)
     {
         string query = SearchBox.Text.Trim();
-        // 在线搜索能力由服务端 /api/v1/sources 的 online_search 下发（旧服务端回退按源判断）。
-        if (query.Length == 0 || _isOnlineSearching || !AppCatalogService.OnlineSearchAvailable)
+        // 旧服务端兼容入口：服务端下发 search_mode 后由搜索模式决定搜索方式（catalog 本地搜索、
+        // api 自动调用服务端搜索 API），不再显示/触发这个手动按钮。
+        if (query.Length == 0 || _isOnlineSearching || _isApiSearching
+            || AppCatalogService.UsesApiSearch || !AppCatalogService.OnlineSearchAvailable)
         {
             return;
         }
@@ -831,6 +1150,8 @@ public partial class AppsInstallPage : Page
     {
         _onlineSearchCancellation?.Cancel();
         _onlineSearchCancellation = null;
+        // 同时取消 api 模式自动搜索并清空其结果/错误：切换源、切换服务端、清空筛选都会走到这里。
+        CancelApiSearch(clearError: true);
         _onlineSearchApps = Array.Empty<AppItem>();
         _onlineSearchQuery = null;
         _onlineSearchError = null;

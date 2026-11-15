@@ -3,9 +3,10 @@
 - 详情：内存 LRU + TTL，磁盘 ``<cache>/lenovo/details/<sha256(soft_id)>.json``。联想详情里的
   ``captureFileList[].type=1`` 是带 ``auth_key`` 的**临时视频地址**，长期缓存时只保留
   ``videoImg`` 缩略图、丢掉视频 url；``capture`` 列表顺序就是客户端截图索引。
-- 详情映射：截图与横版封面优先返回联想 CDN 的**绝对 https 地址**（客户端直连，降低后端图片
-  带宽），地址不合格时回退 ``/api/v1/store/lenovo/...`` 相对代理路径；``proxy_url`` /
-  ``cover_proxy_url`` 始终是代理路径，作为直连失败时的兜底。
+- 详情映射：截图与横版封面优先返回联想 CDN 的**绝对 http(s) 地址**（客户端直连，降低后端
+  图片带宽），任意安全的公网 http(s) 图片地址都可用（不再限制 CDN 域名白名单），地址不安全
+  时回退 ``/api/v1/store/lenovo/...`` 相对代理路径；``proxy_url`` / ``cover_proxy_url`` 始终
+  是代理路径，作为直连失败时的兜底。
 - 视频：:meth:`LenovoDetailsProvider.resolve_screenshot_video_url` 每次都实时请求联想详情
   （不读也不写缓存），只返回通过 https + 联想视频 CDN 白名单校验的临时地址，供路由流式代理；
   该 URL 绝不写日志、缓存或磁盘。
@@ -220,9 +221,9 @@ class LenovoDetailsProvider:
         ``icon_url``（联想 CDN 绝对地址）与 ``icon_proxy_url``（后端代理兜底）随 summary
         原样继承，客户端详情页同样优先直连。
 
-        截图与横版封面优先返回联想 CDN 的绝对 https 地址（客户端直连，降低后端图片带宽）；
-        地址不是 https 或 host 不在联想 CDN 白名单时回退后端相对代理路径。``proxy_url`` /
-        ``cover_proxy_url`` 始终是代理路径，供客户端直连失败时兜底。
+        截图与横版封面优先返回安全的公网 http(s) 绝对地址（任意 CDN 子域，客户端直连，降低
+        后端图片带宽）；地址不安全（userinfo/内网/回环等）时回退后端相对代理路径。
+        ``proxy_url`` / ``cover_proxy_url`` 始终是代理路径，供客户端直连失败时兜底。
         """
 
         soft_id = summary.soft_id
@@ -532,7 +533,7 @@ class LenovoDetailsProvider:
 
 
 def _build_screenshot(encoded_soft_id: str, screenshot: ScreenshotSource) -> StoreScreenshot:
-    """构造截图契约：CDN 绝对 https 优先，否则回退后端相对代理路径。"""
+    """构造截图契约：安全的公网 http(s) 绝对地址优先，否则回退后端相对代理路径。"""
 
     proxy_url = (
         f"/api/v1/store/lenovo/apps/{encoded_soft_id}/screenshots/{screenshot.index}"

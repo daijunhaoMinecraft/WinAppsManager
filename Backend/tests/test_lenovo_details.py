@@ -213,20 +213,24 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.icon_proxy_url, "/api/v1/store/lenovo/apps/L105867/icon")
 
     async def test_non_direct_image_urls_fall_back_to_the_proxy_path(self):
-        """不是 https 或 host 不在 CDN 白名单的图片地址回退后端代理路径。"""
+        """内网/回环等不安全的图片地址回退后端代理路径；任意公网 CDN 直接返回原地址。"""
 
         fields = DetailsFields(
             long_description="描述",
             release_notes="",
             screenshots=(
                 ScreenshotSource(index=0, kind="image", source_url="http://lsw-fast.lenovo.com.cn/a.png"),
-                ScreenshotSource(index=1, kind="image", source_url="https://evil.example.com/a.png"),
                 ScreenshotSource(
-                    index=2, kind="video", source_url="https://imgs.lenovomm.cn.evil.example.com/a.png"
+                    index=1, kind="image", source_url="https://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png"
                 ),
-                ScreenshotSource(index=3, kind="image", source_url="https://pc1.gtimg.com/a.png"),
+                ScreenshotSource(
+                    index=2, kind="video", source_url="https://unknown-cdn.vendor-name.net/thumb.jpg"
+                ),
+                ScreenshotSource(index=3, kind="image", source_url="http://127.0.0.1/a.png"),
+                ScreenshotSource(index=4, kind="image", source_url="http://192.168.1.20/a.png"),
+                ScreenshotSource(index=5, kind="image", source_url="https://pc1.gtimg.com/a.png"),
             ),
-            cover_source="https://evil.example.com/cover.png",
+            cover_source="http://p15.qhmsg.com/cover.png",
             labels=(),
             ranking=None,
             detail_tags=(),
@@ -235,19 +239,34 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [shot.url for shot in details.screenshots],
             [
-                "/api/v1/store/lenovo/apps/L105867/screenshots/0",
-                "/api/v1/store/lenovo/apps/L105867/screenshots/1",
-                "/api/v1/store/lenovo/apps/L105867/screenshots/2",
+                "http://lsw-fast.lenovo.com.cn/a.png",
+                "https://p15.qhmsg.com/t01ef3b2bb4170fa1f0.png",
+                "https://unknown-cdn.vendor-name.net/thumb.jpg",
+                "/api/v1/store/lenovo/apps/L105867/screenshots/3",
+                "/api/v1/store/lenovo/apps/L105867/screenshots/4",
                 "https://pc1.gtimg.com/a.png",
             ],
         )
         self.assertEqual(
             [shot.proxy_url for shot in details.screenshots],
-            [f"/api/v1/store/lenovo/apps/L105867/screenshots/{index}" for index in range(4)],
+            [f"/api/v1/store/lenovo/apps/L105867/screenshots/{index}" for index in range(6)],
         )
-        # 封面地址不安全时回退代理路径，cover_proxy_url 保持代理路径。
-        self.assertEqual(details.cover_url, "/api/v1/store/lenovo/apps/L105867/cover")
+        # 封面是名单外公网 CDN 时直接返回；cover_proxy_url 保持代理路径。
+        self.assertEqual(details.cover_url, "http://p15.qhmsg.com/cover.png")
         self.assertEqual(details.cover_proxy_url, "/api/v1/store/lenovo/apps/L105867/cover")
+
+        unsafe_cover = DetailsFields(
+            long_description="描述",
+            release_notes="",
+            screenshots=(),
+            cover_source="http://127.0.0.1/cover.png",
+            labels=(),
+            ranking=None,
+            detail_tags=(),
+        )
+        unsafe_details = self.provider.build_details(summary(), unsafe_cover)
+        self.assertEqual(unsafe_details.cover_url, "/api/v1/store/lenovo/apps/L105867/cover")
+        self.assertEqual(unsafe_details.cover_proxy_url, "/api/v1/store/lenovo/apps/L105867/cover")
 
         without_cover = DetailsFields(
             long_description="描述",
@@ -263,13 +282,16 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(no_cover_details.cover_proxy_url)
         self.assertEqual(no_cover_details.screenshots, [])
 
-    async def test_screenshot_urls_cannot_be_arbitrary_addresses(self):
-        """模型层拒绝任意 URL 注入：url 只能是 CDN https 或本后端代理路径。"""
+    async def test_screenshot_urls_reject_internal_and_malformed_addresses(self):
+        """模型层拒绝内网/回环/带凭据等不安全 URL：url 只能是安全公网 http(s) 或本后端代理路径。"""
 
         valid = [
             "https://lsw-fast.lenovo.com.cn/a.png",
+            "http://lsw-fast.lenovo.com.cn/a.png",
             "https://imgs.lenovomm.cn/a.png",
             "https://pc1.gtimg.com/a.png",
+            "http://p15.qhmsg.com/a.png",
+            "https://unknown-cdn.vendor-name.net/a.png",
             "/api/v1/store/lenovo/apps/L105867/screenshots/0",
         ]
         for url in valid:
@@ -277,15 +299,15 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
                 screenshot = StoreScreenshot(index=0, kind="image", url=url)
                 self.assertEqual(screenshot.url, url)
         for url in (
-            "http://lsw-fast.lenovo.com.cn/a.png",
-            "https://evil.example.com/a.png",
-            "https://imgs.lenovomm.cn.evil.example.com/a.png",
-            "https://imgs.lenovomm.cn./a.png",
-            "https://imgs.lenovomm.cn@evil.example.com/a.png",
+            "http://127.0.0.1/a.png",
+            "http://localhost/a.png",
+            "https://[::1]/a.png",
+            "http://10.0.0.8/a.png",
+            "https://printer.local/a.png",
             "https://user:pass@imgs.lenovomm.cn/a.png",
             "ftp://imgs.lenovomm.cn/a.png",
             "/api/v1/store/360/apps/1/screenshots/0",
-            "https://lenovomm.cn/a.png",
+            "not a url",
         ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 StoreScreenshot(index=0, kind="image", url=url)
@@ -300,7 +322,7 @@ class LenovoDetailsTests(unittest.IsolatedAsyncioTestCase):
             StoreAppDetails(
                 **summary().model_dump(),
                 long_description="描述",
-                cover_url="https://evil.example.com/cover.png",
+                cover_url="http://127.0.0.1/cover.png",
             )
         with self.assertRaises(ValueError):
             StoreAppDetails(

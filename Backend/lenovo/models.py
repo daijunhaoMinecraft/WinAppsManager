@@ -4,11 +4,13 @@
 ``Backend/models.py`` 的严格模式基类与 :class:`Release`，因此序列化约定与内置精选源一致：
 
 - 所有模型 ``extra="forbid"``、``strict=True``，字段名一律 snake_case；
-- ``icon_url`` 是**联想 CDN 原始 logo 的绝对 http(s) URL**，客户端列表/搜索直接据此取图，
+- ``icon_url`` 是**联想原始 logo 的绝对 http(s) URL**，客户端列表/搜索直接据此取图，
   不再经过后端代理；``icon_proxy_url`` 是可选的相对代理路径，作为直连失败时的兜底；
-- 截图/封面的 ``url`` **优先联想 CDN 绝对 https 地址**（客户端直连取图），不满足 https +
-  CDN 白名单时回退后端相对代理路径（``/api/v1/store/lenovo/...``）；``proxy_url`` /
-  ``cover_proxy_url`` 始终是代理路径，供客户端在直连失败时兜底；
+- 截图/封面的 ``url`` **优先联想 CDN 绝对 http(s) 地址**（客户端直连取图）。这里不再使用
+  固定 CDN 域名白名单，任意**安全的公网 http(s) 图片地址**都允许直连（拒绝 userinfo、
+  localhost、内网后缀、私有/回环 IP 字面量、控制字符等），不安全的地址回退后端相对代理路径
+  （``/api/v1/store/lenovo/...``）；``proxy_url`` / ``cover_proxy_url`` 始终是代理路径，
+  供客户端在直连失败时兜底；
 - 详情里的视频截图 ``url`` 指向缩略图（``videoImg``），绝不返回带时效的视频地址；视频播放
   仍走后端代理 ``.../screenshots/{index}/video``；
 - 下载地址复用 :class:`Backend.models.Release`，由路由负责 ``Cache-Control: no-store``。
@@ -24,8 +26,10 @@ from pydantic import Field, field_validator, model_validator
 
 if "." in (__package__ or ""):
     from ..models import ApiModel, Architecture, RequiredText, ResourceId
+    from ..url_safety import validate_public_http_url
 else:
     from models import ApiModel, Architecture, RequiredText, ResourceId
+    from url_safety import validate_public_http_url
 
 # 安装说明统一文案：联想商店只提供安装包，不提供静默安装参数。
 INSTALLATION_NOTES = "安装包由联想应用商店提供，下载完成后按安装向导操作。"
@@ -39,51 +43,26 @@ IconUrl = Annotated[str, Field(min_length=8, max_length=1024, pattern=r"^https?:
 IconBackground = Annotated[str, Field(pattern=r"^#[0-9a-fA-F]{6}$")]
 MinimumWindows = Annotated[str, Field(pattern=r"^(7|8|8\.1|10|11)$")]
 
-# 详情截图/封面直连 CDN 白名单：只允许 https 的联想 CDN 子域（与图片代理使用的是同一组 CDN）。
-ALLOWED_IMAGE_DOMAIN_SUFFIXES: tuple[str, ...] = (".lenovo.com.cn", ".lenovomm.cn", ".gtimg.com")
-# 详情图片地址：优先联想 CDN 绝对 https 地址，否则回退本后端 /api/v1/store/lenovo/ 相对代理路径。
+# 详情图片地址：优先安全的公网 http(s) 绝对地址（任意 CDN 子域），否则回退本后端
+# /api/v1/store/lenovo/ 相对代理路径。不再维护固定 CDN 域名白名单。
 ImageUrl = Annotated[str, Field(min_length=1, max_length=1024)]
 _STORE_RELATIVE_PREFIX = "/api/v1/store/lenovo/"
 
 
 def cdn_image_url(value: Any) -> str | None:
-    """把联想 CDN 原图地址规范化为可直连的 https 绝对地址；不满足安全条件返回 ``None``。
+    """把联想图片地址规范化为可直连的公网 http(s) 绝对地址；不安全时返回 ``None``。
 
-    必须同时满足：``https`` scheme、有 host、无用户信息、无空白/控制字符，且 host 落在
-    :data:`ALLOWED_IMAGE_DOMAIN_SUFFIXES`（``*.lenovo.com.cn`` / ``*.lenovomm.cn`` /
-    ``*.gtimg.com``）的子域内。这里不做 http→https 升级：http 地址一律视为不可直连，由调用方
-    回退后端代理路径（代理本身会再校验一次 host 白名单）。
+    不再要求域名属于联想 CDN 白名单：只要满足“安全的公网 http(s) 地址”即可（无 userinfo、
+    非 localhost/内网后缀、非私有/回环 IP 字面量、无控制字符，见
+    :func:`Backend.url_safety.validate_public_http_url`）。http 与 https 都允许，不做
+    http→https 升级，避免把只支持 http 的 CDN 改坏；不合格地址由调用方回退后端代理路径。
     """
 
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text or len(text) > 1024 or any(ord(character) < 32 for character in text):
-        return None
-    if any(character.isspace() for character in text):
-        return None
-    try:
-        parsed = urlsplit(text)
-        parsed.port
-    except ValueError:
-        return None
-    if parsed.scheme.casefold() != "https" or not parsed.hostname:
-        return None
-    if parsed.username is not None or parsed.password is not None:
-        return None
-    host = parsed.hostname.casefold()
-    if not host:
-        return None
-    if not any(
-        host.endswith(suffix) and len(host) > len(suffix)
-        for suffix in ALLOWED_IMAGE_DOMAIN_SUFFIXES
-    ):
-        return None
-    return text
+    return validate_public_http_url(value, max_length=1024)
 
 
 def _validate_image_url(value: str) -> str:
-    """校验详情图片地址：CDN 绝对 https 地址，或本后端联想相对代理路径。"""
+    """校验详情图片地址：安全的公网 http(s) 绝对地址，或本后端联想相对代理路径。"""
 
     if value.startswith(_STORE_RELATIVE_PREFIX):
         if len(value) <= 512 and not any(
@@ -91,10 +70,10 @@ def _validate_image_url(value: str) -> str:
         ):
             return value
         raise ValueError("图片代理地址必须是 /api/v1/store/lenovo/ 下的相对路径")
-    if cdn_image_url(value) is not None:
+    if validate_public_http_url(value, max_length=1024) is not None:
         return value
     raise ValueError(
-        "图片地址必须是联想 CDN 绝对 https 地址，或 /api/v1/store/lenovo/ 相对代理路径"
+        "图片地址必须是安全的公网 http(s) 地址，或 /api/v1/store/lenovo/ 相对代理路径"
     )
 
 
@@ -253,8 +232,10 @@ class StoreSourceInfo(ApiModel):
     name: RequiredText
     description: RequiredText
     enabled: bool = True
-    # 该源是否支持服务端在线搜索（联想 / 360 为 true，内置精选为 false）；客户端据此决定
-    # 是否显示“在线搜索”入口，与 enabled 无关。
+    # 搜索方式由服务端下发：``catalog`` = 目录是完整列表，客户端本地搜索；``api`` = 目录只是
+    # 子集，客户端必须调用服务端搜索 API。新客户端优先读它，旧客户端回退 ``online_search``。
+    search_mode: Literal["catalog", "api"] = "catalog"
+    # 该源是否支持服务端在线搜索（旧的兼容字段，新客户端优先 search_mode）；内置精选为 false。
     online_search: bool = False
     app_count: Annotated[int | None, Field(ge=0)] = None
     is_default: bool = False
@@ -273,7 +254,6 @@ class StoreSourcesResponse(ApiModel):
 
 
 __all__ = [
-    "ALLOWED_IMAGE_DOMAIN_SUFFIXES",
     "INSTALLATION_NOTES",
     "StoreAppDetails",
     "StoreAppSummary",

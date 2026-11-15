@@ -256,7 +256,7 @@ class CatalogServer:
             return self._ok(request, {"downloadUrls": []})
         if path == "/searchcontent/fusion/v2/app_search":
             return self._json(request, self.search_payload)
-        # 图片代理（任意白名单域名路径都返回一张 png）。
+        # 图片代理（任意安全公网图片地址都返回一张 png；不再有域名白名单）。
         self.image_requests.append(request)
         return httpx2.Response(
             200,

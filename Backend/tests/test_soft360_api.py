@@ -286,8 +286,10 @@ class SourcesApiTests(unittest.TestCase):
             )
             self.assertTrue(soft360["enabled"])
             self.assertFalse(soft360["is_default"])
-            # 在线搜索由服务端下发：360 支持，内置精选不支持。
+            # 搜索方式由服务端下发：360 目录是热门子集 → api（必须服务端搜索）；online_search 兼容。
+            self.assertEqual(soft360["search_mode"], "api")
             self.assertTrue(soft360["online_search"])
+            self.assertEqual(items["builtin"]["search_mode"], "catalog")
             self.assertFalse(items["builtin"]["online_search"])
             self.assertEqual(soft360["app_count"], 5111)
             self.assertTrue(soft360["updated_at"].startswith("2026-11-14T09:00:00"))

@@ -25,6 +25,12 @@ public static class AppCatalogService
     private const string Soft360SourceId = Soft360CatalogMapper.SourceId;
     private const int StoreSearchLimit = 30;
 
+    /// <summary>搜索模式（服务端 <c>/sources</c> 的 <c>search_mode</c>）：目录完整，客户端本地搜索即可。</summary>
+    public const string SearchModeCatalog = "catalog";
+
+    /// <summary>搜索模式（服务端 <c>/sources</c> 的 <c>search_mode</c>）：目录只是子集，搜索必须调用服务端 API。</summary>
+    public const string SearchModeApi = "api";
+
     /// <summary>当前后端服务地址（设置中可自定义，始终以 / 结尾）。</summary>
     public static string BackendBaseUrl
     {
@@ -98,6 +104,14 @@ public static class AppCatalogService
     /// 切换服务端地址时清空（不同服务端能力可能不同）。用并发字典保证多线程读取安全。
     /// </summary>
     private static readonly ConcurrentDictionary<string, bool> OnlineSearchCapabilities = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 服务端 <c>GET /api/v1/sources</c> 下发的搜索模式（按源 ID，值只会是
+    /// <see cref="SearchModeCatalog"/> 或 <see cref="SearchModeApi"/>）。写入来自 <see cref="GetSourcesAsync"/>，
+    /// 读取来自 <see cref="CurrentSearchMode"/>；切换服务端地址时清空（不同服务端可能使用不同搜索方式）。
+    /// 旧服务端没有 <c>search_mode</c> 时不记录，读取时回退到按源判断。
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, string> SearchModes = new(StringComparer.OrdinalIgnoreCase);
     private static readonly List<Task> IconTasks = new();
 
     private static bool _initialized;
@@ -155,17 +169,64 @@ public static class AppCatalogService
     public static bool IsStoreCatalogSource => IsLenovoSource || IsSoft360Source;
 
     /// <summary>
-    /// 当前软件源是否支持在线搜索（软件列表页空结果时的“在…在线搜索”按钮）。
+    /// 当前软件源由服务端下发的搜索模式（<c>catalog</c> / <c>api</c>）；旧服务端没有 <c>search_mode</c>
+    /// （或尚未从服务端加载过）时为 <see langword="null"/>。页面据此区分“服务端权威值”与“按源回退”。
+    /// </summary>
+    public static string? ServerSearchMode
+    {
+        get
+        {
+            if (SearchModes.TryGetValue(SourceIdOf(CurrentSource), out var mode))
+            {
+                return mode;
+            }
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 当前软件源生效的搜索模式：<see cref="SearchModeCatalog"/>（目录完整，客户端本地搜索）或
+    /// <see cref="SearchModeApi"/>（目录只是子集，搜索走服务端 API）。
     /// <para>
-    /// 能力由服务端 <c>GET /api/v1/sources</c> 每项的 <c>online_search</c> 字段下发（<see cref="GetSourcesAsync"/>
-    /// 调用时记录到内存能力表）：服务端给出值就以服务端为准。旧服务端没有该字段、或尚未从服务端加载过时，
-    /// 回退到按源判断（联想应用商店 / 360 软件管家 = 支持，内置精选 = 不支持），与旧版客户端行为一致。
+    /// 服务端下发值优先；旧服务端缺失 <c>search_mode</c> 时回退到按源判断（联想应用商店 / 内置精选 = catalog，
+    /// 360 软件管家 = api），因此未加载、加载中或切换软件源期间返回值都稳定。
+    /// </para>
+    /// </summary>
+    public static string CurrentSearchMode => ServerSearchMode ?? FallbackSearchMode(CurrentSource);
+
+    /// <summary>当前软件源是否必须调用服务端搜索 API（目录只是各分类热门子集，本地过滤会漏掉目录外软件）。</summary>
+    public static bool UsesApiSearch => CurrentSearchMode == SearchModeApi;
+
+    /// <summary>当前软件源是否可以在完整目录上本地搜索（联想应用商店 / 内置精选）。</summary>
+    public static bool UsesCatalogSearch => !UsesApiSearch;
+
+    /// <summary>
+    /// 旧服务端没有 <c>search_mode</c> 时按源回退：联想应用商店 / 内置精选的目录完整（catalog），
+    /// 360 软件管家的目录只是热门子集（api）。
+    /// </summary>
+    private static string FallbackSearchMode(AppSourcePreference source) =>
+        source == AppSourcePreference.Soft360 ? SearchModeApi : SearchModeCatalog;
+
+    /// <summary>
+    /// 当前软件源是否需要“在线搜索”按钮（软件列表页空结果时的手动入口）。
+    /// <para>
+    /// 服务端下发 <c>search_mode</c> 后搜索方式完全由它决定：<c>catalog</c> 模式目录完整（本地搜索即可），
+    /// <c>api</c> 模式由搜索框自动调用服务端搜索 API，两者都不再需要旧式“在线搜索”按钮，因此返回
+    /// <see langword="false"/>。<c>online_search</c> 只在旧服务端（没有 <c>search_mode</c>）时作为兼容回退：
+    /// 服务端给出值就以服务端为准，否则按源判断（联想 / 360 = 支持，内置精选 = 不支持）。
     /// </para>
     /// </summary>
     public static bool OnlineSearchAvailable
     {
         get
         {
+            // 新服务端：搜索模式是权威值，catalog / api 两种模式都不需要旧式按钮。
+            if (ServerSearchMode is not null)
+            {
+                return false;
+            }
+
             AppSourcePreference source = CurrentSource;
             if (OnlineSearchCapabilities.TryGetValue(SourceIdOf(source), out bool value))
             {
@@ -361,9 +422,10 @@ public static class AppCatalogService
             SetCatalogUpdatedAt(null);
             _lastNetworkError = null;
             SetCacheState(CatalogCacheSource.None, null);
-            // 不同服务端的软件源能力可能不同：清空在线搜索能力表，等下一次 /sources 加载重新填充；
-            // 清空后 OnlineSearchAvailable 回退到按源判断，不会误用旧服务端的标志。
+            // 不同服务端的软件源能力可能不同：清空在线搜索能力表与搜索模式表，等下一次 /sources 加载重新填充；
+            // 清空后 OnlineSearchAvailable / CurrentSearchMode 回退到按源判断，不会误用旧服务端的标志。
             OnlineSearchCapabilities.Clear();
+            SearchModes.Clear();
             BackendChanged?.Invoke(null, EventArgs.Empty);
             CatalogChanged?.Invoke(null, EventArgs.Empty);
             AppLogService.Info($"已切换后端服务地址：{normalized}。");
@@ -376,8 +438,11 @@ public static class AppCatalogService
 
     /// <summary>
     /// 从后端 <c>GET /api/v1/sources</c> 动态发现软件源。返回服务端给出的全部源（可能包含客户端不认识的 ID）。
-    /// 同时记录每个源的 <c>online_search</c> 能力供 <see cref="OnlineSearchAvailable"/> 使用
-    /// （旧服务端缺该字段时不记录，读取时回退到按源判断）。
+    /// <para>
+    /// 同时记录每个源的 <c>search_mode</c>（供 <see cref="CurrentSearchMode"/> / <see cref="UsesApiSearch"/>）
+    /// 与 <c>online_search</c>（旧服务端兼容回退，供 <see cref="OnlineSearchAvailable"/>）。
+    /// 旧服务端缺这些字段时不记录，读取时回退到按源判断。
+    /// </para>
     /// 失败时抛出异常，调用方应回退到静态软件源列表。
     /// </summary>
     public static async Task<IReadOnlyList<StoreSourceInfo>> GetSourcesAsync(CancellationToken ct = default)
@@ -385,7 +450,8 @@ public static class AppCatalogService
         EnsureInitialized();
         var response = await GetAsync<StoreSourcesResponse>("sources", ct, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
         var items = new List<StoreSourceInfo>();
-        bool anyCapability = false;
+        bool anyOnlineSearch = false;
+        bool anySearchMode = false;
         foreach (var item in response.Items ?? new List<StoreSourceInfo>())
         {
             if (item is null || string.IsNullOrWhiteSpace(item.Id))
@@ -394,22 +460,37 @@ public static class AppCatalogService
             }
 
             items.Add(item);
+            string sourceId = item.Id.Trim();
             // 线程安全地记住服务端下发的在线搜索能力；旧服务端没有 online_search（null）时不记录。
             if (item.OnlineSearch.HasValue)
             {
-                OnlineSearchCapabilities[item.Id.Trim()] = item.OnlineSearch.Value;
-                anyCapability = true;
+                OnlineSearchCapabilities[sourceId] = item.OnlineSearch.Value;
+                anyOnlineSearch = true;
+            }
+
+            // search_mode 是新契约的权威值：catalog = 目录完整、客户端本地搜索；api = 目录是子集、调用服务端搜索 API。
+            string? searchMode = NormalizeSearchMode(item.SearchMode);
+            if (searchMode is not null)
+            {
+                SearchModes[sourceId] = searchMode;
+                anySearchMode = true;
             }
         }
 
-        if (!anyCapability)
+        if (!anyOnlineSearch)
         {
             // 服务端完全没有下发该字段（旧版本）：清空能力表，让 OnlineSearchAvailable 回退到按源判断，
             // 避免继续沿用更新过的服务端留下的旧标志。
             OnlineSearchCapabilities.Clear();
         }
 
-        if (anyCapability)
+        if (!anySearchMode)
+        {
+            // 同上：旧服务端没有 search_mode，让 CurrentSearchMode 回退到按源判断（联想/内置 catalog、360 api）。
+            SearchModes.Clear();
+        }
+
+        if (anyOnlineSearch)
         {
             AppLogService.Verbose(
                 "服务端在线搜索能力：" + string.Join("，", OnlineSearchCapabilities
@@ -417,7 +498,29 @@ public static class AppCatalogService
                     .Select(pair => $"{pair.Key}={pair.Value}")));
         }
 
+        if (anySearchMode)
+        {
+            AppLogService.Verbose(
+                "服务端搜索模式：" + string.Join("，", SearchModes
+                    .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                    .Select(pair => $"{pair.Key}={pair.Value}")) +
+                $"；当前源生效值 {CurrentSearchMode}" +
+                (ServerSearchMode is null ? "（旧服务端未下发，按源回退）" : string.Empty));
+        }
+
         return items.AsReadOnly();
+    }
+
+    /// <summary>
+    /// 把服务端下发的 <c>search_mode</c> 规范成 <see cref="SearchModeCatalog"/> / <see cref="SearchModeApi"/>；
+    /// 未知值返回 <see langword="null"/>（不记录，读取时按源回退）。
+    /// </summary>
+    private static string? NormalizeSearchMode(string? value)
+    {
+        string text = value?.Trim() ?? string.Empty;
+        if (text.Equals(SearchModeCatalog, StringComparison.OrdinalIgnoreCase)) return SearchModeCatalog;
+        if (text.Equals(SearchModeApi, StringComparison.OrdinalIgnoreCase)) return SearchModeApi;
+        return null;
     }
 
     /// <summary>
@@ -1304,10 +1407,14 @@ public static class AppCatalogService
     }
 
     /// <summary>
-    /// 在线搜索（目录之外的补充结果）：联想应用商店调用 <c>/store/lenovo/search</c>，
-    /// 360 软件管家调用 <c>/store/360/search</c>（服务端已覆盖全量目录，可能返回缓存目录之外的软件）。
+    /// 服务端搜索 API：联想应用商店调用 <c>/store/lenovo/search</c>，360 软件管家调用
+    /// <c>/store/360/search</c>（服务端已覆盖全量目录，可能返回缓存目录之外的软件）。
+    /// <para>
+    /// 服务端 <c>/sources</c> 下发 <c>search_mode=api</c> 的源（360 软件管家）由列表页搜索框自动调用，
+    /// 作为该源的主要搜索方式；<c>catalog</c> 模式的源只把它用于旧服务端兼容的“在线搜索”按钮。
     /// 返回应用摘要并登记“已知应用表”，后续详情/下载仍能按 <see cref="AppItem.Id"/> 找到 <c>soft_id</c>。
-    /// 内置精选源没有在线搜索能力，返回空列表。
+    /// 内置精选源没有搜索 API，返回空列表。
+    /// </para>
     /// </summary>
     public static async Task<IReadOnlyList<AppItem>> SearchStoreAsync(string query, CancellationToken ct = default)
     {

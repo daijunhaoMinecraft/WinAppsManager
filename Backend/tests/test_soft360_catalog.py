@@ -3,7 +3,7 @@
 覆盖：
 
 - 24 分类固定清单、分页抓取（``pages_per_category``）、空数组提前结束；
-- 按 ``soft_id`` 去重、首个出现的分类作为归属分类、分类计数、logo http→https、
+- 按 ``soft_id`` 去重、首个出现的分类作为归属分类、分类计数、logo 优先大图且保留 http(s)、
   描述截断、大小/评分解析；
 - 分类抓取失败重试一次后整轮失败（不发布半成品）；
 - 内存/磁盘快照：``refresh_now`` 写 ``catalog.json``、``preload`` 只读磁盘、``get`` 只读缓存
@@ -213,7 +213,7 @@ class CatalogBuilderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_soft_id["1010"].architectures, ["x86", "x64"])
         self.assertEqual(by_soft_id["1010"].minimum_windows, "7")
         self.assertEqual(by_soft_id["1010"].icon_proxy_url, "/api/v1/store/360/apps/1010/icon")
-        # 目录列表里的 http logo 统一规范化为 https（优先 72 大图）。
+        # 目录列表里的 logo 优先 72 大图，http/https 按上游原样保留（不再强制升级 https）。
         self.assertEqual(by_soft_id["1010"].icon_url, "https://p0.qhimg.com/1010/72.png")
         self.assertEqual(len(snapshot.categories), 24)
         counts = {category.id: category.count for category in snapshot.categories}
