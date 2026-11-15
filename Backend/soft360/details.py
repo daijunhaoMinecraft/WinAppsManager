@@ -613,8 +613,32 @@ def _iter_url_strings(value: Any):
             yield from _iter_url_strings(item)
 
 
+def _pdown_trailing_url(value: Any) -> str | None:
+    """从 pdown:// 描述串里取末尾直链。
+
+    360 的 pdown 描述串形如 ``pdown://p2=...|b2=...|http://cdn/...msu``，
+    前缀是下载器参数，只有末尾的 http(s) 地址是可直接下载的安装包地址。
+    含多个直链时取最后一个有效安装包地址。
+    """
+
+    trailing: str | None = None
+    for text in _iter_url_strings(value):
+        stripped = text.strip()
+        if not stripped.casefold().startswith("pdown://"):
+            continue
+        for candidate in _URL_PATTERN.findall(stripped):
+            normalized = _normalize_download_url(candidate)
+            if normalized is not None:
+                trailing = normalized
+    return trailing
+
+
 def _select_download_url(down: Mapping[str, Any]) -> str | None:
-    """按 p2p → multi_urls → multi_down 顺序收集候选，https 优先，只接受安装包后缀。"""
+    """按 p2p → multi_urls → multi_down 顺序收集候选，https 优先，只接受安装包后缀；pdown 描述串只取末尾直链。"""
+
+    pdown_trailing = _pdown_trailing_url(down.get("p2p"))
+    if pdown_trailing is not None:
+        return pdown_trailing
 
     https_candidates: list[str] = []
     http_candidates: list[str] = []

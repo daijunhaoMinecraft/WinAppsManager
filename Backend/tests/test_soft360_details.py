@@ -479,7 +479,7 @@ class DownloadResolutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(release.id, "soft360-1010-3.9.12")
         self.assertEqual(requests, 1)
 
-    async def test_p2p_pdown_descriptor_embeds_the_360_cdn_url(self):
+    async def test_p2p_pdown_descriptor_uses_trailing_url(self):
         info = info_payload()
         down = info["edition_info"]["default_edition"]["down"]["default"]
         down["p2p"] = (
@@ -491,7 +491,7 @@ class DownloadResolutionTests(unittest.IsolatedAsyncioTestCase):
         release, _requests = await self._resolve(info)
         self.assertEqual(
             str(release.download_url),
-            "https://cdn-download.soft.360.cn/softmanager-installation/20260101/1010_x.exe",
+            "https://vendor.example.com/setup.exe",
         )
 
     async def test_p2p_pdown_descriptor_extracts_trailing_msu_url(self):
