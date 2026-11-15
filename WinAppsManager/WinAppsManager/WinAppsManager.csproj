@@ -18,6 +18,7 @@
         <!-- 32 位（x86）Windows 用户可通过 dotnet publish -r win-x86 获得对应构建。 -->
         <RuntimeIdentifiers>win-x64;win-x86;win-arm64</RuntimeIdentifiers>
         <SelfContained>false</SelfContained>
+        <Version>1.1.0</Version>
         <AssemblyName>WinAppsManager</AssemblyName>
         <RootNamespace>WinAppsManager</RootNamespace>
     </PropertyGroup>

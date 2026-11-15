@@ -62,7 +62,6 @@ WinAppsManager/
         UninstallVerifier.cs              卸载后按注册表/包核对是否真的移除
         LeftoverScanner.cs                残留扫描：注册表 + 文件夹 + 快捷方式 + MSI
         LeftoverCleaner.cs                按类型分派残留删除（注册表 / 文件）
-        AutoLeftoverCleaner.cs            卸载成功后自动清理默认安全残留
         RegistryLeftoverCleaner.cs        勾选注册表残留的受控删除
         FileLeftoverCleaner.cs            勾选文件/文件夹/快捷方式的受控删除
         ShortcutResolver.cs               通过 WScript.Shell 在 STA 线程解析 .lnk 目标
@@ -382,7 +381,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.3 卸载软件
 
-当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。卸载结束后刷新已安装软件列表判断是否还存在，确认不存在后自动清理默认安全残留；需要清理安装目录、AppData、快捷方式等危险项时，用户可点击“强制卸载”手动确认。
+当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。卸载结束后刷新已安装软件列表判断是否还存在；确认已从列表移除后自动打开 `DeepCleanWindow`（“强制卸载”），由用户手动勾选残留项，不再自动删除任何残留。
 
 - `InstalledApplicationProvider` 读取 `HKLM` 的 64/32 位视图和 `HKCU` 的 `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`。
 - 分类在 `InstalledApplication.Classify`（四个视图）：`SystemComponent=1` → 系统组件；`ParentKeyName` 非空、`NoRemove=1`、`ReleaseType` 为更新/修补程序 → 隐藏组件；其余 → 应用程序；商店应用由 `StoreApplicationProvider` 单独标记。只丢弃没有 `DisplayName` 的条目，没有 `UninstallString` 的普通应用程序也丢弃，系统/隐藏组件保留（仍可用于深度清理）。
@@ -415,7 +414,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 危险分组（安装目录、用户数据目录、快捷方式、MSI 安装数据库）节点带 `IsRisky`，构造后 `IsChecked = false`，显示“谨慎”徽章并默认不勾选；工具栏“全选”会勾上它们，等于用户显式确认。注册表安全分组默认勾选。
 - 删除由 `LeftoverCleaner` 分派并逐条重校验：注册表侧（`RegistryLeftoverCleaner`）只允许卸载项、App Paths、Services 单层子键、Run/RunOnce/`StartupApproved` 单个值、`Installer\Products` 或 `UserData\<SID>\Products` 单层产品键、`Installer\Folders` 单个值、`AppModel\PolicyCache|SystemAppData\<包族名>`（`StoreStateKey`，仅 HKCU），以及 `SOFTWARE` 下至少两级的软件数据键；`Microsoft`、`Classes`、`Policies`、`Wow6432Node` 等受保护分支一律跳过。文件侧（`FileLeftoverCleaner`）按“先文件、后空目录”：文件必须位于节点 `RootPath` 内且 `RootPath` 通过根目录校验；文件夹只有无子项时才删（`Directory.Delete(recursive:false)`），删文件后清理变空的上级目录，不会连带删除未勾选文件。盘根、`Windows`、`System32`、`Program Files` 本身、`%TEMP%` 和用户个人文件夹一律拒绝。
 - 卸载结果文案保持简短（“已卸载 / 注册表中仍存在该项目 / 卸载失败 / 卸载已取消”），详细原因看退出码或汇总；批次结束或取消后刷新注册表并显示汇总；卸载程序弹出向导时用户需自行操作，本应用只等待。流程不做撤销、回滚或恢复点，不会自动重启，3010/1641 只提示需要重启。
-- **自动残留清理**：批次结束且刷新列表确认软件不存在（`UninstallResult.IsSuccess && RegistryRemoved == true`，**不再要求退出码为 0**）时，`UninstallPage.AutoCleanAfterUninstallAsync` 调用 `AutoLeftoverCleaner.CleanAsync`，只删除 `LeftoverScanner` 默认勾选且非 `IsRisky` 的安全残留（注册表卸载项/启动项等），防止残留触发自动重装；安装目录、AppData、快捷方式、MSI 记录等危险项仍由用户点“强制卸载”手动确认。自动清理失败只写日志和状态，不影响卸载结果。
+- **卸载后手动深度清理**：批次结束且刷新列表确认软件不存在（`UninstallResult.IsSuccess && RegistryRemoved == true`，**不再要求退出码为 0**）时，`UninstallPage.OpenDeepCleanAfterUninstallAsync` 自动打开 `DeepCleanWindow`，不自动删除任何残留；安全项默认勾选，安装目录/AppData/快捷方式/MSI 等危险项保持默认不勾选，由用户逐项确认后点击删除。一个批次卸载多个软件时逐个打开清理窗口；用户关闭窗口即表示跳过该软件的残留清理。
 
 ### 6.4 下载流程
 

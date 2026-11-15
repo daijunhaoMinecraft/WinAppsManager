@@ -732,7 +732,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         await RefreshAfterUninstallAsync(progress.Summary);
         if (confirmedRemoved.Length > 0)
         {
-            await AutoCleanAfterUninstallAsync(confirmedRemoved, progress.Summary);
+            await OpenDeepCleanAfterUninstallAsync(confirmedRemoved, progress.Summary);
         }
     }
 
@@ -773,59 +773,64 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
     /// 自动执行安全残留清理，避免残留项把软件重新装回来；危险项仍留给“强制卸载”手动确认，
     /// 避免自动删除安装目录/用户数据。
     /// </summary>
-    private async Task AutoCleanAfterUninstallAsync(IReadOnlyList<InstalledApplication> applications, string batchSummary)
+    /// <summary>
+    /// 卸载批次确认软件已从刷新后的安装列表移除后，自动打开“强制卸载”窗口，
+    /// 让用户逐项选择要清理的残留。这里不再自动删除任何注册表项或文件；
+    /// 安全项默认勾选、安装目录/AppData/快捷方式等危险项仍默认不勾选。
+    /// </summary>
+    private async Task OpenDeepCleanAfterUninstallAsync(
+        IReadOnlyList<InstalledApplication> applications, string batchSummary)
     {
         if (applications.Count == 0)
         {
             return;
         }
 
-        _statusText = $"{batchSummary} 已刷新列表确认卸载，正在自动清理安全残留…";
+        var owner = Window.GetWindow(this);
+        if (owner is null)
+        {
+            return;
+        }
+
+        _statusText = $"{batchSummary} 已确认卸载，正在打开强制卸载以供选择残留…";
         UpdateChrome();
         AppLogService.Info(
-            $"开始卸载后自动深度清理（刷新列表确认已卸载）：{applications.Count} 个软件" +
+            $"卸载后自动打开强制卸载：{applications.Count} 个软件" +
             $"（{DescribeApplications(applications)}）。");
 
         int deleted = 0;
-        int failed = 0;
         int errors = 0;
         foreach (var application in applications)
         {
             try
             {
-                var summary = await AutoLeftoverCleaner.CleanAsync(application);
-                deleted += summary.Deleted;
-                failed += summary.Failed;
                 AppLogService.Info(
-                    $"自动深度清理完成：{application.Name}（{application.Id}），删除 {summary.Deleted} 项，" +
-                    $"失败 {summary.Failed} 项。");
+                    $"打开卸载后深度清理：{application.Name}（{application.Id}），来源={application.SourceText}。");
+                var dialog = new DeepCleanWindow(application) { Owner = owner };
+                dialog.ShowDialog();
+                deleted += dialog.DeletedCount;
             }
             catch (Exception exception) when (exception is not OutOfMemoryException)
             {
                 errors++;
                 AppLogService.Warn(
-                    $"自动深度清理失败：{application.Name}（{application.Id}），" +
+                    $"卸载后打开强制卸载失败：{application.Name}（{application.Id}），" +
                     $"{exception.GetType().Name}：{exception.Message}",
                     exception);
             }
         }
 
-        string text = $"{batchSummary} 刷新列表确认已卸载，自动深度清理：删除 {deleted} 项残留";
-        if (failed > 0)
-        {
-            text += $"，{failed} 项删除失败";
-        }
-
+        await LoadApplicationsAsync();
+        string text = $"{batchSummary} 已确认卸载，强制卸载清理：手动删除 {deleted} 项残留";
         if (errors > 0)
         {
-            text += $"，{errors} 个软件扫描失败";
+            text += $"，{errors} 个软件打开失败";
         }
 
         _statusText = text + "。";
         AppLogService.Info(text + "。");
         UpdateChrome();
     }
-
     /// <summary>日志用的简短软件清单：最多列出 5 个名称，避免一次卸载很多时日志行过长。</summary>
     private static string DescribeApplications(IReadOnlyList<InstalledApplication> applications)
     {
