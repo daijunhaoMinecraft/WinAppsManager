@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v1.0.0"
+        required: true
+        default: "v1.0.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.rid }} self-contained
+    runs-on: windows-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        rid: [win-x64, win-x86]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Validate tag
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Invalid release tag '$tag'; expected e.g. v1.0.0"
+          }
+
+      - name: Publish self-contained client
+        shell: pwsh
+        run: |
+          dotnet publish WinAppsManager/WinAppsManager/WinAppsManager.csproj `
+            -c Release `
+            -f net6.0-windows7.0 `
+            -r ${{ matrix.rid }} `
+            --self-contained true `
+            -p:PublishReadyToRun=false `
+            -p:PublishTrimmed=false `
+            -o publish/${{ matrix.rid }}
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.tag }}"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $name = "WinAppsManager-$tag-${{ matrix.rid }}-selfcontained.zip"
+          Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath "release/$name" -CompressionLevel Optimal
+          Get-Item "release/$name" | Select-Object Name, Length
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: release/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  create-release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Validate and list assets
+        run: |
+          tag="${{ inputs.tag }}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+          ls -lh release-assets
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ inputs.tag }}"
+          notes=$(cat <<'EOF'
+          Windows 7 SP1–11 自包含版，无需安装 .NET 6 Desktop Runtime。
+
+          - `win-x64-selfcontained`：64 位版本
+          - `win-x86-selfcontained`：32 位版本
+
+          下载对应 zip，解压后运行 `WinAppsManager.exe` 即可。客户端默认连接在线服务端，
+          也可以在“设置 → 服务端地址”中改为自建后端。
+          EOF
+          )
+          gh release create "$tag" release-assets/*.zip \
+            --target "$GITHUB_SHA" \
+            --title "WinAppsManager $tag" \
+            --notes "$notes" \
+            --latest

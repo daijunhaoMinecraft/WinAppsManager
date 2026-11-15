@@ -554,6 +554,11 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 默认不启动客户端做额外冒烟测试，也不把临时截图、UI 自动化脚本提交到仓库。仅在用户明确要求或改动涉及无法自动验证的导航/XAML 运行时行为时，做一次最小手动检查并在完成后关闭客户端。
 
+### 7.4 GitHub Actions
+
+- `.github/workflows/build.yml`：每次 push（所有分支）和 pull request 构建 WPF 客户端，并在 Ubuntu + Python 3.12 上跑后端 unittest；客户端构建产物保留 7 天。
+- `.github/workflows/release.yml`：仅手动触发，输入 `tag`（默认 `v1.0.0`），构建 `win-x64` / `win-x86` 自包含版本（内置 .NET 6 Desktop Runtime），压缩成 zip 并创建 GitHub Release。
+- 发布版本不需要目标机器安装 .NET Runtime；发布 workflow 需要 `contents: write`，标签必须符合 `vX.Y.Z` 格式。
 ## 8. 常见任务配方
 
 ### 8.1 新增后端软件
@@ -645,10 +650,10 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 安装包验证按容器类型进行（`.exe` 查 MZ+PE，`.msi` 查 OLE，`.msu` 查 CAB `MSCF`，`.msix/.msixbundle/.appx` 查 ZIP），并可选校验 SHA256；没有代码签名验证。
 - 内存占用下限由 WPF + iNKORE 主题决定：实测启动后私有内存约 116 MB / 工作集约 192 MB；去掉 `ui:XamlControlsResources` 可降到约 99 MB（≈17 MB 是主题字典）。再往下压只有换主题或改用 R2R/裁剪，属于产品级取舍。
 - 45 款目录中声明 x86 安装包的只有 13 款（QQ、微信、7-Zip、Telegram、VLC、Firefox、OBS Studio、Notepad++、PowerShell 7、GitHub CLI、Rocket.Chat、Ferdium、Rufus）；仅声明兼容 Win7 的有 4 款（微信、7-Zip、Telegram、VLC）；32 位系统看不到只提供 x64 的软件。
-- **后端无法在 Windows 7 上原生运行**：要求 Python 3.11+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接本机 `127.0.0.1:8080`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 上目前用不到依赖后端的目录/下载功能（卸载与设置可离线使用）。
+- **后端无法在 Windows 7 上原生运行**：要求 Python 3.11+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接在线服务端 `https://winapps.theconsole.top/`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 也能使用目录/下载功能（卸载与设置可离线使用）。
 - 联想源依赖外部网络与联想接口可用性：目录首次抓取约 28 个请求（约 1.5–2 秒），接口变更/限流会让联想源退化为 502/504 或使用陈旧快照；图片直连联想 CDN 需要正常 UA，联想 CDN 对 curl UA 返回 403。内置源默认只启用 Clash Verge Rev 与 Telegram（`builtin.app_ids`），其余 43 款不抓取版本。
 - 自定义服务端地址会让客户端缓存按服务端 URL 隔离（旧服务端的目录/图标缓存不会复用）；远程服务端需要自行处理鉴权/暴露风险，默认只监听 127.0.0.1。
-- WPF 客户端无跨平台支持；同一 net6 构建支持 Windows 7–11，Windows 7/8 没有商店应用（界面会提示），Windows 10/11 自动可用；需要 .NET 6 Desktop Runtime，且 net6 已 EOL、无安全更新。
+- WPF 客户端无跨平台支持；同一 net6 构建支持 Windows 7–11，Windows 7/8 没有商店应用（界面会提示），Windows 10/11 自动可用；框架依赖构建或开发运行需要 .NET 6 Desktop Runtime；GitHub Release 提供的自包含 zip 已包含运行时，目标机器无需安装，但 net6 已 EOL、无安全更新。
 
 ## 11. 协作方式
 

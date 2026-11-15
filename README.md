@@ -2,6 +2,8 @@
 
 Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 软件。软件源由服务端统一下发，默认包含联想应用商店、360 软件管家与内置精选，新增来源只需在服务端添加。
 
+[![Build](https://github.com/daijunhaoMinecraft/WinAppsManager/actions/workflows/build.yml/badge.svg)](https://github.com/daijunhaoMinecraft/WinAppsManager/actions/workflows/build.yml) [![Latest Release](https://img.shields.io/github/v/release/daijunhaoMinecraft/WinAppsManager)](https://github.com/daijunhaoMinecraft/WinAppsManager/releases/latest)
+
 ![软件列表](docs/screenshots/01-apps-list.png)
 
 ## 功能
@@ -33,9 +35,16 @@ Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 
 
 ## 下载与运行
 
-仓库当前为私有，暂未提供预编译安装包；可以从源码构建运行。
+### 1. 下载自包含版本
 
-### 1. 可选：本地启动后端
+从 [GitHub Releases](https://github.com/daijunhaoMinecraft/WinAppsManager/releases/latest) 下载自包含版本：
+
+- `WinAppsManager-*-win-x64-selfcontained.zip`：64 位，适用于 Windows 7 SP1–11
+- `WinAppsManager-*-win-x86-selfcontained.zip`：32 位，适用于 Windows 7 SP1–11
+
+压缩包已内置 .NET 6 Desktop Runtime，**目标机器无需安装 .NET Runtime**；解压后运行 `WinAppsManager.exe` 即可。GitHub Actions 每次推送都会构建客户端并测试后端；发布版本由手动触发 `Release` workflow 构建并上传。
+
+### 2. 可选：本地启动后端
 
 要求 Python 3.11+（推荐 3.12；`httpx2 2.16` 要求 Python 3.11+）。
 
@@ -47,7 +56,7 @@ Backend\.venv\Scripts\python.exe Backend\main.py
 
 后端默认监听 `http://127.0.0.1:8080`，接口文档 <http://127.0.0.1:8080/docs>。客户端默认连接在线服务端 `https://winapps.theconsole.top/`，本地运行时无需额外启动后端；需要本地开发或自建服务时可在设置中切换服务端地址。
 
-### 2. 启动客户端
+### 3. 启动客户端
 
 要求 .NET SDK 8+；运行客户端需要 .NET 6 Desktop Runtime。
 
