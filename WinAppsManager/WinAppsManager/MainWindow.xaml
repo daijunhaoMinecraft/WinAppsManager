@@ -26,22 +26,22 @@
         <ui:NavigationView.MenuItems>
             <ui:NavigationViewItem x:Name="SoftwareNavigationItem" Content="软件列表" Tag="1" IsExpanded="True">
                 <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.AllApps}"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Apps_20_Regular}"/>
                 </ui:NavigationViewItem.Icon>
             </ui:NavigationViewItem>
             <ui:NavigationViewItem x:Name="DownloadsNavigationItem" Content="下载中心" Tag="3">
                 <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Download}"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowDownload_24_Regular}"/>
                 </ui:NavigationViewItem.Icon>
             </ui:NavigationViewItem>
             <ui:NavigationViewItem x:Name="UninstallNavigationItem" Content="卸载软件" Tag="4" IsExpanded="True">
                 <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Delete}"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"/>
                 </ui:NavigationViewItem.Icon>
             </ui:NavigationViewItem>
             <ui:NavigationViewItem x:Name="SettingsNavigationItem" Content="设置" Tag="2">
                 <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Settings}"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Settings_20_Regular}"/>
                 </ui:NavigationViewItem.Icon>
             </ui:NavigationViewItem>
         </ui:NavigationView.MenuItems>

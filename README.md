@@ -11,7 +11,7 @@ Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 
 - **下载中心**：分段并发下载、实时进度和速度、取消/重试/打开安装包。
 - **卸载与强制卸载**：读取 Windows 卸载注册表和 Microsoft Store/MSIX 应用，分类、搜索、批量卸载；正常卸载退出码为 0 且确认已卸载后，自动清理默认安全残留（如卸载登记项、启动项）。也可点击“强制卸载”手动扫描注册表、安装目录、AppData、快捷方式和 MSI 记录，危险项默认不勾选，逐条校验后删除。
 - **主题与设置**：浅色/深色/跟随系统，自定义下载目录、线程数、代理和软件源。
-- **系统兼容**：Win7 SP1 兼容构建（.NET 6）与 Win10 2004+ 完整构建。
+- **系统兼容**：Win7 SP1 兼容构建（.NET 6）与 Win10 2004+ 完整构建；内置 Fluent System Icons 图标字体，Win7 未安装 Segoe Fluent Icons 也不会出现方框图标。
 
 ## 截图
 
@@ -84,6 +84,7 @@ Win7 SP1 使用 `net6.0-windows7.0`（不含商店应用）；Win10 2004+ / 11 �
 本项目采用自定义《WinAppsManager 非商业源代码许可协议 1.0》：允许个人学习、研究、非商业使用与修改；**禁止商业使用、倒卖、销售、付费分发**。这是 source-available 许可，不是 OSI 认可的开源许可。详见 [LICENSE](LICENSE)。
 
 联想应用商店、360 软件管家的名称、数据、图标与商标归各自权利人，本项目与它们无隶属或背书关系。
+客户端内置的 Fluent System Icons 字体来自 Microsoft `fluentui-system-icons`，使用 MIT 许可证（见 `WinAppsManager/Assets/Fonts/LICENSE.txt`）。
 
 ## 开发文档
 

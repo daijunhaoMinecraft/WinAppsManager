@@ -52,7 +52,7 @@
                     <Border Width="42" Height="42" CornerRadius="10"
                             Background="{DynamicResource Wam.AccentSoftBrush}"
                             VerticalAlignment="Top" Margin="0,0,13,0">
-                        <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Delete}"
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"
                                      FontSize="20"
                                      HorizontalAlignment="Center"
                                      VerticalAlignment="Center"
@@ -204,7 +204,7 @@
 
                         <StackPanel x:Name="EmptyPanel" Visibility="Collapsed"
                                     VerticalAlignment="Center" HorizontalAlignment="Center">
-                            <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.CheckMark}"
+                            <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Checkmark_20_Regular}"
                                          FontSize="26"
                                          HorizontalAlignment="Center"
                                          Foreground="{DynamicResource Wam.SuccessBrush}"/>

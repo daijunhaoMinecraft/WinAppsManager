@@ -11,6 +11,13 @@
                 <ui:XamlControlsResources/>
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- 内置图标字体：Windows 7 没有 Segoe Fluent Icons，避免图标显示为方框。 -->
+            <FontFamily x:Key="Wam.IconFontFamily">pack://application:,,,/WinAppsManager;component/Assets/Fonts/FluentSystemIcons-Regular.ttf#FluentSystemIcons-Regular</FontFamily>
+
+            <Style TargetType="{x:Type ui:FontIcon}">
+                <Setter Property="FontFamily" Value="{StaticResource Wam.IconFontFamily}"/>
+            </Style>
+
             <SolidColorBrush x:Key="Wam.PageBackgroundBrush" Color="#F5F7FA"/>
             <SolidColorBrush x:Key="Wam.CardBackgroundBrush" Color="#FFFFFF"/>
             <SolidColorBrush x:Key="Wam.CardBorderBrush" Color="#E0E5ED"/>

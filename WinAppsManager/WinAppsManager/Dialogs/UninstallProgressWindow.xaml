@@ -48,7 +48,7 @@
                                              HorizontalAlignment="Center"
                                              VerticalAlignment="Center"
                                              Foreground="{DynamicResource Wam.AccentBrush}"/>
-                            <ui:FontIcon x:Name="CompleteIcon" Icon="{x:Static ui:SegoeFluentIcons.CheckMark}"
+                            <ui:FontIcon x:Name="CompleteIcon" Icon="{x:Static ui:FluentSystemIcons.Checkmark_20_Regular}"
                                          FontSize="20" Visibility="Collapsed"
                                          HorizontalAlignment="Center"
                                          VerticalAlignment="Center"

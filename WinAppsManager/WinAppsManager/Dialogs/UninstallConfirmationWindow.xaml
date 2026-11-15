@@ -39,7 +39,7 @@
                     <Border Width="42" Height="42" CornerRadius="10"
                             Background="{DynamicResource Wam.AccentSoftBrush}"
                             VerticalAlignment="Top" Margin="0,0,13,0">
-                        <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Delete}"
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"
                                      FontSize="20"
                                      HorizontalAlignment="Center"
                                      VerticalAlignment="Center"
@@ -62,7 +62,7 @@
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
-                        <ui:FontIcon Icon="{x:Static ui:SegoeFluentIcons.Warning}"
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Warning_20_Regular}"
                                      FontSize="16" Margin="0,2,10,0"
                                      VerticalAlignment="Top"
                                      Foreground="{DynamicResource Wam.DangerBrush}"/>

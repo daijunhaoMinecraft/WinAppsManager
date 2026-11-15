@@ -109,7 +109,7 @@ WinAppsManager/
 
 - 开发机 Windows 10/11（后端要求 Python 3.10+，无法在 Win7 原生运行，见第 10 节）。
 - .NET SDK 8 或 10。客户端双目标：`net6.0-windows7.0`（Windows 7 SP1+，无商店应用；**默认构建/运行目标**，.NET 6 是最后一个官方支持 Windows 7 SP1 的 .NET 版本）与 `net8.0-windows10.0.19041.0`（Win10 2004+，含 WinRT `PackageManager`）；不要降低/删除 net6 目标（已 EOL，`CheckEolTargetFramework=false`），也不要把它改成 .NET Framework（WPF 与依赖包不支持）。
-- 运行需 .NET 6 Desktop Runtime（Win7 SP1 可安装）或 .NET 8 Desktop Runtime。仓库预置了 Rider 运行配置（`.idea/runConfigurations/WinAppsManager (Windows 7 兼容).xml` 默认 net6、`WinAppsManager (Windows 10+).xml` net8；`.idea/` 被 gitignore，只在本机生效）和发布配置（`Properties/PublishProfiles/Win7-x64.pubxml`、`Win7-x86.pubxml` 为框架依赖；`Win7-x64-selfcontained.pubxml`、`Win7-x86-selfcontained.pubxml` 为自包含约 166 MB、目标机免装 .NET 6 Desktop Runtime）。x86 发布（64 位改用 `-r win-x64`）：
+- 运行需 .NET 6 Desktop Runtime（Win7 SP1 可安装）或 .NET 8 Desktop Runtime。客户端随程序嵌入 `Assets/Fonts/FluentSystemIcons-Regular.ttf`（MIT，来自 Microsoft fluentui-system-icons），并通过 `App.xaml` 的 `Wam.IconFontFamily` 隐式样式替换 `ui:FontIcon` 字体；Win7 没有 Segoe Fluent Icons 时图标不会变成方框。图标数据使用 `ui:FluentSystemIcons.*`，不要改回 `SegoeFluentIcons.*`。仓库预置了 Rider 运行配置（`.idea/runConfigurations/WinAppsManager (Windows 7 兼容).xml` 默认 net6、`WinAppsManager (Windows 10+).xml` net8；`.idea/` 被 gitignore，只在本机生效）和发布配置（`Properties/PublishProfiles/Win7-x64.pubxml`、`Win7-x86.pubxml` 为框架依赖；`Win7-x64-selfcontained.pubxml`、`Win7-x86-selfcontained.pubxml` 为自包含约 166 MB、目标机免装 .NET 6 Desktop Runtime）。x86 发布（64 位改用 `-r win-x64`）：
   ```powershell
   dotnet publish WinAppsManager\WinAppsManager\WinAppsManager.csproj -c Release -f net6.0-windows7.0 -r win-x86 --self-contained false -p:PublishProfile=Win7-x86
   ```

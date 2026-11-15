@@ -30,4 +30,12 @@
       <PackageReference Include="iNKORE.UI.WPF.Modern" Version="0.11.0" />
     </ItemGroup>
 
+    <ItemGroup>
+      <!--
+        Windows 7 默认没有 Segoe Fluent Icons / Segoe MDL2 Assets 字体，图标会显示为方框。
+        随程序嵌入开源 MIT 许可的 Fluent System Icons，并在 App.xaml 中作为图标字体使用。
+      -->
+      <Resource Include="Assets\Fonts\FluentSystemIcons-Regular.ttf" />
+    </ItemGroup>
+
 </Project>
