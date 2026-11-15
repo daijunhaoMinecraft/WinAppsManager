@@ -149,7 +149,6 @@ public sealed class InstallerDownloadService
                 "服务器未提供安装包总大小，正在使用单连接下载。").ConfigureAwait(false);
         }
         var total = range.Length.Value;
-        ValidateExpectedSize(release, total);
         var count = (int)Math.Min(options.ConnectionCount, Math.Max(1, total / options.MinimumSegmentSize));
         var validator = GetValidator(probe);
         if (count < 2 || HasContentEncoding(probe) || (validator is null && string.IsNullOrWhiteSpace(release.Sha256)))
@@ -226,7 +225,6 @@ public sealed class InstallerDownloadService
             AppLogService.Error($"安装包长度校验失败：{release.FileName}，服务器返回的内容长度为 0。");
             throw new InvalidDataException("下载的安装包为空，请稍后重试。");
         }
-        if (contentLength.HasValue) ValidateExpectedSize(release, contentLength.Value);
         var total = contentLength ?? release.SizeBytes;
         tracker.Configure(total, [new InstallerDownloadSegmentProgress(1, 0, total.HasValue ? total - 1 : null,
             0, InstallerDownloadSegmentState.Downloading)], message);
@@ -244,24 +242,13 @@ public sealed class InstallerDownloadService
                 timeoutSource.CancelAfter(timeout);
                 var count = await source.ReadAsync(buffer.AsMemory(), timeoutSource.Token).ConfigureAwait(false);
                 if (count == 0) break;
-                if (total.HasValue && count > total.Value - received)
-                {
-                    AppLogService.Error(
-                        $"安装包长度校验失败：{release.FileName}，期望 {total.Value} 字节，服务器返回的内容超出范围。");
-                    throw new InvalidDataException("服务器返回了超出安装包大小的内容。");
-                }
+
                 await destination.WriteAsync(buffer.AsMemory(0, count), timeoutSource.Token).ConfigureAwait(false);
                 received = checked(received + count);
                 tracker.AddBytes(0, count);
             }
             await destination.FlushAsync(timeoutSource.Token).ConfigureAwait(false);
-            if ((contentLength.HasValue && received != contentLength.Value) || (release.SizeBytes.HasValue && received != release.SizeBytes.Value))
-            {
-                long expectedLength = contentLength ?? release.SizeBytes ?? 0;
-                AppLogService.Error(
-                    $"安装包长度校验失败：{release.FileName}，期望 {expectedLength} 字节，实际 {received} 字节。");
-                throw new InvalidDataException("安装包未完整下载，请重试。");
-            }
+
             tracker.SetSegmentState(0, InstallerDownloadSegmentState.Completed);
             return received;
         }
@@ -402,15 +389,6 @@ public sealed class InstallerDownloadService
             throw new InvalidDataException("下载地址返回了网页或错误信息，请刷新软件详情后重试。");
     }
 
-    private static void ValidateExpectedSize(AppRelease release, long actual)
-    {
-        if (actual <= 0 || (release.SizeBytes.HasValue && release.SizeBytes.Value != actual))
-        {
-            AppLogService.Error(
-                $"安装包长度校验失败：{release.FileName}，期望 {(release.SizeBytes.HasValue ? $"{release.SizeBytes.Value}" : "未知")} 字节，实际 {actual} 字节。");
-            throw new InvalidDataException("安装包大小与官方资料不一致，请刷新软件详情。");
-        }
-    }
 
     private static void ValidateOptions(InstallerDownloadOptions options)
     {
@@ -455,7 +433,7 @@ public sealed class InstallerDownloadService
             throw new InvalidDataException("后端提供的下载地址无效，请刷新软件详情。");
         if (string.IsNullOrWhiteSpace(release.FileName) || release.FileName != Path.GetFileName(release.FileName)
             || release.FileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || !IsSupportedInstallerFile(release.FileName)
-            || release.SizeBytes is <= 0 || (release.Sha256 is not null && (release.Sha256.Length != 64 || !release.Sha256.All(Uri.IsHexDigit))))
+            || (release.Sha256 is not null && (release.Sha256.Length != 64 || !release.Sha256.All(Uri.IsHexDigit))))
             throw new InvalidDataException("后端提供的安装包信息无效，请刷新软件详情。");
         return uri;
     }

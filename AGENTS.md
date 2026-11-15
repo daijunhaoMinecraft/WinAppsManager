@@ -46,7 +46,8 @@ WinAppsManager/
         AppLogService.cs                  文件日志（%LOCALAPPDATA%\WinAppsManager\Logs，按天分文件、保留 14 天）
         AppSettingsService.cs             设置读写、迁移、校验、主题资源更新
         DownloadCenterService.cs          全局下载任务生命周期
-        InstallerDownloadService.cs       分段下载、Range 校验、SHA256/PE 校验
+        InstallerDownloadService.cs       分段下载、Range 校验、可选 SHA256、容器签名校验
+        AuthenticodeSignatureService.cs    安装包数字签名读取与 WinVerifyTrust 校验（仅提示）
         DownloadNetworkService.cs         GitHub 镜像、代理、证书、下载 HttpClient
         InstallerDownloadTracker.cs       总进度/速度/剩余时间聚合
         InstalledApplicationProvider.cs   卸载注册表读取、过滤、去重与排序
@@ -375,7 +376,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 - `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、按 `/sources` 的 `search_mode` 选择本地全量搜索（catalog）或自动服务端 API 搜索（api）（**不提供刷新按钮**，目录由后端独立线程/刷新策略更新，页面只在进入/源切换时读缓存）；分类来自 `/sources/{id}/categories`，失败时按目录聚合；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；图标按行按需加载。
 - `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，视频直接使用详情返回的 `video_proxy_url`）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
-- `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、取消/重试/移除/打开安装包/打开下载文件夹。
+- `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、安装包数字签名状态、取消/重试/移除/打开安装包/打开下载文件夹。
 - `UninstallPage`：读取 Windows 卸载注册表和当前用户商店应用，按“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四类展示，支持分类筛选、搜索、全选、逐项选择和批量卸载；不依赖后端。
 - `SettingsPage`：主题、软件源（从服务端 `/sources` 动态加载）、服务端地址（应用/测试连接/恢复默认）、下载线程/超时/下载位置、GitHub 镜像、代理/证书、缓存、日志目录、设置存储。
 
@@ -422,7 +423,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
    - 若已有该 app 的任务，直接返回/导航到下载中心。
    - 否则调用 `DownloadCenterService.Start(app)`，随后触发 `DownloadCenterRequested`，MainWindow 切到下载中心。
 2. `DownloadCenterService` 在后台：用 `GetLatestReleaseAsync()` 取最新签名地址，创建 `DownloadTaskViewModel` 加入 `Downloads`，读取设置，经 `ApplyMirror` 改写 GitHub 地址、按 `AppSettingsService.ResolvedDownloadDirectory`（设置里的自定义下载目录，空 = 默认目录）建下载服务、`CreateHttpClient()` 建客户端后调用 `InstallerDownloadService.DownloadAsync()`，进度经 `UiProgress` 回 UI 线程。
-3. 下载完成后任务标记完成，**不会自动打开安装包**；用户在下载中心点击“打开安装包”。
+3. 下载完成后任务标记完成，后台读取安装包的 Authenticode 数字签名（签发公司、证书有效期、是否通过 WinVerifyTrust），结果只展示、不阻止打开；**不会自动打开安装包**，用户在下载中心点击“打开安装包”。
 4. 取消、失败、重试、移除由下载中心管理。
 5. 关闭窗口时 `MainWindow.OnClosing` 调用 `DownloadCenterService.CancelAllAsync()`，取消并等待活动任务后关闭。
 6. 安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`；设置页“下载位置”可改为任意绝对路径（支持 `%USERPROFILE%` 等环境变量，目录不存在时自动创建），只影响之后开始的任务；下载中心的“打开下载文件夹”打开当前设置的目录。
@@ -434,11 +435,11 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 支持单连接与 Range 分段；分段数受设置线程数、文件大小和 `MinimumSegmentSize` 限制，并检查 Range 支持、Content-Range、ETag/Last-Modified、Content-Length 与内容类型；无法保证分片一致、没有可靠 validator 且无 SHA256 时回退单连接。
 - 每次连接/读取都使用 `InstallerDownloadOptions.Timeout` 作为超时。
 - 允许的安装包后缀是 `.exe`、`.msi`、`.msix`、`.msixbundle`、`.appx`、`.msu`（`InstallerExtensions`）；后端元数据里后缀不在白名单时直接拒绝。`.msu` 是 Windows 更新独立安装程序包（CAB 容器），用于 360 等来源的系统补丁包。
-- 下载完成后按容器校验，而不是一律查 PE 头：`.exe` 检查 `MZ` + `PE\0\0`；`.msi` 检查 OLE 复合文档签名 `D0 CF 11 E0 A1 B1 1A E1`；`.msu` 检查 CAB 签名 `MSCF`；`.msix/.msixbundle/.appx` 检查 ZIP 头 `50 4B 03 04`（`ValidateInstallerAsync`）。
-- 完整传输后再验证长度、容器签名和可选 SHA256，通过后才移到正式文件名；通用 GitHub provider 只产出 `.exe/.msi/.msix/.msixbundle`，客户端另允许 `.appx` 与 360 补丁包的 `.msu`，但不要把 GitHub 资产写成 `.appx`。
+- 下载完成后按容器校验，而不是一律查 PE 头：`.exe` 检查 `MZ` + `PE\0\0`；`.msi` 检查 OLE 复合文档签名 `D0 CF 11 E0 A1 B1 1A E1`；`.msu` 检查 CAB 签名 `MSCF`；`.msix/.msixbundle/.appx` 检查 ZIP 头 `50 4B 03 04`（`ValidateInstallerAsync`）。**不再校验服务端上报的 `SizeBytes`**；`Content-Length` 只用于进度与空响应保护，不要求与实际字节数一致。
+- 完整传输后保留容器签名与可选 SHA256 校验，通过后才移到正式文件名；**不再比较服务端 SizeBytes/Content-Length 与实际字节数**（服务端可能算错大小），也不因大小不一致中止下载。通用 GitHub provider 只产出 `.exe/.msi/.msix/.msixbundle`，客户端另允许 `.appx` 与 360 补丁包的 `.msu`，但不要把 GitHub 资产写成 `.appx`。
 - `.part` 文件在取消/失败时清理；已有安装包不会被覆盖。
 - 下载目录由 `InstallerDownloadService` 构造参数决定：`DownloadCenterService` 传入 `AppSettingsService.ResolvedDownloadDirectory`（自定义目录为空时用 `InstallerDownloadService.DefaultDownloadDirectory`），下载器构造时用 `Path.GetFullPath` 规整；设置页保存时校验绝对路径、展开环境变量并尝试创建目录，非法路径只回退该字段并给出 `LastError`。
-- 默认线程数 4（1–32）、超时 10–300 秒（步进 10）；下载完不自动执行安装包，只有用户点“打开安装包”才打开。
+- 默认线程数 4（1–32）、超时 10–300 秒（步进 10）；下载完不自动执行安装包，只有用户点“打开安装包”才打开。数字签名由 `AuthenticodeSignatureService` 在后台读取 `X509Certificate.CreateFromSignedFile` 并用 `WinVerifyTrust` 校验，展示签发公司/有效期/有效性；未签名、证书过期或校验失败只显示警告，绝不阻止打开。
 
 ### 6.6 网络设置
 

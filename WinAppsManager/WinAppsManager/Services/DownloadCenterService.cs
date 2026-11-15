@@ -205,6 +205,31 @@ public static class DownloadCenterService
             AppLogService.Info(
                 $"下载完成：{task.AppName}（{task.AppId}），文件={result.FilePath}，" +
                 $"{result.SizeBytes} 字节，耗时 {stopwatch.ElapsedMilliseconds} ms。");
+
+            // 数字签名仅作为提示展示，校验失败/未签名绝不影响安装包保存和打开。
+            AuthenticodeSignatureInfo signature;
+            try
+            {
+                signature = await Task.Run(() => AuthenticodeSignatureService.Inspect(result.FilePath))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                signature = new AuthenticodeSignatureInfo(
+                    false, false, string.Empty, string.Empty, string.Empty, null, null,
+                    "数字签名：无法检查",
+                    "读取安装包数字签名失败，仍可打开安装包。",
+                    exception.GetType().Name);
+                AppLogService.Warn(
+                    $"读取安装包数字签名失败：{task.AppName}（{task.AppId}），" +
+                    $"{exception.GetType().Name}：{exception.Message}",
+                    exception);
+            }
+
+            await OnUiAsync(() => task.ApplySignature(signature)).ConfigureAwait(false);
+            AppLogService.Info(
+                $"安装包数字签名：{task.AppName}（{task.AppId}），{signature.StatusText}；" +
+                $"{signature.DetailText}");
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {

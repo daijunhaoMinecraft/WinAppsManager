@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using WinAppsManager.Services;
 
 namespace WinAppsManager.Models;
 
@@ -24,6 +25,10 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     private string _fileName = string.Empty;
     private string _downloadUrl = string.Empty;
     private string? _filePath;
+    private bool _hasSignatureInfo;
+    private bool _signatureIsValid;
+    private string _signatureStatusText = string.Empty;
+    private string _signatureDetailText = string.Empty;
     private CancellationTokenSource? _cancellation;
 
     public DownloadTaskViewModel(AppItem app)
@@ -58,6 +63,10 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     public bool CanOpenInstaller => IsCompleted && !string.IsNullOrWhiteSpace(_filePath);
     public bool CanOpenFolder => IsCompleted;
     public bool HasFilePath => !string.IsNullOrWhiteSpace(_filePath);
+    public bool HasSignatureInfo => _hasSignatureInfo;
+    public bool SignatureIsValid => _signatureIsValid;
+    public string SignatureStatusText => _signatureStatusText;
+    public string SignatureDetailText => _signatureDetailText;
     public bool HasSegments => Segments.Count > 0;
     public string ProgressText => _totalBytes is > 0 ? $"{ProgressValue:0.0}%" : "未知";
     public double ProgressValue => _totalBytes is > 0
@@ -175,6 +184,10 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
             _bytesPerSecond = 0;
             _remaining = null;
             _statusMessage = string.Empty;
+            _hasSignatureInfo = true;
+            _signatureIsValid = false;
+            _signatureStatusText = "数字签名：校验中…";
+            _signatureDetailText = "下载完成，正在读取安装包数字签名。";
             if (Segments.Count == 0)
             {
                 Segments.Add(new DownloadSegmentViewModel(new InstallerDownloadSegmentProgress(
@@ -184,6 +197,18 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
             {
                 segment.Complete(Segments.Count == 1 ? result.SizeBytes : null);
             }
+        }
+        NotifyAll();
+    }
+
+    internal void ApplySignature(AuthenticodeSignatureInfo signature)
+    {
+        lock (_gate)
+        {
+            _hasSignatureInfo = true;
+            _signatureIsValid = signature.IsValid;
+            _signatureStatusText = signature.StatusText;
+            _signatureDetailText = signature.DetailText;
         }
         NotifyAll();
     }
