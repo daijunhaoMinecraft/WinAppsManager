@@ -1,5 +1,5 @@
 // 编译器/运行库补齐：net6.0-windows7.0 目标缺少 C# 11/12 编译器要求的标记类型
-// （net8 目标自带这些类型，因此只在旧目标编译）。改动这些内容会影响 required 成员与
+// （这些类型在更高版本的 BCL 里自带，因此只在旧框架上编译）。改动这些内容会影响 required 成员与
 // collection expressions 的语义，保持与 BCL 定义一致即可。
 #if !NET7_0_OR_GREATER
 namespace System.Runtime.CompilerServices;

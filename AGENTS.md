@@ -6,7 +6,7 @@
 
 WinAppsManager 是一个 Windows 软件管理器：
 
-- **前端**：WPF，双目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11，不含商店应用，**默认构建/运行目标**）与 `net8.0-windows10.0.19041.0`（Windows 10 2004+ / 11，含商店应用），使用 iNKORE.UI.WPF.Modern 控件与主题。
+- **前端**：WPF，单一目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11 共用一套构建），使用 iNKORE.UI.WPF.Modern 控件与主题。商店应用不依赖 WinRT：Windows 10/11 通过 Windows PowerShell `Get-AppxPackage` 自动启用，Windows 7/8 只显示桌面软件。
 - **后端**：Python 3.10+ / FastAPI，默认监听 `127.0.0.1:8080`；同时提供**联想应用商店**（默认源，目录约 5111 款，服务端代理联想 PC 商店接口并缓存）、**360 软件管家**（服务端代理 360 应用中心，默认各分类热门子集约 5940 款）与**内置精选**（`/api/v1/apps` 等既有接口）三个软件源。
 - **职责划分**：后端维护软件目录、官网版本解析、下载地址签名、图标与缓存；客户端负责展示、筛选、下载任务、进度、设置和本地缓存。联想接口的调研文档见 `docs/lenovo-store-api.md`，整体设计见 `docs/store-source-design.md`。
 - **客户端后端地址**：默认 `http://127.0.0.1:8080/`，可在设置页“服务端地址”中运行时修改（`AppSettings.BackendBaseUrl`，http/https 绝对地址），切换后重建按服务端隔离的缓存。
@@ -51,7 +51,6 @@ WinAppsManager/
         InstallerDownloadTracker.cs       总进度/速度/剩余时间聚合
         InstalledApplicationProvider.cs   卸载注册表读取、过滤、去重与排序
         StoreApplicationProvider.cs       当前用户商店/MSIX 包枚举与元数据
-        StoreApplicationProvider.Unsupported.cs  net6 无 WinRT 时的商店应用桩（IsSupported=false）
         PlatformCompatibility.cs          按 Windows 版本与安装包架构判断目录条目是否兼容
         BclCompat.cs                      net6 兼容层：SnakeCase、ReadExactlyAsync、SHA256、GC
         StoreApplicationUninstallCommand.cs 商店应用 Remove-AppxPackage 命令
@@ -108,8 +107,8 @@ WinAppsManager/
 ## 3. 工具链与前置条件
 
 - 开发机 Windows 10/11（后端要求 Python 3.10+，无法在 Win7 原生运行，见第 10 节）。
-- .NET SDK 8 或 10。客户端双目标：`net6.0-windows7.0`（Windows 7 SP1+，无商店应用；**默认构建/运行目标**，.NET 6 是最后一个官方支持 Windows 7 SP1 的 .NET 版本）与 `net8.0-windows10.0.19041.0`（Win10 2004+，含 WinRT `PackageManager`）；不要降低/删除 net6 目标（已 EOL，`CheckEolTargetFramework=false`），也不要把它改成 .NET Framework（WPF 与依赖包不支持）。
-- 运行需 .NET 6 Desktop Runtime（Win7 SP1 可安装）或 .NET 8 Desktop Runtime。客户端随程序嵌入 `Assets/Fonts/FluentSystemIcons-Regular.ttf`（MIT，来自 Microsoft fluentui-system-icons），并通过 `App.xaml` 的 `Wam.IconFontFamily` 隐式样式替换 `ui:FontIcon` 字体；Win7 没有 Segoe Fluent Icons 时图标不会变成方框。图标数据使用 `ui:FluentSystemIcons.*`，不要改回 `SegoeFluentIcons.*`。仓库预置了 Rider 运行配置（`.idea/runConfigurations/WinAppsManager (Windows 7 兼容).xml` 默认 net6、`WinAppsManager (Windows 10+).xml` net8；`.idea/` 被 gitignore，只在本机生效）和发布配置（`Properties/PublishProfiles/Win7-x64.pubxml`、`Win7-x86.pubxml` 为框架依赖；`Win7-x64-selfcontained.pubxml`、`Win7-x86-selfcontained.pubxml` 为自包含约 166 MB、目标机免装 .NET 6 Desktop Runtime）。x86 发布（64 位改用 `-r win-x64`）：
+- .NET SDK 8 或 10。客户端只有单一目标 `net6.0-windows7.0`（.NET 6 是最后一个官方支持 Windows 7 SP1 的 .NET 版本，已 EOL，`CheckEolTargetFramework=false`）；不要改成 .NET Framework（WPF 与依赖包不支持），也不要重新拆成 net6/net8 双目标。
+- 运行需 .NET 6 Desktop Runtime（Win7 SP1 可安装）。客户端随程序嵌入 `Assets/Fonts/FluentSystemIcons-Regular.ttf`（MIT，来自 Microsoft fluentui-system-icons），并通过 `App.xaml` 的 `Wam.IconFontFamily` 隐式样式替换 `ui:FontIcon` 字体；Win7 没有 Segoe Fluent Icons 时图标不会变成方框。图标数据使用 `ui:FluentSystemIcons.*`，不要改回 `SegoeFluentIcons.*`。发布配置在 `Properties/PublishProfiles`（x64/x86，框架依赖或自包含），同一套输出适用于 Windows 7–11；不再按操作系统拆包。x86 发布（64 位改用 `-r win-x64`）：
   ```powershell
   dotnet publish WinAppsManager\WinAppsManager\WinAppsManager.csproj -c Release -f net6.0-windows7.0 -r win-x86 --self-contained false -p:PublishProfile=Win7-x86
   ```
@@ -163,15 +162,15 @@ API 文档：<http://127.0.0.1:8080/docs>；健康检查：`GET /api/v1/health`�
 dotnet build WinAppsManager\WinAppsManager.sln -c Release
 ```
 
-运行客户端（需要后端已启动；双目标项目必须用 `-f` 指定目标，默认/Windows 7 用 `net6.0-windows7.0`）：
+运行客户端（需要后端已启动；单目标项目无需 `-f`）：
 
 ```powershell
-dotnet run --project WinAppsManager\WinAppsManager\WinAppsManager.csproj -f net6.0-windows7.0
+dotnet run --project WinAppsManager\WinAppsManager\WinAppsManager.csproj
 ```
 
-Rider 的默认运行键使用 `WinAppsManager (Windows 7 兼容)`（net6）；需要商店应用功能时切到 `WinAppsManager (Windows 10+)`（net8）。
+Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自动加载商店应用，Windows 7/8 自动只显示桌面软件。
 
-客户端不包含自动化测试项目（原有的 5 个控制台测试项目已移除），客户端改动以 `dotnet build WinAppsManager\WinAppsManager.sln -c Release` 编译两个目标为准，要求 0 警告、0 错误；确实需要新增测试项目时，先与用户确认，不要自行加回解决方案。
+客户端不包含自动化测试项目（原有的 5 个控制台测试项目已移除），客户端改动以 `dotnet build WinAppsManager\WinAppsManager.sln -c Release` 编译唯一目标为准，要求 0 警告、0 错误；确实需要新增测试项目时，先与用户确认，不要自行加回解决方案。
 
 ### 4.3 提交前质量门禁
 
@@ -374,7 +373,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.3 卸载软件
 
-当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。成功卸载（退出码 0 且核对已卸载）后会自动清理默认安全残留；需要清理安装目录、AppData、快捷方式等危险项时，用户可点击“强制卸载”手动确认。
+当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。卸载结束后刷新已安装软件列表判断是否还存在，确认不存在后自动清理默认安全残留；需要清理安装目录、AppData、快捷方式等危险项时，用户可点击“强制卸载”手动确认。
 
 - `InstalledApplicationProvider` 读取 `HKLM` 的 64/32 位视图和 `HKCU` 的 `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`。
 - 分类在 `InstalledApplication.Classify`（四个视图）：`SystemComponent=1` → 系统组件；`ParentKeyName` 非空、`NoRemove=1`、`ReleaseType` 为更新/修补程序 → 隐藏组件；其余 → 应用程序；商店应用由 `StoreApplicationProvider` 单独标记。只丢弃没有 `DisplayName` 的条目，没有 `UninstallString` 的普通应用程序也丢弃，系统/隐藏组件保留（仍可用于深度清理）。
@@ -386,8 +385,8 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 安装目录由 `InstallLocationResolver` 解析：`InstallLocation` → `DisplayIcon` 所在目录 → 卸载程序所在目录；跳过 `msiexec` 这类相对路径命令、盘根和 Windows / Program Files / ProgramData / AppData / 用户目录等共享根。Provider 读 `InstallLocation` 时按 `InstallLocation` → `Inno Setup: App Path` → `InstallDir` 回退并展开环境变量。
 - `UninstallPage` 的后台补全条件是 `InstalledApplication.NeedsFilesystemProbe`（缺大小或日期），**不要**加“安装位置非空”限制；只排队当前分类可见条目，切换分类会取消上一轮并重新排队；每条处理完 `Dispatcher.Yield(Background)`，探测结果用“所有属性已变”通知刷新行。
 - 切换分类/排序时整体替换 `Apps`（只发一次 Reset），复选框只调 `RefreshSelectionSummary`；首次加载显示 `ui:ProgressRing`。列表必须用 `VirtualizedRowListStyle`（见 6.10 第 9 条）；补全按 `EnrichmentBatchSize`（8）成批应用，同一批在同一 dispatcher 回合写入；`SizeText`/`InstallDateText` 在模型缓存；行模板不放 `ToolTip` 绑定、官网入口用 `TextBlock`。
-- 页面同时显示注册表桌面软件和当前用户 Microsoft Store/MSIX 应用，系统/隐藏组件默认不与普通软件混在一起。`StoreApplicationProvider` 用 WinRT `PackageManager.FindPackagesForUser(当前用户 SID)` 枚举包，只保留安装位置在 `\WindowsApps\` 的包，过滤 framework、resource package、bundle、stub 和无 `Applications/Application` 的包；每个包一条记录，卸载单位是包。
-- 商店应用显示 `Package.DisplayName`、`PublisherDisplayName`、版本和 `Package.Logo`；图标支持 PNG 并由统一后台加载器缓存；“商店应用”分类过滤出这些包，搜索也匹配“商店应用”来源文字。
+- 页面同时显示注册表桌面软件和当前用户 Microsoft Store/MSIX 应用，系统/隐藏组件默认不与普通软件混在一起。`StoreApplicationProvider` 在 Windows 10/11 调用 Windows PowerShell `Get-AppxPackage`（单一 net6 构建无 WinRT），解析 JSON 与每个包的 `AppxManifest.xml`，只保留安装位置在 `\WindowsApps\`、有 `Applications/Application` 的包，过滤 framework、resource package、bundle、stub；每个包一条记录，卸载单位是包。Windows 7/8 返回空集合并由界面提示不支持。
+- 商店应用显示 manifest 的 `DisplayName`（`ms-resource:` 时回退包标识名）、`PublisherDisplayName`、版本和 `Logo`；图标支持 PNG 并由统一后台加载器缓存；“商店应用”分类过滤出这些包，搜索也匹配“商店应用”来源文字。
 - 商店卸载命令由 `StoreApplicationUninstallCommand` 生成：`powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command "try { Get-AppxPackage -Name '<包标识名>' -ErrorAction Stop | Remove-AppxPackage -Confirm:$false -ErrorAction Stop } catch { ... exit 1 }"`（原型 `sub_1400CF2A8`）。只对当前用户生效，不用 `-AllUsers`，不保留应用数据，也不做预置包 deprovision。
 - 商店图标以 `AppxManifest.xml` 的 Logo 为基准，优先同名 `.targetsize-48/44/64/32/24.png`、`.scale-200/150/125.png` 或 `_altform-unplated.png` 变体，避免 100% 缩放小图。
 - 商店应用按包卸载，可能包含多个入口；卸载会删除该应用在本机的用户数据，确认框会说明。
@@ -398,7 +397,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - `UninstallCommandParser` 把 `UninstallString` 拆成 `FileName`/`Arguments`，支持带引号路径、未加引号含空格路径、`MsiExec.exe /I{...}`、`.bat`/`.cmd` 与环境变量展开；命令行必须来自注册表，不能接受任意输入。
 - `UninstallRunner` 用 `UseShellExecute=true` 启动（Windows 处理 UAC 与文件关联），把进程加入 `UninstallProcessJob`（作业对象），先等启动器退出再等作业内进程数归零，因此“启动器退出、卸载在子进程里”也会被完整等待；只有用户停止时 `TerminateJobObject`，失败回退 `Process.Kill(entireProcessTree: true)`。
 - 退出码 0/3010/1641 视为结束，1602/1223 为用户取消，1603/1618/其他非零为失败。启动器退出后仍有子进程存活超过 1.2 秒时，非零退出码不判失败，按“已交接、请刷新列表确认”报告；`ExitCode` 因权限读不到时同样按“已结束”。
-- 每批结束后 `UninstallVerifier` 用注册表键（桌面）或包（商店）核对，以核对结论覆盖退出码：键已不存在即成功，仍存在则失败并显示“仍有残留”，这是“卸载是否真的成功”的唯一依据；net6 目标无 WinRT，商店包无法核对时返回“无法判定”。
+- 每批结束后**刷新一次已安装软件列表**（`UninstallProgressWindow` 的 `refreshInstalledApplications` 委托，桌面注册表 + 商店 PowerShell 合并快照），用 `Id`/`PackageFullName`/`RegistryPath` 身份判断每个软件是否还存在；该列表结论覆盖退出码，这是“卸载是否真的成功”的唯一依据。列表刷新失败才回退 `UninstallVerifier` 逐项核对；3010/1641 仍只提示重启。
 - 工具栏“强制卸载”或行右键“强制卸载（清理残留）…”打开 `DeepCleanWindow`，结果树默认收起。`LeftoverScanner` 只读扫描九组：注册表侧（卸载登记项、`HKCU/HKLM\Software` 同名键、Run/RunOnce、`Explorer\StartupApproved` 的 Run/StartupFolder 值、Services、App Paths），命中规则是“键名等于软件名或安装目录名”或“键值仍指向安装目录”；文件侧是安装目录、AppData/ProgramData 同名目录、开始菜单与桌面快捷方式；MSI 侧按卸载键 ProductCode 查 `Installer\UserData\<SID>\Products`、`Installer\Products` 和 `Installer\Folders`（字节反序压缩 GUID）。
 - 商店应用同样可深度清理：残留是 `HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PolicyCache\<包族名>` 与 `...\AppModel\SystemAppData\<包族名>` 两类状态缓存，`LeftoverScanner.ScanStoreApplication` 按 `PackageFamilyName`（回退 `PackageName`）匹配，作为“商店应用注册表”分组返回（`StoreStateKey`）。
 - 安装目录、AppData、开始菜单程序组递归展开成“文件夹 → 文件”树（每文件一行，带大小和完整路径）；上限 12 层、5000 条，跳过重解析点避免目录环；整树默认不勾选。
@@ -407,7 +406,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 危险分组（安装目录、用户数据目录、快捷方式、MSI 安装数据库）节点带 `IsRisky`，构造后 `IsChecked = false`，显示“谨慎”徽章并默认不勾选；工具栏“全选”会勾上它们，等于用户显式确认。注册表安全分组默认勾选。
 - 删除由 `LeftoverCleaner` 分派并逐条重校验：注册表侧（`RegistryLeftoverCleaner`）只允许卸载项、App Paths、Services 单层子键、Run/RunOnce/`StartupApproved` 单个值、`Installer\Products` 或 `UserData\<SID>\Products` 单层产品键、`Installer\Folders` 单个值、`AppModel\PolicyCache|SystemAppData\<包族名>`（`StoreStateKey`，仅 HKCU），以及 `SOFTWARE` 下至少两级的软件数据键；`Microsoft`、`Classes`、`Policies`、`Wow6432Node` 等受保护分支一律跳过。文件侧（`FileLeftoverCleaner`）按“先文件、后空目录”：文件必须位于节点 `RootPath` 内且 `RootPath` 通过根目录校验；文件夹只有无子项时才删（`Directory.Delete(recursive:false)`），删文件后清理变空的上级目录，不会连带删除未勾选文件。盘根、`Windows`、`System32`、`Program Files` 本身、`%TEMP%` 和用户个人文件夹一律拒绝。
 - 卸载结果文案保持简短（“已卸载 / 注册表中仍存在该项目 / 卸载失败 / 卸载已取消”），详细原因看退出码或汇总；批次结束或取消后刷新注册表并显示汇总；卸载程序弹出向导时用户需自行操作，本应用只等待。流程不做撤销、回滚或恢复点，不会自动重启，3010/1641 只提示需要重启。
-- **自动残留清理**：批次结束且某软件退出码为 0、核对状态为已卸载（`UninstallResult.IsSuccess && ExitCode == 0`）时，`UninstallPage.AutoCleanAfterUninstallAsync` 调用 `AutoLeftoverCleaner.CleanAsync`，只删除 `LeftoverScanner` 默认勾选且非 `IsRisky` 的安全残留（注册表卸载项/启动项等）；安装目录、AppData、快捷方式、MSI 记录等危险项仍由用户点“强制卸载”手动确认。自动清理失败只写日志和状态，不影响卸载结果。
+- **自动残留清理**：批次结束且刷新列表确认软件不存在（`UninstallResult.IsSuccess && RegistryRemoved == true`，**不再要求退出码为 0**）时，`UninstallPage.AutoCleanAfterUninstallAsync` 调用 `AutoLeftoverCleaner.CleanAsync`，只删除 `LeftoverScanner` 默认勾选且非 `IsRisky` 的安全残留（注册表卸载项/启动项等），防止残留触发自动重装；安装目录、AppData、快捷方式、MSI 记录等危险项仍由用户点“强制卸载”手动确认。自动清理失败只写日志和状态，不影响卸载结果。
 
 ### 6.4 下载流程
 
@@ -511,10 +510,10 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.12 平台与架构适配
 
-- 双目标差异用 `STORE_APPS` 常量与 partial 类隔离：net6 目标没有 WinRT，`Services/StoreApplicationProvider.Unsupported.cs` 给出 `IsSupported=false`；net8 在运行期还要求 Win10 2004+（`OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)`），否则通过 `UnsupportedReason` 提示。
+- 单目标没有编译期差异：运行时用 `OperatingSystem.IsWindowsVersionAtLeast(10)` 判断商店应用是否可用，Windows 10/11 调用 Windows PowerShell `Get-AppxPackage`，Windows 7/8 返回空列表并通过 `UnsupportedReason` 提示；不再使用 `STORE_APPS` 常量或 WinRT。
 - `Services/PlatformCompatibility.cs` 按 `Environment.OSVersion.Version`（Win7=6.1、8=6.2、8.1=6.3、10=10.0、11=10.0 build≥22000）与 `RuntimeArchitecture` 判断 `minimum_windows`/`architectures`，字段缺失视为兼容。
 - `AppCatalogService.PublishCatalogAsync` 过滤不兼容条目并记 `HiddenIncompatibleCount`，`AppsInstallPage.ResultsCount` 追加“（已按当前系统隐藏 N 款不兼容的软件）”；磁盘目录缓存写**完整**目录，系统升级后能重新显示。
-- `UninstallPage` 在 `StoreApplicationProvider.IsSupported == false` 时跳过商店扫描并在状态栏追加 `StoreErrorSuffix`；net6 的 `UninstallVerifier` 对商店包返回“无法判定”。
+- `UninstallPage` 在 `StoreApplicationProvider.IsSupported == false`（Windows 7/8）时跳过商店扫描并在状态栏追加 `StoreErrorSuffix`；Windows 10/11 商店包通过 `Get-AppxPackage` 正常枚举与核对。
 - 兼容层：`BclCompat.cs` 收敛 net7/net8 API（`SnakeCaseLower`、`ReadExactlyAsync`、流式 SHA256、`CompactCollect` 等），`Polyfills.cs` 补 `RequiredMemberAttribute` 等编译器标记；`[GeneratedRegex]` 改为静态 `Regex` 字段。
 
 ### 6.13 客户端日志
@@ -538,7 +537,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 ### 7.2 客户端
 
 - 客户端**没有**自动化测试项目（原有 5 个控制台测试项目已移除），不要假设可以通过 `dotnet run` 运行客户端测试。
-- 客户端改动至少用 `dotnet build WinAppsManager\WinAppsManager.sln -c Release` 验证：net6 与 net8 两个目标都要编译通过，且 0 警告、0 错误。
+- 客户端改动至少用 `dotnet build WinAppsManager\WinAppsManager.sln -c Release` 验证唯一目标：0 警告、0 错误。
 - 涉及下载、设置、卸载命令、图标路径等纯逻辑的改动，靠代码审查与必要的手动检查确认；确实需要回归测试时先与用户确认是否恢复测试项目。
 - 手动验证时不要访问真实下载地址、不要执行安装包、不要真正卸载用户软件；临时目录和 `.part` 文件用完清理。
 
@@ -640,7 +639,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - **后端无法在 Windows 7 上原生运行**：要求 Python 3.10+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接本机 `127.0.0.1:8080`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 上目前用不到依赖后端的目录/下载功能（卸载与设置可离线使用）。
 - 联想源依赖外部网络与联想接口可用性：目录首次抓取约 28 个请求（约 1.5–2 秒），接口变更/限流会让联想源退化为 502/504 或使用陈旧快照；图片直连联想 CDN 需要正常 UA，联想 CDN 对 curl UA 返回 403。内置源默认只启用 Clash Verge Rev 与 Telegram（`builtin.app_ids`），其余 43 款不抓取版本。
 - 自定义服务端地址会让客户端缓存按服务端 URL 隔离（旧服务端的目录/图标缓存不会复用）；远程服务端需要自行处理鉴权/暴露风险，默认只监听 127.0.0.1。
-- WPF 客户端无跨平台支持；Windows 7 兼容构建不含商店应用/MSIX 管理（界面会提示），需要 .NET 6 Desktop Runtime，且 net6 已 EOL、无安全更新。
+- WPF 客户端无跨平台支持；同一 net6 构建支持 Windows 7–11，Windows 7/8 没有商店应用（界面会提示），Windows 10/11 自动可用；需要 .NET 6 Desktop Runtime，且 net6 已 EOL、无安全更新。
 
 ## 11. 协作方式
 

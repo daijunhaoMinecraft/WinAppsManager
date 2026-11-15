@@ -53,7 +53,7 @@ public sealed class UninstallResult : INotifyPropertyChanged
         : Message;
 
     /// <summary>
-    /// Replaces the exit-code verdict with the registry check: an uninstaller that returns a
+    /// Replaces the exit-code verdict with the refreshed installed-list check: an uninstaller that returns a
     /// non-zero code but removed its registration counts as successful, and one that returned
     /// zero while the software is still registered counts as failed.
     /// </summary>
@@ -66,7 +66,7 @@ public sealed class UninstallResult : INotifyPropertyChanged
 
         _registryRemoved = !stillInstalled.Value;
         _status = stillInstalled.Value ? UninstallStatus.Failed : UninstallStatus.Completed;
-        _message = stillInstalled.Value ? "注册表中仍存在该项目" : "已卸载";
+        _message = stillInstalled.Value ? "卸载后软件仍在安装列表中" : "已卸载";
 
         foreach (string name in new[]
                  {

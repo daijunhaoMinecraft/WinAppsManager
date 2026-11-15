@@ -142,7 +142,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             IReadOnlyList<InstalledApplication> storeApplications;
             if (!StoreApplicationProvider.IsSupported)
             {
-                // Windows 7 / 8 目标（net6.0-windows7.0）没有 MSIX / 商店应用，明确提示而不是静默失败。
+                // Windows 7 / 8 没有 Microsoft Store / MSIX 应用，明确提示而不是静默失败。
                 storeApplications = Array.Empty<InstalledApplication>();
                 _storeLoadError = StoreApplicationProvider.UnsupportedReason;
                 AppLogService.Info($"跳过商店应用扫描：{StoreApplicationProvider.UnsupportedReason}");
@@ -715,23 +715,63 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         AppLogService.Info(
             $"开始卸载批次：{applications.Count} 个软件（{DescribeApplications(applications)}）。");
         var stopwatch = Stopwatch.StartNew();
-        var progress = new UninstallProgressWindow(applications) { Owner = owner };
+        var progress = new UninstallProgressWindow(applications, RefreshInstalledApplicationsAsync)
+        {
+            Owner = owner
+        };
         progress.ShowDialog();
-        AppLogService.Info($"卸载批次结束：{progress.Summary} 耗时 {stopwatch.ElapsedMilliseconds} ms。");
-        var successful = progress.Results
-            .Where(result => result.IsSuccess && result.ExitCode == 0)
+        // 卸载结果以“刷新后的已安装软件列表里是否还存在该软件”为准；退出代码只作为明细，
+        // 不再参与成功/失败判定，避免厂商卸载程序返回非零码但实际已卸载时被误判为失败。
+        var confirmedRemoved = progress.Results
+            .Where(result => result.IsSuccess && result.RegistryRemoved == true)
             .Select(result => result.App)
             .ToArray();
+        AppLogService.Info(
+            $"卸载批次结束：{progress.Summary} 刷新列表确认已移除 {confirmedRemoved.Length} 个，" +
+            $"耗时 {stopwatch.ElapsedMilliseconds} ms。");
         await RefreshAfterUninstallAsync(progress.Summary);
-        if (successful.Length > 0)
+        if (confirmedRemoved.Length > 0)
         {
-            await AutoCleanAfterUninstallAsync(successful, progress.Summary);
+            await AutoCleanAfterUninstallAsync(confirmedRemoved, progress.Summary);
         }
     }
 
     /// <summary>
-    /// 正常卸载退出码为 0 且核对为“已卸载”后，自动执行安全残留清理；危险项仍留给
-    /// “强制卸载”手动确认，避免自动删除安装目录/用户数据。
+    /// 卸载流程结束后由 <see cref="UninstallProgressWindow"/> 调用：重新读取一次“已安装软件”
+    /// 列表（桌面卸载注册表 + 当前用户商店应用）作为合并快照，用来判断每个软件是否还存在。
+    /// 读取失败时异常抛给进度窗口，由它记录日志并回退到按注册表键/包状态核对；这里不能吞掉
+    /// 异常，否则“没读到列表”会被误判成“已卸载”。
+    /// </summary>
+    private static async Task<IReadOnlyList<InstalledApplication>> RefreshInstalledApplicationsAsync(
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        IReadOnlyList<InstalledApplication> desktopApplications =
+            await InstalledApplicationProvider.GetInstalledApplicationsAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        IReadOnlyList<InstalledApplication> storeApplications = Array.Empty<InstalledApplication>();
+        if (StoreApplicationProvider.IsSupported)
+        {
+            storeApplications = await StoreApplicationProvider
+                .GetInstalledStoreApplicationsAsync(cancellationToken);
+        }
+
+        var applications = new List<InstalledApplication>(desktopApplications.Count + storeApplications.Count);
+        applications.AddRange(desktopApplications);
+        applications.AddRange(storeApplications);
+        AppLogService.Info(
+            $"卸载后刷新已安装软件列表：注册表 {desktopApplications.Count} 项、" +
+            $"商店应用 {storeApplications.Count} 个，共 {applications.Count} 项，" +
+            $"耗时 {stopwatch.ElapsedMilliseconds} ms。");
+        return applications;
+    }
+
+    /// <summary>
+    /// 刷新安装列表确认软件已不存在（<see cref="UninstallResult.IsSuccess"/> 且
+    /// <see cref="UninstallResult.RegistryRemoved"/> 为 true，不再要求卸载程序退出码为 0）后，
+    /// 自动执行安全残留清理，避免残留项把软件重新装回来；危险项仍留给“强制卸载”手动确认，
+    /// 避免自动删除安装目录/用户数据。
     /// </summary>
     private async Task AutoCleanAfterUninstallAsync(IReadOnlyList<InstalledApplication> applications, string batchSummary)
     {
@@ -740,10 +780,11 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             return;
         }
 
-        _statusText = $"{batchSummary} 正在自动清理残留…";
+        _statusText = $"{batchSummary} 已刷新列表确认卸载，正在自动清理安全残留…";
         UpdateChrome();
         AppLogService.Info(
-            $"开始卸载后自动深度清理：{applications.Count} 个软件（{DescribeApplications(applications)}）。");
+            $"开始卸载后自动深度清理（刷新列表确认已卸载）：{applications.Count} 个软件" +
+            $"（{DescribeApplications(applications)}）。");
 
         int deleted = 0;
         int failed = 0;
@@ -769,7 +810,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             }
         }
 
-        string text = $"{batchSummary} 自动深度清理：删除 {deleted} 项残留";
+        string text = $"{batchSummary} 刷新列表确认已卸载，自动深度清理：删除 {deleted} 项残留";
         if (failed > 0)
         {
             text += $"，{failed} 项删除失败";

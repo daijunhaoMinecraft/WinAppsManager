@@ -3,12 +3,13 @@
     <PropertyGroup>
         <OutputType>WinExe</OutputType>
         <!--
-          net6.0-windows7.0  : 兼容 Windows 7 SP1 / 8 / 8.1 / 10 / 11（不含 MSIX/商店应用功能，
-                               Windows 7 上运行时时由 StoreApplicationProvider.IsSupported 提示不支持）。
-          net8.0-windows10.0.19041.0 : Windows 10 2004 / 11 完整功能，含 WinRT PackageManager 商店应用管理。
-          两个目标共用同一套源码，差异用 STORE_APPS 编译常量与 partial 类隔开。
+          单一构建：net6.0-windows7.0 同时支持 Windows 7 SP1 / 8 / 8.1 / 10 / 11，不再为 Windows 10+ 单独打包。
+          .NET 6 是最后一个官方支持 Windows 7 SP1 的 .NET 版本，因此固定该目标。
+          商店应用（MSIX / Microsoft Store）不再依赖 WinRT：运行时由 StoreApplicationProvider 调用
+          Windows PowerShell 的 Get-AppxPackage 枚举，Windows 10 / 11 自动可用；
+          Windows 7 / 8 / 8.1 上 IsSupported 返回 false，界面给出“当前系统不支持”的提示。
         -->
-        <TargetFrameworks>net6.0-windows7.0;net8.0-windows10.0.19041.0</TargetFrameworks>
+        <TargetFramework>net6.0-windows7.0</TargetFramework>
         <LangVersion>latest</LangVersion>
         <CheckEolTargetFramework>false</CheckEolTargetFramework>
         <Nullable>enable</Nullable>
@@ -19,10 +20,6 @@
         <SelfContained>false</SelfContained>
         <AssemblyName>WinAppsManager</AssemblyName>
         <RootNamespace>WinAppsManager</RootNamespace>
-    </PropertyGroup>
-
-    <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows10.0.19041.0'">
-        <DefineConstants>$(DefineConstants);STORE_APPS</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
