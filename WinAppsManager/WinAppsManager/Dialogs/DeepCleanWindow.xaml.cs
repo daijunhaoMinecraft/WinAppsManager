@@ -33,7 +33,7 @@ public partial class DeepCleanWindow : Window
         AppInfoPanel.DataContext = application;
         AppNameText.Text = application.Name;
         AppDetailText.Text = $"{application.PublisherText} · {application.SourceText}";
-        Title = $"深度清理 - {application.Name}";
+        Title = $"强制卸载 - {application.Name}";
         SummaryText.Text = "正在读取注册表…";
     }
 

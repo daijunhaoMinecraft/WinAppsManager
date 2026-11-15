@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
         xmlns:models="clr-namespace:WinAppsManager.Models"
-        Title="深度清理残留"
+        Title="强制卸载残留"
         Width="780"
         Height="640"
         MinHeight="520"
@@ -15,7 +15,7 @@
         WindowStartupLocation="CenterOwner"
         Loaded="Window_OnLoaded"
         Closing="Window_OnClosing"
-        AutomationProperties.Name="深度清理卸载残留">
+        AutomationProperties.Name="强制卸载残留（深度清理）">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVisibility"/>
 
@@ -59,7 +59,7 @@
                                      Foreground="{DynamicResource Wam.AccentBrush}"/>
                     </Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="深度清理卸载残留"
+                        <TextBlock Text="强制卸载残留"
                                    FontSize="21" FontWeight="SemiBold"
                                    Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
                         <TextBlock Text="注册表项默认勾选；安装目录、用户数据目录、快捷方式和 MSI 记录默认不勾选，勾选后会删除真实文件。"

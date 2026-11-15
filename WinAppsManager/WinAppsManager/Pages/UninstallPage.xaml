@@ -116,7 +116,7 @@
                     <ContextMenu>
                         <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
                         <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
-                        <MenuItem Header="深度清理残留…" Click="ContextDeepClean_OnClick"/>
+                        <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                         <Separator/>
                         <MenuItem Header="打开官网" Click="ContextOpenWebsite_OnClick"/>
                         <MenuItem Header="复制软件名称" Click="ContextCopyName_OnClick"/>
@@ -207,7 +207,7 @@
                     <ContextMenu>
                         <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
                         <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
-                        <MenuItem Header="深度清理残留…" Click="ContextDeepClean_OnClick"/>
+                        <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                         <Separator/>
                         <MenuItem Header="打开官网" Click="ContextOpenWebsite_OnClick"/>
                         <MenuItem Header="复制软件名称" Click="ContextCopyName_OnClick"/>
@@ -301,7 +301,7 @@
                                 <ContextMenu>
                                     <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
                                     <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
-                                    <MenuItem Header="深度清理残留…" Click="ContextDeepClean_OnClick"/>
+                                    <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                                     <Separator/>
                                     <MenuItem Header="打开官网" Click="ContextOpenWebsite_OnClick"/>
                                     <MenuItem Header="复制软件名称" Click="ContextCopyName_OnClick"/>
@@ -508,11 +508,11 @@
                         Visibility="Collapsed" Click="ClearSelectionButton_OnClick"
                         AutomationProperties.Name="清除全部选择"/>
 
-                <Button x:Name="DeepCleanButton" Grid.Column="4" Content="深度清理"
+                <Button x:Name="DeepCleanButton" Grid.Column="4" Content="强制卸载"
                         Height="34" Padding="12,0" Margin="10,0,0,0"
                         IsEnabled="False" Click="DeepCleanButton_OnClick"
-                        ToolTip="扫描该软件在注册表中的残留，按需勾选删除"
-                        AutomationProperties.Name="深度清理所选软件的注册表残留"/>
+                        ToolTip="强制卸载：扫描并清理该软件卸载后的注册表、目录和快捷方式残留"
+                        AutomationProperties.Name="强制卸载所选软件（清理残留）"/>
 
                 <Button x:Name="UninstallButton" Grid.Column="5" Content="卸载所选"
                         Height="34" Padding="14,0" Margin="10,0,0,0"

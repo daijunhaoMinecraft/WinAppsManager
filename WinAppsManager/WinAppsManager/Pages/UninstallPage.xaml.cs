@@ -718,7 +718,71 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         var progress = new UninstallProgressWindow(applications) { Owner = owner };
         progress.ShowDialog();
         AppLogService.Info($"卸载批次结束：{progress.Summary} 耗时 {stopwatch.ElapsedMilliseconds} ms。");
+        var successful = progress.Results
+            .Where(result => result.IsSuccess && result.ExitCode == 0)
+            .Select(result => result.App)
+            .ToArray();
         await RefreshAfterUninstallAsync(progress.Summary);
+        if (successful.Length > 0)
+        {
+            await AutoCleanAfterUninstallAsync(successful, progress.Summary);
+        }
+    }
+
+    /// <summary>
+    /// 正常卸载退出码为 0 且核对为“已卸载”后，自动执行安全残留清理；危险项仍留给
+    /// “强制卸载”手动确认，避免自动删除安装目录/用户数据。
+    /// </summary>
+    private async Task AutoCleanAfterUninstallAsync(IReadOnlyList<InstalledApplication> applications, string batchSummary)
+    {
+        if (applications.Count == 0)
+        {
+            return;
+        }
+
+        _statusText = $"{batchSummary} 正在自动清理残留…";
+        UpdateChrome();
+        AppLogService.Info(
+            $"开始卸载后自动深度清理：{applications.Count} 个软件（{DescribeApplications(applications)}）。");
+
+        int deleted = 0;
+        int failed = 0;
+        int errors = 0;
+        foreach (var application in applications)
+        {
+            try
+            {
+                var summary = await AutoLeftoverCleaner.CleanAsync(application);
+                deleted += summary.Deleted;
+                failed += summary.Failed;
+                AppLogService.Info(
+                    $"自动深度清理完成：{application.Name}（{application.Id}），删除 {summary.Deleted} 项，" +
+                    $"失败 {summary.Failed} 项。");
+            }
+            catch (Exception exception) when (exception is not OutOfMemoryException)
+            {
+                errors++;
+                AppLogService.Warn(
+                    $"自动深度清理失败：{application.Name}（{application.Id}），" +
+                    $"{exception.GetType().Name}：{exception.Message}",
+                    exception);
+            }
+        }
+
+        string text = $"{batchSummary} 自动深度清理：删除 {deleted} 项残留";
+        if (failed > 0)
+        {
+            text += $"，{failed} 项删除失败";
+        }
+
+        if (errors > 0)
+        {
+            text += $"，{errors} 个软件扫描失败";
+        }
+
+        _statusText = text + "。";
+        AppLogService.Info(text + "。");
+        UpdateChrome();
     }
 
     /// <summary>日志用的简短软件清单：最多列出 5 个名称，避免一次卸载很多时日志行过长。</summary>

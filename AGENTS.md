@@ -63,6 +63,7 @@ WinAppsManager/
         UninstallVerifier.cs              卸载后按注册表/包核对是否真的移除
         LeftoverScanner.cs                残留扫描：注册表 + 文件夹 + 快捷方式 + MSI
         LeftoverCleaner.cs                按类型分派残留删除（注册表 / 文件）
+        AutoLeftoverCleaner.cs            卸载成功后自动清理默认安全残留
         RegistryLeftoverCleaner.cs        勾选注册表残留的受控删除
         FileLeftoverCleaner.cs            勾选文件/文件夹/快捷方式的受控删除
         ShortcutResolver.cs               通过 WScript.Shell 在 STA 线程解析 .lnk 目标
@@ -373,7 +374,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.3 卸载软件
 
-当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。两者都不做强制删除或卸载后残留清理：
+当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。成功卸载（退出码 0 且核对已卸载）后会自动清理默认安全残留；需要清理安装目录、AppData、快捷方式等危险项时，用户可点击“强制卸载”手动确认。
 
 - `InstalledApplicationProvider` 读取 `HKLM` 的 64/32 位视图和 `HKCU` 的 `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`。
 - 分类在 `InstalledApplication.Classify`（四个视图）：`SystemComponent=1` → 系统组件；`ParentKeyName` 非空、`NoRemove=1`、`ReleaseType` 为更新/修补程序 → 隐藏组件；其余 → 应用程序；商店应用由 `StoreApplicationProvider` 单独标记。只丢弃没有 `DisplayName` 的条目，没有 `UninstallString` 的普通应用程序也丢弃，系统/隐藏组件保留（仍可用于深度清理）。
@@ -398,7 +399,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - `UninstallRunner` 用 `UseShellExecute=true` 启动（Windows 处理 UAC 与文件关联），把进程加入 `UninstallProcessJob`（作业对象），先等启动器退出再等作业内进程数归零，因此“启动器退出、卸载在子进程里”也会被完整等待；只有用户停止时 `TerminateJobObject`，失败回退 `Process.Kill(entireProcessTree: true)`。
 - 退出码 0/3010/1641 视为结束，1602/1223 为用户取消，1603/1618/其他非零为失败。启动器退出后仍有子进程存活超过 1.2 秒时，非零退出码不判失败，按“已交接、请刷新列表确认”报告；`ExitCode` 因权限读不到时同样按“已结束”。
 - 每批结束后 `UninstallVerifier` 用注册表键（桌面）或包（商店）核对，以核对结论覆盖退出码：键已不存在即成功，仍存在则失败并显示“仍有残留”，这是“卸载是否真的成功”的唯一依据；net6 目标无 WinRT，商店包无法核对时返回“无法判定”。
-- 工具栏“深度清理”或行右键“深度清理残留…”打开 `DeepCleanWindow`，结果树默认收起。`LeftoverScanner` 只读扫描九组：注册表侧（卸载登记项、`HKCU/HKLM\Software` 同名键、Run/RunOnce、`Explorer\StartupApproved` 的 Run/StartupFolder 值、Services、App Paths），命中规则是“键名等于软件名或安装目录名”或“键值仍指向安装目录”；文件侧是安装目录、AppData/ProgramData 同名目录、开始菜单与桌面快捷方式；MSI 侧按卸载键 ProductCode 查 `Installer\UserData\<SID>\Products`、`Installer\Products` 和 `Installer\Folders`（字节反序压缩 GUID）。
+- 工具栏“强制卸载”或行右键“强制卸载（清理残留）…”打开 `DeepCleanWindow`，结果树默认收起。`LeftoverScanner` 只读扫描九组：注册表侧（卸载登记项、`HKCU/HKLM\Software` 同名键、Run/RunOnce、`Explorer\StartupApproved` 的 Run/StartupFolder 值、Services、App Paths），命中规则是“键名等于软件名或安装目录名”或“键值仍指向安装目录”；文件侧是安装目录、AppData/ProgramData 同名目录、开始菜单与桌面快捷方式；MSI 侧按卸载键 ProductCode 查 `Installer\UserData\<SID>\Products`、`Installer\Products` 和 `Installer\Folders`（字节反序压缩 GUID）。
 - 商店应用同样可深度清理：残留是 `HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PolicyCache\<包族名>` 与 `...\AppModel\SystemAppData\<包族名>` 两类状态缓存，`LeftoverScanner.ScanStoreApplication` 按 `PackageFamilyName`（回退 `PackageName`）匹配，作为“商店应用注册表”分组返回（`StoreStateKey`）。
 - 安装目录、AppData、开始菜单程序组递归展开成“文件夹 → 文件”树（每文件一行，带大小和完整路径）；上限 12 层、5000 条，跳过重解析点避免目录环；整树默认不勾选。
 - 快捷方式优先按“目标是否落在安装目录内”匹配：`ShortcutResolver` 在专用 STA 线程用一个 `WScript.Shell` 批量解析 `.lnk`（等价 IShellLink），名称相同兜底。开始菜单程序组只有“一个链接且无其他程序”时整体给出，否则逐个列出；删链接后清理变空的上级目录。
@@ -406,6 +407,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 危险分组（安装目录、用户数据目录、快捷方式、MSI 安装数据库）节点带 `IsRisky`，构造后 `IsChecked = false`，显示“谨慎”徽章并默认不勾选；工具栏“全选”会勾上它们，等于用户显式确认。注册表安全分组默认勾选。
 - 删除由 `LeftoverCleaner` 分派并逐条重校验：注册表侧（`RegistryLeftoverCleaner`）只允许卸载项、App Paths、Services 单层子键、Run/RunOnce/`StartupApproved` 单个值、`Installer\Products` 或 `UserData\<SID>\Products` 单层产品键、`Installer\Folders` 单个值、`AppModel\PolicyCache|SystemAppData\<包族名>`（`StoreStateKey`，仅 HKCU），以及 `SOFTWARE` 下至少两级的软件数据键；`Microsoft`、`Classes`、`Policies`、`Wow6432Node` 等受保护分支一律跳过。文件侧（`FileLeftoverCleaner`）按“先文件、后空目录”：文件必须位于节点 `RootPath` 内且 `RootPath` 通过根目录校验；文件夹只有无子项时才删（`Directory.Delete(recursive:false)`），删文件后清理变空的上级目录，不会连带删除未勾选文件。盘根、`Windows`、`System32`、`Program Files` 本身、`%TEMP%` 和用户个人文件夹一律拒绝。
 - 卸载结果文案保持简短（“已卸载 / 注册表中仍存在该项目 / 卸载失败 / 卸载已取消”），详细原因看退出码或汇总；批次结束或取消后刷新注册表并显示汇总；卸载程序弹出向导时用户需自行操作，本应用只等待。流程不做撤销、回滚或恢复点，不会自动重启，3010/1641 只提示需要重启。
+- **自动残留清理**：批次结束且某软件退出码为 0、核对状态为已卸载（`UninstallResult.IsSuccess && ExitCode == 0`）时，`UninstallPage.AutoCleanAfterUninstallAsync` 调用 `AutoLeftoverCleaner.CleanAsync`，只删除 `LeftoverScanner` 默认勾选且非 `IsRisky` 的安全残留（注册表卸载项/启动项等）；安装目录、AppData、快捷方式、MSI 记录等危险项仍由用户点“强制卸载”手动确认。自动清理失败只写日志和状态，不影响卸载结果。
 
 ### 6.4 下载流程
 
