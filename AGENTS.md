@@ -526,7 +526,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 6.13 客户端日志
 
-`Services/AppLogService.cs`：文件日志写到 `%LOCALAPPDATA%\WinAppsManager\Logs\app-yyyy-MM-dd.log`（UTF-8 无 BOM，按天分文件、单文件 5 MB 后追加序号、保留 14 天），API 为 `Initialize/Shutdown/ApplySettings/Info/Warn/Error/Verbose/OpenLogFolder/GetLogStatistics/CurrentLogFilePath`；`MinimumLevel` 默认 Info，`VerboseLogging` 开启后记录 Verbose；`Enabled` 表示是否写文件（关闭后只输出 Debug/Trace）。设置加载前产生的日志先最多缓存 500 条，首次 `ApplySettings` 时决定落盘或丢弃，因此关闭文件日志时首次启动不会创建日志文件。`App.OnStartup` 最先初始化并注册三个未处理异常钩子（只记录、不改崩溃行为）；目录加载/在线搜索/源与服务端切换、详情与下载地址解析、下载任务生命周期、卸载与深度清理扫描和批次结果、设置加载警告/保存失败、页面切换、窗口关闭均已接线；分页/筛选/滚动/每次进度更新不记录，避免刷屏。设置页日志卡片可查看路径、文件数与大小，并提供启用文件日志、Verbose 开关、“打开日志目录”“复制路径”。**日志禁止记录签名 URL、代理认证信息、GitHub 令牌、证书配置或安装包内容**；只记录应用名/id、阶段、字节数、耗时、路径、主机名、异常类型与消息。日志文件不要提交。
+`Services/AppLogService.cs`：文件日志写到 `%LOCALAPPDATA%\WinAppsManager\Logs\app-yyyy-MM-dd.log`（UTF-8 无 BOM，按天分文件、单文件 5 MB 后追加序号、保留 14 天），API 为 `Initialize/Shutdown/ApplySettings/Info/Warn/Error/Verbose/OpenLogFolder/GetLogStatistics/CurrentLogFilePath`；`MinimumLevel` 默认 Info，`VerboseLogging` 开启后记录 Verbose；`Enabled` 表示是否写文件（关闭后只输出 Debug/Trace）。设置加载前产生的日志先最多缓存 500 条，首次 `ApplySettings` 时决定落盘或丢弃，因此关闭文件日志时首次启动不会创建日志文件。`App.OnStartup` 最先初始化并注册三个未处理异常钩子（只记录、不改崩溃行为）；目录加载/在线搜索/源与服务端切换、详情与下载地址解析、下载任务生命周期、卸载与深度清理扫描和批次结果、设置加载警告/保存失败、页面切换、窗口关闭均已接线；分页/筛选/滚动/每次进度更新不记录，避免刷屏。设置页日志卡片可查看路径、文件数与大小，并提供启用文件日志、Verbose 开关、“打开日志目录”“复制路径”。**日志禁止记录签名 URL、代理认证信息、GitHub 令牌、证书配置或安装包内容**；只记录应用名/id、阶段、字节数、耗时、路径、主机名、异常类型与消息。日志文件不要提交。\n\n设置保存和软件源切换可能在线程池线程触发 `SettingsChanged`/`SourceChanged`；UI 订阅者必须先 `Dispatcher.CheckAccess()` 后切回 UI 线程再更新控件（`SettingsPage.OnSettingsChanged` 已这样做），否则会出现“调用线程无法访问此对象”。软件源切换失败必须在 `SettingsPage.SwitchAppSourceAsync` 的 catch 中用 `AppLogService.Error` 记录来源 ID、异常类型和消息，不能只显示在状态栏。
 
 ## 7. 测试约定
 

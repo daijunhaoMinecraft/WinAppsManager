@@ -312,6 +312,7 @@ public partial class SettingsPage : Page
         string name = SourceNameOf(sourceId);
         _isSwitchingSource = true;
         AppSourceCombo.IsEnabled = false;
+        AppLogService.Info($"用户请求切换软件源：{previous} → {sourceId}（{name}）。");
         SetStatusText(AppSourceStatusText, $"正在切换到{name}并重新加载软件目录…");
         try
         {
@@ -334,6 +335,10 @@ public partial class SettingsPage : Page
             }
 
             string previousName = AppCatalogService.SourceDisplayName;
+            AppLogService.Error(
+                $"切换软件源失败：{previous} → {sourceId}（{name}），已保留{previousName}。" +
+                $"{error.GetType().Name}：{error.Message}",
+                error);
             SetStatusText(AppSourceStatusText,
                 $"切换到{name}失败：{error.Message} 已保留{previousName}。", isError: true);
             _isSynchronizing = true;
@@ -473,7 +478,24 @@ public partial class SettingsPage : Page
 
     private void OnSettingsChanged(object? sender, EventArgs args)
     {
-        RefreshSettings();
+        // AppSettingsService 可能在后台线程保存设置（例如软件源切换），WPF 控件只能在 UI 线程刷新。
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() => OnSettingsChanged(sender, args)));
+            return;
+        }
+
+        try
+        {
+            RefreshSettings();
+        }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            AppLogService.Error(
+                $"刷新设置界面失败（线程 {Environment.CurrentManagedThreadId}）：" +
+                $"{error.GetType().Name}：{error.Message}",
+                error);
+        }
     }
 
     private void RefreshSettings()
