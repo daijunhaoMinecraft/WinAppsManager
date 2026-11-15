@@ -31,7 +31,8 @@ class DocsTests(unittest.TestCase):
     def test_swagger_assets_are_served(self) -> None:
         js = self.client.get("/static/swagger/swagger-ui-bundle.js")
         self.assertEqual(js.status_code, 200)
-        self.assertIn("application/javascript", js.headers.get("content-type", ""))
+        content_type = js.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        self.assertIn(content_type, {"application/javascript", "text/javascript"})
         self.assertGreater(len(js.content), 100_000)
 
         css = self.client.get("/static/swagger/swagger-ui.css")
