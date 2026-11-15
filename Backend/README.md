@@ -8,7 +8,7 @@ FastAPI 为桌面前端提供软件目录、软件详情、版本资源和图标
 
 ## 运行
 
-在此目录中使用 Python 3.10 或更高版本。Windows PowerShell：
+在此目录中使用 Python 3.11 或更高版本（推荐 3.12；`httpx2==2.16.0` 要求 Python 3.11+）。Windows PowerShell：
 
 ```powershell
 python -m venv .venv
@@ -16,7 +16,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-服务默认监听 `127.0.0.1:8080`，接口文档位于 <http://127.0.0.1:8080/docs>（Swagger UI 的 JS/CSS 随后端放在 `static/swagger/`，不依赖外部 CDN）。也可以在此目录中运行：
+服务默认监听 `127.0.0.1:8080`，环境变量 `WINAPPSMANAGER_HOST` / `WINAPPSMANAGER_PORT` 可在启动前覆盖监听地址（systemd 部署示例见 [`docs/deploy.md`](../docs/deploy.md)）；接口文档位于 <http://127.0.0.1:8080/docs>（Swagger UI 的 JS/CSS 随后端放在 `static/swagger/`，不依赖外部 CDN）。也可以在此目录中运行：
 
 ```powershell
 .\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8080

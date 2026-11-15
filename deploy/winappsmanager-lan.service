@@ -1,0 +1,24 @@
+[Unit]
+Description=WinAppsManager Backend (LAN, port 8020)
+Documentation=file:///home/daijunhao/ServerProject/Python/WinAppsManagerBackend/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=daijunhao
+Group=daijunhao
+WorkingDirectory=/home/daijunhao/ServerProject/Python/WinAppsManagerBackend
+Environment=PYTHONUNBUFFERED=1
+Environment=WINAPPSMANAGER_HOST=0.0.0.0
+Environment=WINAPPSMANAGER_PORT=8020
+ExecStart=/home/daijunhao/ServerProject/Python/WinAppsManagerBackend/.venv/bin/python main.py
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

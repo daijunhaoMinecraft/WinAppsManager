@@ -37,7 +37,7 @@ Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 
 
 ### 1. 启动后端
 
-要求 Python 3.10+。
+要求 Python 3.11+（推荐 3.12；`httpx2 2.16` 要求 Python 3.11+）。
 
 ```powershell
 python -m venv Backend\.venv

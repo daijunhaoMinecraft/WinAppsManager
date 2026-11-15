@@ -9,7 +9,7 @@
 
 ## 0. 前置条件
 
-- 一台可运行 Python 3.10+ 的 Linux 服务器（推荐 Ubuntu 22.04/24.04）。
+- 一台可运行 Python 3.11+ 的 Linux 服务器（推荐 Ubuntu 24.04 + Python 3.12；`httpx2 2.16` 要求 3.11+）。
 - 一个域名（例如 `api.example.com`）及可用的 80/443 端口。
 - 服务器能访问 GitHub API、联想 PC 商店与联想图片/视频 CDN。
 - 客户端通过设置页“服务端地址”填写 `https://api.example.com/`，因此必须配置 TLS；
@@ -37,7 +37,7 @@ curl http://127.0.0.1:8080/api/v1/health
 sudo mkdir -p /opt/winappsmanager
 sudo git clone https://github.com/daijunhaoMinecraft/WinAppsManager.git /opt/winappsmanager
 cd /opt/winappsmanager/Backend
-sudo python3 -m venv .venv
+sudo python3.12 -m venv .venv
 sudo .venv/bin/python -m pip install -r requirements.txt
 sudo mkdir -p .cache
 sudo chown -R www-data:www-data /opt/winappsmanager/Backend/.cache
@@ -67,6 +67,42 @@ sudo systemctl reload caddy
 3. 按需限制 `/docs` 公网访问；
 4. 设置合理的请求体大小与超时（视频代理是流式转发，读取超时不要太短）。
 
+## 2.5 方式 C：局域网 systemd 直连 8020
+
+如果服务器只在内网使用，不需要域名和 HTTPS 反向代理，可以直接让 systemd 监听 `0.0.0.0:8020`。仓库模板见 [`deploy/winappsmanager-lan.service`](../deploy/winappsmanager-lan.service)。
+
+```bash
+# 1. 准备代码和 Python 3.12 虚拟环境（httpx2 2.16 要求 Python >= 3.11）
+cd /home/daijunhao/ServerProject/Python/WinAppsManagerBackend
+/usr/bin/python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 2. 安装并启用 systemd 单元（模板位于仓库根目录 deploy/，以下用占位路径）
+sudo cp /path/to/WinAppsManager/deploy/winappsmanager-lan.service /etc/systemd/system/winappsmanager-backend.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now winappsmanager-backend.service
+
+# 3. 检查
+systemctl status winappsmanager-backend.service --no-pager
+curl http://127.0.0.1:8020/api/v1/health
+```
+
+该单元使用 `WINAPPSMANAGER_HOST=0.0.0.0`、`WINAPPSMANAGER_PORT=8020`，日志同时写入 journal 和 `Backend/.cache/logs/backend.log`：
+
+```bash
+journalctl -u winappsmanager-backend.service -f
+tail -f .cache/logs/backend.log
+```
+
+首次启动如果还没有目录快照，可主动刷新一次目录（否则联想/360 会等待各自的定时刷新间隔）：
+
+```bash
+curl -X POST http://127.0.0.1:8020/api/v1/sources/lenovo/refresh
+curl -X POST http://127.0.0.1:8020/api/v1/sources/soft360/refresh
+curl http://127.0.0.1:8020/api/v1/sources
+```
+
+**安全提醒**：后端没有用户认证，`0.0.0.0:8020` 只能用于可信内网；不要直接把该端口映射到公网。需要公网访问时请使用第 1/2 节的 HTTPS 反向代理方案，并只在代理层暴露必要路径。
 ## 3. 客户端接入
 
 1. 客户端 → 设置 → 服务端地址：填写 `https://api.example.com/`，点击“应用”/“测试连接”。

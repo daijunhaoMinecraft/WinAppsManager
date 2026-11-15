@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 import logging
+import os
 from pathlib import Path
 import time
 from types import SimpleNamespace
@@ -59,8 +60,13 @@ else:
 logger = logging.getLogger("winappsmanager.main")
 
 APP_VERSION = "1.0.0"
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8080
+DEFAULT_HOST = os.environ.get("WINAPPSMANAGER_HOST", "127.0.0.1").strip() or "127.0.0.1"
+try:
+    DEFAULT_PORT = int(os.environ.get("WINAPPSMANAGER_PORT", "8080"))
+except ValueError:
+    raise RuntimeError("WINAPPSMANAGER_PORT 必须是整数。") from None
+if not 1 <= DEFAULT_PORT <= 65535:
+    raise RuntimeError("WINAPPSMANAGER_PORT 必须在 1–65535 之间。")
 BASE_DIR = Path(__file__).resolve().parent
 DATA_FILE = BASE_DIR / "data" / "apps.json"
 ICON_DIR = BASE_DIR / "icon"

@@ -7,7 +7,7 @@
 WinAppsManager 是一个 Windows 软件管理器：
 
 - **前端**：WPF，单一目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11 共用一套构建），使用 iNKORE.UI.WPF.Modern 控件与主题。商店应用不依赖 WinRT：Windows 10/11 通过 Windows PowerShell `Get-AppxPackage` 自动启用，Windows 7/8 只显示桌面软件。软件源完全由服务端 `/api/v1/sources` 下发，客户端不硬编码来源 ID、名称、接口路径或能力分支。
-- **后端**：Python 3.10+ / FastAPI，默认监听 `127.0.0.1:8080`；同时提供**联想应用商店**（默认源，目录约 5111 款，服务端代理联想 PC 商店接口并缓存）、**360 软件管家**（服务端代理 360 应用中心，默认各分类热门子集约 5940 款）与**内置精选**（`/api/v1/apps` 等既有接口）三个软件源。
+- **后端**：Python 3.11+ / FastAPI，默认监听 `127.0.0.1:8080`；同时提供**联想应用商店**（默认源，目录约 5111 款，服务端代理联想 PC 商店接口并缓存）、**360 软件管家**（服务端代理 360 应用中心，默认各分类热门子集约 5940 款）与**内置精选**（`/api/v1/apps` 等既有接口）三个软件源。
 - **职责划分**：后端维护软件目录、官网版本解析、下载地址签名、图标与缓存；客户端负责展示、筛选、下载任务、进度、设置和本地缓存。联想接口的调研文档见 `docs/lenovo-store-api.md`，整体设计见 `docs/store-source-design.md`。
 - **客户端后端地址**：默认 `http://127.0.0.1:8080/`，可在设置页“服务端地址”中运行时修改（`AppSettings.BackendBaseUrl`，http/https 绝对地址），切换后重建按服务端隔离的缓存。
 - **当前软件**：内置精选目录 45 款（开发工具 11、社交通讯 10、AI 助手 10、实用工具 5、影音工具 3、系统工具 2、网络与安全 2、办公效率 1、网络浏览 1），默认配置只启用 Clash Verge Rev 与 Telegram 两款（`builtin.app_ids`）；QQ、微信、VS Code、7-Zip、VLC、Firefox、OBS Studio、Notepad++ 与 WorkBuddy、DeepSeek Harness、豆包用 11 个内置专用 provider，其余走通用 GitHub Releases provider。联想源提供约 5000 款软件与游戏，客户端默认使用联想源。
@@ -90,6 +90,7 @@ WinAppsManager/
     soft360-search-api.md                 360 加密搜索接口逆向（AES/RSA/MD5 签名与加解密）
     store-source-design.md                多软件源整体设计与实现契约
     source-api.md                         服务端/客户端统一软件源 API 契约（新增来源只改服务端）
+  deploy/                                 systemd / Caddy 部署模板
   artifacts/ui/                           UI 截图（可选交付物）
   README.md                               项目说明
   Backend/README.md                       后端详细说明
@@ -107,13 +108,13 @@ WinAppsManager/
 
 ## 3. 工具链与前置条件
 
-- 开发机 Windows 10/11（后端要求 Python 3.10+，无法在 Win7 原生运行，见第 10 节）。
+- 开发机 Windows 10/11（后端要求 Python 3.11+，无法在 Win7 原生运行，见第 10 节）。
 - .NET SDK 8 或 10。客户端只有单一目标 `net6.0-windows7.0`（.NET 6 是最后一个官方支持 Windows 7 SP1 的 .NET 版本，已 EOL，`CheckEolTargetFramework=false`）；不要改成 .NET Framework（WPF 与依赖包不支持），也不要重新拆成 net6/net8 双目标。
 - 运行需 .NET 6 Desktop Runtime（Win7 SP1 可安装）。客户端随程序嵌入 `Assets/Fonts/FluentSystemIcons-Regular.ttf`（MIT，来自 Microsoft fluentui-system-icons），并通过 `App.xaml` 的 `Wam.IconFontFamily` 隐式样式替换 `ui:FontIcon` 字体；Win7 没有 Segoe Fluent Icons 时图标不会变成方框。图标数据使用 `ui:FluentSystemIcons.*`，不要改回 `SegoeFluentIcons.*`。发布配置在 `Properties/PublishProfiles`（x64/x86，框架依赖或自包含），同一套输出适用于 Windows 7–11；不再按操作系统拆包。x86 发布（64 位改用 `-r win-x64`）：
   ```powershell
   dotnet publish WinAppsManager\WinAppsManager\WinAppsManager.csproj -c Release -f net6.0-windows7.0 -r win-x86 --self-contained false -p:PublishProfile=Win7-x86
   ```
-- Python 3.10 或更高版本；后端依赖固定在 `Backend/requirements.txt`，不要随意升级或增加依赖。
+- Python 3.11 或更高版本（推荐 3.12；httpx2 2.16 要求 3.11+）；后端依赖固定在 `Backend/requirements.txt`，不要随意升级或增加依赖。
 - WPF 客户端只面向 Windows，不能在没有桌面/WPF 支持的环境运行。
 
 当前关键包版本：
@@ -313,7 +314,7 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | `logging.max_bytes` / `backup_count` | `5242880` / `5` | 单文件轮转大小（>=1024）/ 备份数量（1–50） |
 | `logging.console` | `true` | 是否同时输出到控制台 |
 
-环境变量为 `WINAPPSMANAGER_` + 配置项大写路径（如 `WINAPPSMANAGER_CACHE_MAX_STALE_SECONDS`、`WINAPPSMANAGER_GITHUB_TOKEN`），完整清单见 `Backend/README.md`。
+环境变量为 `WINAPPSMANAGER_` + 配置项大写路径（如 `WINAPPSMANAGER_CACHE_MAX_STALE_SECONDS`、`WINAPPSMANAGER_GITHUB_TOKEN`），完整清单见 `Backend/README.md`。监听地址/端口由 `WINAPPSMANAGER_HOST` / `WINAPPSMANAGER_PORT` 覆盖（默认 `127.0.0.1:8080`）；内网 systemd 直连 8020 的示例见 `docs/deploy.md`，不要在没有认证/HTTPS 的情况下直接暴露公网。
 
 GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含空白，`github.api_base` 必须是无空白 https；令牌只作 `Authorization: Bearer ...` 请求头，不写日志/缓存/响应（`/cache` 脱敏见第 9 节）。
 
@@ -644,7 +645,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 安装包验证按容器类型进行（`.exe` 查 MZ+PE，`.msi` 查 OLE，`.msu` 查 CAB `MSCF`，`.msix/.msixbundle/.appx` 查 ZIP），并可选校验 SHA256；没有代码签名验证。
 - 内存占用下限由 WPF + iNKORE 主题决定：实测启动后私有内存约 116 MB / 工作集约 192 MB；去掉 `ui:XamlControlsResources` 可降到约 99 MB（≈17 MB 是主题字典）。再往下压只有换主题或改用 R2R/裁剪，属于产品级取舍。
 - 45 款目录中声明 x86 安装包的只有 13 款（QQ、微信、7-Zip、Telegram、VLC、Firefox、OBS Studio、Notepad++、PowerShell 7、GitHub CLI、Rocket.Chat、Ferdium、Rufus）；仅声明兼容 Win7 的有 4 款（微信、7-Zip、Telegram、VLC）；32 位系统看不到只提供 x64 的软件。
-- **后端无法在 Windows 7 上原生运行**：要求 Python 3.10+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接本机 `127.0.0.1:8080`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 上目前用不到依赖后端的目录/下载功能（卸载与设置可离线使用）。
+- **后端无法在 Windows 7 上原生运行**：要求 Python 3.11+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接本机 `127.0.0.1:8080`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 上目前用不到依赖后端的目录/下载功能（卸载与设置可离线使用）。
 - 联想源依赖外部网络与联想接口可用性：目录首次抓取约 28 个请求（约 1.5–2 秒），接口变更/限流会让联想源退化为 502/504 或使用陈旧快照；图片直连联想 CDN 需要正常 UA，联想 CDN 对 curl UA 返回 403。内置源默认只启用 Clash Verge Rev 与 Telegram（`builtin.app_ids`），其余 43 款不抓取版本。
 - 自定义服务端地址会让客户端缓存按服务端 URL 隔离（旧服务端的目录/图标缓存不会复用）；远程服务端需要自行处理鉴权/暴露风险，默认只监听 127.0.0.1。
 - WPF 客户端无跨平台支持；同一 net6 构建支持 Windows 7–11，Windows 7/8 没有商店应用（界面会提示），Windows 10/11 自动可用；需要 .NET 6 Desktop Runtime，且 net6 已 EOL、无安全更新。
