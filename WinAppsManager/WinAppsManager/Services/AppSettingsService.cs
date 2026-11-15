@@ -41,6 +41,10 @@ public static class AppSettingsService
     /// <summary>默认后端服务地址。</summary>
     public static string DefaultBackendBaseUrl => AppSettings.DefaultBackendBaseUrl;
 
+    /// <summary>旧版本内置的本机默认服务端；读取设置时自动迁移到当前默认在线服务端。</summary>
+    private const string LegacyDefaultBackendBaseUrl = "http://127.0.0.1:8080/";
+    private const string LegacyLocalhostBackendBaseUrl = "http://localhost:8080/";
+
     /// <summary>当前生效的下载目录：自定义值为空时回退到 <see cref="DefaultDownloadDirectory"/>。</summary>
     public static string ResolvedDownloadDirectory => string.IsNullOrWhiteSpace(Current.DownloadDirectory)
         ? DefaultDownloadDirectory
@@ -177,7 +181,7 @@ public static class AppSettingsService
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri)
             || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
-            throw new ArgumentException("服务端地址必须是 http:// 或 https:// 开头的绝对地址，例如 http://127.0.0.1:8080/。", nameof(url));
+            throw new ArgumentException($"服务端地址必须是 http:// 或 https:// 开头的绝对地址，例如 {DefaultBackendBaseUrl}。", nameof(url));
         }
 
         if (!string.IsNullOrEmpty(uri.UserInfo))
@@ -477,6 +481,7 @@ public static class AppSettingsService
             }
 
             var warnings = new List<string>();
+            var migratedBackend = false;
             Current = new AppSettings { Theme = settings.Theme };
             if (settings.DownloadConnections.ValueKind != JsonValueKind.Undefined)
             {
@@ -594,11 +599,19 @@ public static class AppSettingsService
                 if (TryReadString(backendElement, out var backendText)
                     && TryNormalizeBackendBaseUrl(backendText, out var normalizedBackend))
                 {
+                    if (string.Equals(normalizedBackend, LegacyDefaultBackendBaseUrl, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(normalizedBackend, LegacyLocalhostBackendBaseUrl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // 旧版本默认是本机后端；部署在线服务端后，把仍在使用旧默认值的用户迁移过去。
+                        normalizedBackend = DefaultBackendBaseUrl;
+                        migratedBackend = true;
+                    }
+
                     Current.BackendBaseUrl = normalizedBackend;
                 }
                 else
                 {
-                    warnings.Add("保存的服务端地址无效，已恢复为默认地址 http://127.0.0.1:8080/。");
+                    warnings.Add($"保存的服务端地址无效，已恢复为默认地址 {DefaultBackendBaseUrl}。");
                 }
             }
 
@@ -672,11 +685,24 @@ public static class AppSettingsService
                 }
             }
 
-            LastError = warnings.Count > 0 ? string.Join(" ", warnings) : null;
-            if (LastError is not null)
+            if (migratedBackend)
+            {
+                if (SaveSettings())
+                {
+                    AppLogService.Info($"旧版默认服务端已迁移到 {DefaultBackendBaseUrl}，并已写回设置文件。");
+                }
+                else
+                {
+                    AppLogService.Warn($"旧版默认服务端已迁移到 {DefaultBackendBaseUrl}，但设置文件保存失败；本次运行仍使用新地址。");
+                }
+            }
+
+            LastError = warnings.Count > 0 ? string.Join(" ", warnings) : LastError;
+            if (warnings.Count > 0)
             {
                 AppLogService.Warn($"设置加载时发现 {warnings.Count} 条警告，已使用修正后的值：{LastError}");
             }
+
         }
         catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
         {

@@ -68,7 +68,7 @@
             <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
                 <StackPanel>
                     <TextBlock Text="服务端地址" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="客户端从这里获取软件目录、详情、图标和下载地址。默认连接本机 http://127.0.0.1:8080/，也可以填写局域网或远程后端地址（http/https）。切换后软件目录会重新加载，已经开始的下载任务不受影响。"
+                    <TextBlock Text="客户端从这里获取软件目录、详情、图标和下载地址。默认连接在线服务端 https://winapps.theconsole.top/，也可以填写局域网或自建后端地址（http/https）。切换后软件目录会重新加载，已经开始的下载任务不受影响。"
                                Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,0"/>
                     <Grid Margin="0,14,0,0">
                         <Grid.ColumnDefinitions>

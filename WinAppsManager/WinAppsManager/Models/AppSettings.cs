@@ -17,7 +17,7 @@ public enum ProxyMode
 public sealed class AppSettings
 {
     /// <summary>默认后端地址；客户端所有目录/详情/图标/下载解析请求都以它为根。</summary>
-    public const string DefaultBackendBaseUrl = "http://127.0.0.1:8080/";
+    public const string DefaultBackendBaseUrl = "https://winapps.theconsole.top/";
 
     public ThemePreference Theme { get; set; } = ThemePreference.System;
     public int DownloadConnections { get; set; } = InstallerDownloadOptions.DefaultConnections;

@@ -35,7 +35,7 @@ Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 
 
 仓库当前为私有，暂未提供预编译安装包；可以从源码构建运行。
 
-### 1. 启动后端
+### 1. 可选：本地启动后端
 
 要求 Python 3.11+（推荐 3.12；`httpx2 2.16` 要求 Python 3.11+）。
 
@@ -45,7 +45,7 @@ Backend\.venv\Scripts\python.exe -m pip install -r Backend\requirements.txt
 Backend\.venv\Scripts\python.exe Backend\main.py
 ```
 
-后端默认监听 `http://127.0.0.1:8080`，接口文档 <http://127.0.0.1:8080/docs>。
+后端默认监听 `http://127.0.0.1:8080`，接口文档 <http://127.0.0.1:8080/docs>。客户端默认连接在线服务端 `https://winapps.theconsole.top/`，本地运行时无需额外启动后端；需要本地开发或自建服务时可在设置中切换服务端地址。
 
 ### 2. 启动客户端
 
@@ -60,7 +60,7 @@ dotnet run --project WinAppsManager\WinAppsManager\WinAppsManager.csproj
 
 ## 使用方法
 
-1. 启动后端和客户端，客户端默认连接本机后端。
+1. 启动客户端，默认连接在线服务端 `https://winapps.theconsole.top/`；本地开发可启动 `Backend` 后在设置中切换为 `http://127.0.0.1:8080/`。
 2. 在**设置 → 软件源**选择需要的软件源；列表和服务端地址均可修改，来源能力（分类、搜索方式、截图/视频等）由服务端下发。
 3. 在**软件列表**搜索或按分类浏览，打开详情查看截图并点击“开始下载”。
 4. 下载任务进入**下载中心**，完成后可打开安装包或下载文件夹。

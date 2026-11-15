@@ -9,7 +9,7 @@ WinAppsManager 是一个 Windows 软件管理器：
 - **前端**：WPF，单一目标 `net6.0-windows7.0`（Windows 7 SP1 / 8 / 8.1 / 10 / 11 共用一套构建），使用 iNKORE.UI.WPF.Modern 控件与主题。商店应用不依赖 WinRT：Windows 10/11 通过 Windows PowerShell `Get-AppxPackage` 自动启用，Windows 7/8 只显示桌面软件。软件源完全由服务端 `/api/v1/sources` 下发，客户端不硬编码来源 ID、名称、接口路径或能力分支。
 - **后端**：Python 3.11+ / FastAPI，默认监听 `127.0.0.1:8080`；同时提供**联想应用商店**（默认源，目录约 5111 款，服务端代理联想 PC 商店接口并缓存）、**360 软件管家**（服务端代理 360 应用中心，默认各分类热门子集约 5940 款）与**内置精选**（`/api/v1/apps` 等既有接口）三个软件源。
 - **职责划分**：后端维护软件目录、官网版本解析、下载地址签名、图标与缓存；客户端负责展示、筛选、下载任务、进度、设置和本地缓存。联想接口的调研文档见 `docs/lenovo-store-api.md`，整体设计见 `docs/store-source-design.md`。
-- **客户端后端地址**：默认 `http://127.0.0.1:8080/`，可在设置页“服务端地址”中运行时修改（`AppSettings.BackendBaseUrl`，http/https 绝对地址），切换后重建按服务端隔离的缓存。
+- **客户端后端地址**：默认 `https://winapps.theconsole.top/`（在线部署服务端），可在设置页“服务端地址”中运行时修改（`AppSettings.BackendBaseUrl`，http/https 绝对地址）；旧版默认 `http://127.0.0.1:8080/` 会在读取设置时自动迁移到在线地址，切换后重建按服务端隔离的缓存。
 - **当前软件**：内置精选目录 45 款（开发工具 11、社交通讯 10、AI 助手 10、实用工具 5、影音工具 3、系统工具 2、网络与安全 2、办公效率 1、网络浏览 1），默认配置只启用 Clash Verge Rev 与 Telegram 两款（`builtin.app_ids`）；QQ、微信、VS Code、7-Zip、VLC、Firefox、OBS Studio、Notepad++ 与 WorkBuddy、DeepSeek Harness、豆包用 11 个内置专用 provider，其余走通用 GitHub Releases provider。联想源提供约 5000 款软件与游戏，客户端默认使用联想源。
 - **GitHub 认证**：通用 GitHub provider 支持可选的 API 令牌（未认证 60 次/小时，带令牌 5000 次/小时）；令牌只放在被 gitignore 的 `Backend/config.local.json` 或环境变量 `WINAPPSMANAGER_GITHUB_TOKEN`，绝不写日志、缓存或 API 响应。
 - **下载**：客户端分段并发下载，下载任务统一显示在“下载中心”；详情页负责发起任务和显示链接。安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`，可在设置页自定义下载目录。
@@ -469,7 +469,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 | `CustomProxyUrl` | `""` | http(s) 代理地址 |
 | `IgnoreCertificateErrors` | `false` | 危险，仅调试 |
 | `SourceId` | `""` | 服务端 `/sources` 下发的来源 ID；空=跟随服务端默认源；旧 `AppSource`（Lenovo/BuiltIn/Soft360）仅读取时一次性迁移 |
-| `BackendBaseUrl` | `http://127.0.0.1:8080/` | 后端服务地址；必须是 http/https 绝对地址、无 userinfo/query/fragment，保存时规整末尾斜杠；切换后重建 HttpClient 与按服务端隔离的缓存 |
+| `BackendBaseUrl` | `https://winapps.theconsole.top/` | 后端服务地址；必须是 http/https 绝对地址、无 userinfo/query/fragment，保存时规整末尾斜杠；旧版默认 `http://127.0.0.1:8080/` 读取时自动迁移；切换后重建 HttpClient 与按服务端隔离的缓存 |
 | `EnableFileLogging` | `true` | 是否写客户端文件日志；关闭后只输出 Debug/Trace，保存后立即生效 |
 | `VerboseLogging` | `false` | 是否记录 Verbose 级别（分段下载、页面细节等）；保存后立即生效，`EnableFileLogging=false` 时无意义 |
 
