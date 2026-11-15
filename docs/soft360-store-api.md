@@ -126,7 +126,7 @@ GET https://mgr.soft.360.cn/main/cdn_client/v1/soft/getinfo
   360 CDN 与厂商 URL，`|||` 分隔），另有 `multi_urls` 可能包含候选地址；应使用正则提取全部
   `http(s)://` 候选。
 - 优先 `https`（`cdn-download.soft.360.cn` 等），没有 https 时退回 http；扩展名只接受
-  `.exe/.msi/.msix/.appx`；文件名用 `down.default.name` 清洗；`size` 用 `down.default.size`
+  `.exe/.msi/.msix/.appx/.msu`；文件名用 `down.default.name` 清洗；`size` 用 `down.default.size`
   或 `soft_size`；`md5` 不是 sha256，不要写入 `sha256` 字段。
 - 安装包 CDN 支持 Range（实测 `Range: bytes=0-1` 返回 206，首字节 `MZ`）。
 

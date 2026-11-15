@@ -244,7 +244,7 @@ Backend/lenovo/service.py      LenovoStoreService 门面（路由只依赖它）
 - 地址优先级：`hs2` > `bs2` > `amsHttpsDownloadUrl` > `firstOldDownloadUrl` > `secondOldDownloadUrl`，
   只接受 https；没有可用地址 → `LenovoUnavailableError`（502）。
 - `file_name`：`urllib.parse.unquote(data.fileName)` 后按 `models.Release` 的 Windows 文件名规则清洗；
-  非法/缺失时回退 `{安全应用名}_{版本}.exe`；扩展名只接受 `.exe/.msi/.msix/.appx`，否则同样回退 `.exe`。
+  非法/缺失时回退 `{安全应用名}_{版本}.exe`；扩展名只接受 `.exe/.msi/.msix/.appx/.msu`，否则同样回退 `.exe`。
 - `architecture`：请求参数在 `supportOsbit` 支持范围内则用它；否则 x64 优先，其次 x86。
 - `size_bytes` 取目录 summary 的解析值（对联想的 `installFileSize` 是安装体积，不是字节级精确值，
   仅用于展示）。
@@ -471,7 +471,7 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
    单次最多约 51 个 id；字段含 version、corp、desc、snapshot、logo、baoku_cate、edition_info.default_edition
    （os.bit/os.ver、down.default.name/size/md5/p2p）。
 4. **下载**：从 `p2p` 的 `pdown://...|https://...|||https://...` 字符串与 `multi_urls` 中正则提取候选 URL，
-   优先 https，扩展名限 `.exe/.msi/.msix/.appx`，文件名清洗；md5 不写入 `sha256`；详情/下载 URL 不缓存。
+   优先 https，扩展名限 `.exe/.msi/.msix/.appx/.msu`，文件名清洗；md5 不写入 `sha256`；详情/下载 URL 不缓存。
 5. **图片**：logo/snapshot 在 `*.qhimg.com`/`*.mediav.com`，后端代理缓存（ETag/304，30 天、256MB 上限），
    http 地址规范化为 https；客户端图标直连 CDN 白名单（qhimg/mediav/qhres2/qhres），失败回退后端。
 6. **搜索**：页面搜索走 `enc_client/v2/search/*` 加密签名接口，本项目已在 `Backend/soft360/search.py` 逆向（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，算法见 `docs/soft360-search-api.md`）；`/api/v1/store/360/search`

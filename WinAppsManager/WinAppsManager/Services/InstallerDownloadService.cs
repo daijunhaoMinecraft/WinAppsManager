@@ -443,8 +443,8 @@ public sealed class InstallerDownloadService
         return candidate;
     }
 
-    /// <summary>安装包扩展名白名单：EXE 用 PE 头校验，MSI 是 OLE 容器，MSIX/APPX 是 ZIP 容器。</summary>
-    private static readonly string[] InstallerExtensions = [".exe", ".msi", ".msix", ".msixbundle", ".appx"];
+    /// <summary>安装包扩展名白名单：EXE 用 PE 头校验，MSI 是 OLE 容器，MSIX/APPX 是 ZIP 容器，MSU 是 CAB 容器。</summary>
+    private static readonly string[] InstallerExtensions = [".exe", ".msi", ".msix", ".msixbundle", ".appx", ".msu"];
 
     private static bool IsSupportedInstallerFile(string fileName) =>
         InstallerExtensions.Any(extension => fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase));
@@ -481,12 +481,16 @@ public sealed class InstallerDownloadService
         var prefix = new byte[8];
         if (stream.Length < 8) throw new InvalidDataException("下载内容不是有效的 Windows 安装包。");
         await BclCompat.ReadExactlyAsync(stream, prefix, ct).ConfigureAwait(false);
-        var valid = extension == ".msi"
+        var valid = extension switch
+        {
             // OLE 复合文档（MSI 数据库）签名
-            ? prefix[0] == 0xD0 && prefix[1] == 0xCF && prefix[2] == 0x11 && prefix[3] == 0xE0
-              && prefix[4] == 0xA1 && prefix[5] == 0xB1 && prefix[6] == 0x1A && prefix[7] == 0xE1
+            ".msi" => prefix[0] == 0xD0 && prefix[1] == 0xCF && prefix[2] == 0x11 && prefix[3] == 0xE0
+                      && prefix[4] == 0xA1 && prefix[5] == 0xB1 && prefix[6] == 0x1A && prefix[7] == 0xE1,
+            // MSU 是 CAB 容器（Windows 更新独立安装程序包）
+            ".msu" => prefix[0] == 0x4D && prefix[1] == 0x53 && prefix[2] == 0x43 && prefix[3] == 0x46,
             // MSIX / APPX 是 ZIP 容器
-            : prefix[0] == 0x50 && prefix[1] == 0x4B && prefix[2] == 0x03 && prefix[3] == 0x04;
+            _ => prefix[0] == 0x50 && prefix[1] == 0x4B && prefix[2] == 0x03 && prefix[3] == 0x04
+        };
         if (!valid) throw new InvalidDataException("下载内容不是有效的 Windows 安装包。");
     }
 

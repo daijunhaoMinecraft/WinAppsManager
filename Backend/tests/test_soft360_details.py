@@ -494,6 +494,25 @@ class DownloadResolutionTests(unittest.IsolatedAsyncioTestCase):
             "https://cdn-download.soft.360.cn/softmanager-installation/20260101/1010_x.exe",
         )
 
+    async def test_p2p_pdown_descriptor_extracts_trailing_msu_url(self):
+        info = info_payload()
+        down = info["edition_info"]["default_edition"]["down"]["default"]
+        down["name"] = "windows7升级SP1补丁包_6.1.7601.17514.msu"
+        down["p2p"] = (
+            "pdown://p2=7352352C2250BAA47F8D13D5326314A28C5511F8|b2=35919018"
+            "|p3=20|p4=4200|p5=6|h1=1900008071_|h3=120|h7=3|b5=360软件管理"
+            "|b6=windows7升级SP1补丁包|b7=1|b9=1"
+            "|http://softdl.360tpcdn.com/auto/20230217/"
+            "1900008071_b00c7d68e01927433b3a322c796e88af.msu"
+        )
+        down.pop("multi_urls")
+        release, _requests = await self._resolve(info)
+        self.assertEqual(
+            str(release.download_url),
+            "http://softdl.360tpcdn.com/auto/20230217/"
+            "1900008071_b00c7d68e01927433b3a322c796e88af.msu",
+        )
+        self.assertEqual(release.file_name, "windows7升级SP1补丁包_6.1.7601.17514.msu")
     async def test_multi_urls_is_used_when_p2p_has_no_installer(self):
         info = info_payload()
         down = info["edition_info"]["default_edition"]["down"]["default"]

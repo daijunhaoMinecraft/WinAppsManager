@@ -11,7 +11,7 @@
   始终是代理路径，供客户端直连失败时兜底。360 没有视频。
 - 下载：``resolve_download`` 每次都实时请求 ``getinfo``（不读也不写详情缓存），从
   ``edition_info.default_edition.down.default`` 的 ``p2p`` / ``multi_urls`` / ``multi_down``
-  里提取 http(s) 地址，优先 https，扩展名只允许 ``.exe/.msi/.msix/.appx``；文件名用
+  里提取 http(s) 地址，优先 https，扩展名只允许 ``.exe/.msi/.msix/.appx/.msu``；文件名用
   ``down.default.name`` 清洗，缺失或不安全时回退 ``{安全应用名}_{版本}.exe``；大小用
   ``down.default.size`` 或 ``soft_size``；``md5`` **不是** sha256，因此 ``sha256`` 一律为空。
   ``summary`` 可以传 ``None``（目录外软件）：此时名称/大小/架构都从 ``getinfo`` 响应里取。
@@ -71,7 +71,7 @@ DETAILS_SCHEMA_VERSION = 1
 DEFAULT_DETAILS_TTL_SECONDS = 900.0
 DEFAULT_DETAILS_PERSISTENT_TTL_SECONDS = 21600.0
 DEFAULT_DETAILS_MAX_ENTRIES = 256
-ALLOWED_INSTALLER_SUFFIXES = (".exe", ".msi", ".msix", ".appx")
+ALLOWED_INSTALLER_SUFFIXES = (".exe", ".msi", ".msix", ".appx", ".msu")
 # 下载地址候选的字段顺序：p2p 是 360 主推的多线路列表，multi_urls / multi_down 作为补充。
 DOWNLOAD_URL_FIELDS: tuple[str, ...] = ("p2p", "multi_urls", "multi_down")
 DEFAULT_VERSION = "以官网为准"

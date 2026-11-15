@@ -433,9 +433,9 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 - 支持单连接与 Range 分段；分段数受设置线程数、文件大小和 `MinimumSegmentSize` 限制，并检查 Range 支持、Content-Range、ETag/Last-Modified、Content-Length 与内容类型；无法保证分片一致、没有可靠 validator 且无 SHA256 时回退单连接。
 - 每次连接/读取都使用 `InstallerDownloadOptions.Timeout` 作为超时。
-- 允许的安装包后缀是 `.exe`、`.msi`、`.msix`、`.msixbundle`、`.appx`（`InstallerExtensions`）；后端元数据里后缀不在白名单时直接拒绝。
-- 下载完成后按容器校验，而不是一律查 PE 头：`.exe` 检查 `MZ` + `PE\0\0`；`.msi` 检查 OLE 复合文档签名 `D0 CF 11 E0 A1 B1 1A E1`；`.msix/.msixbundle/.appx` 检查 ZIP 头 `50 4B 03 04`（`ValidateInstallerAsync`）。
-- 完整传输后再验证长度、容器签名和可选 SHA256，通过后才移到正式文件名；通用 GitHub provider 只产出 `.exe/.msi/.msix/.msixbundle`，客户端另允许 `.appx`，但不要把 GitHub 资产写成 `.appx`。
+- 允许的安装包后缀是 `.exe`、`.msi`、`.msix`、`.msixbundle`、`.appx`、`.msu`（`InstallerExtensions`）；后端元数据里后缀不在白名单时直接拒绝。`.msu` 是 Windows 更新独立安装程序包（CAB 容器），用于 360 等来源的系统补丁包。
+- 下载完成后按容器校验，而不是一律查 PE 头：`.exe` 检查 `MZ` + `PE\0\0`；`.msi` 检查 OLE 复合文档签名 `D0 CF 11 E0 A1 B1 1A E1`；`.msu` 检查 CAB 签名 `MSCF`；`.msix/.msixbundle/.appx` 检查 ZIP 头 `50 4B 03 04`（`ValidateInstallerAsync`）。
+- 完整传输后再验证长度、容器签名和可选 SHA256，通过后才移到正式文件名；通用 GitHub provider 只产出 `.exe/.msi/.msix/.msixbundle`，客户端另允许 `.appx` 与 360 补丁包的 `.msu`，但不要把 GitHub 资产写成 `.appx`。
 - `.part` 文件在取消/失败时清理；已有安装包不会被覆盖。
 - 下载目录由 `InstallerDownloadService` 构造参数决定：`DownloadCenterService` 传入 `AppSettingsService.ResolvedDownloadDirectory`（自定义目录为空时用 `InstallerDownloadService.DefaultDownloadDirectory`），下载器构造时用 `Path.GetFullPath` 规整；设置页保存时校验绝对路径、展开环境变量并尝试创建目录，非法路径只回退该字段并给出 `LastError`。
 - 默认线程数 4（1–32）、超时 10–300 秒（步进 10）；下载完不自动执行安装包，只有用户点“打开安装包”才打开。
@@ -641,7 +641,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 商店应用卸载只注销当前用户，其他用户不受影响；不保留应用数据，因此 `%LOCALAPPDATA%\Packages\<PFN>` 会一起删除，预置应用可能在下次登录时重新部署。
 - 卸载依赖厂商自己的 `UninstallString`，可能弹出交互式向导、需要管理员权限或返回非零代码；本应用不会静默卸载或强制删除。
 - 深度清理的 MSI 项依赖卸载键里的 ProductCode，非 MSI 软件没有这类记录；MSI 只清理 Products 与 Installer\Folders。AppData 目录依赖“文件夹名等于软件名/安装目录名/卸载键名”，厂商用缩写命名的目录仍可能扫不到。这些分组默认不勾选，删除后同样无法回滚。
-- 安装包验证按容器类型进行（`.exe` 查 MZ+PE，`.msi` 查 OLE，`.msix/.msixbundle/.appx` 查 ZIP），并可选校验 SHA256；没有代码签名验证。
+- 安装包验证按容器类型进行（`.exe` 查 MZ+PE，`.msi` 查 OLE，`.msu` 查 CAB `MSCF`，`.msix/.msixbundle/.appx` 查 ZIP），并可选校验 SHA256；没有代码签名验证。
 - 内存占用下限由 WPF + iNKORE 主题决定：实测启动后私有内存约 116 MB / 工作集约 192 MB；去掉 `ui:XamlControlsResources` 可降到约 99 MB（≈17 MB 是主题字典）。再往下压只有换主题或改用 R2R/裁剪，属于产品级取舍。
 - 45 款目录中声明 x86 安装包的只有 13 款（QQ、微信、7-Zip、Telegram、VLC、Firefox、OBS Studio、Notepad++、PowerShell 7、GitHub CLI、Rocket.Chat、Ferdium、Rufus）；仅声明兼容 Win7 的有 4 款（微信、7-Zip、Telegram、VLC）；32 位系统看不到只提供 x64 的软件。
 - **后端无法在 Windows 7 上原生运行**：要求 Python 3.10+，而 Python 3.9 起已不支持 Win7（3.8 是最后支持版本），当前依赖栈（FastAPI / Pydantic 2 / uvicorn）都要求 Python ≥3.9；客户端默认连接本机 `127.0.0.1:8080`，也可在设置页改成其他服务端地址（远程后端需自行保证网络可达），因此 Win7 上目前用不到依赖后端的目录/下载功能（卸载与设置可离线使用）。
