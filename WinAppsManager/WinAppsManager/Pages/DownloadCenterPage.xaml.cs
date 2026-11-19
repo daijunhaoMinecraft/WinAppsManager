@@ -9,6 +9,8 @@ namespace WinAppsManager.Pages;
 
 public partial class DownloadCenterPage : Page
 {
+    private CancellationTokenSource? _iconLoadCancellation;
+
     public ReadOnlyObservableCollection<DownloadTaskViewModel> Downloads => DownloadCenterService.Downloads;
 
     public event Action? SoftwareListRequested;
@@ -23,11 +25,47 @@ public partial class DownloadCenterPage : Page
     {
         DownloadCenterService.StatusChanged += OnDownloadStatusChanged;
         UpdateChrome();
+
+        _iconLoadCancellation?.Cancel();
+        _iconLoadCancellation = new CancellationTokenSource();
+        _ = LoadTaskIconsAsync(_iconLoadCancellation.Token);
     }
 
     private void Page_OnUnloaded(object sender, RoutedEventArgs args)
     {
         DownloadCenterService.StatusChanged -= OnDownloadStatusChanged;
+        _iconLoadCancellation?.Cancel();
+        _iconLoadCancellation?.Dispose();
+        _iconLoadCancellation = null;
+    }
+
+    /// <summary>
+    /// 历史记录只保存图标的远端地址；重启后需要把它解析成本地图标缓存路径，否则卡片会一直显示文字徽章。
+    /// </summary>
+    private async Task LoadTaskIconsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            foreach (var task in Downloads.ToArray())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!string.IsNullOrWhiteSpace(task.App.DisplayIconSource) ||
+                    (string.IsNullOrWhiteSpace(task.App.IconUrl) &&
+                     string.IsNullOrWhiteSpace(task.App.IconFallbackUrl)))
+                {
+                    continue;
+                }
+
+                await AppCatalogService.EnsureIconAsync(task.App, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            AppLogService.Warn($"加载下载中心图标失败：{exception.GetType().Name}：{exception.Message}");
+        }
     }
 
     private void OnDownloadStatusChanged(object? sender, EventArgs args)

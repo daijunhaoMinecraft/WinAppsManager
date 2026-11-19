@@ -1,20 +1,99 @@
 name: Release
 
+# 发布信息来自仓库根目录的 release.props（版本号/标题/说明文件）和 Release.md（发布说明）。
+# 推送 v<Version> 标签会自动发布；也可以在 Actions 页面手动运行本 workflow 重建资源。
 on:
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag, e.g. v1.3.0"
-        required: true
-        default: "v1.3.0"
-        type: string
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  metadata:
+    name: Read release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      title: ${{ steps.meta.outputs.title }}
+      notes_file: ${{ steps.meta.outputs.notes_file }}
+      latest: ${{ steps.meta.outputs.latest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read release.props and validate tag
+        id: meta
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("release.props").getroot()
+          props = root.find("PropertyGroup")
+          if props is None:
+              sys.exit("release.props 缺少 PropertyGroup")
+
+          version = (props.findtext("Version") or "").strip()
+          tag_prefix = (props.findtext("ReleaseTagPrefix") or "v").strip()
+          title_template = (props.findtext("ReleaseTitle") or "WinAppsManager {tag}").strip()
+          notes_file = (props.findtext("ReleaseNotesFile") or "Release.md").strip()
+          latest = (props.findtext("ReleaseLatest") or "true").strip().lower() == "true"
+
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-.][0-9A-Za-z.-]+)?", version):
+              sys.exit(f"release.props 中的 Version 不合法：{version!r}")
+          if not os.path.isfile(notes_file):
+              sys.exit(f"发布说明文件不存在：{notes_file}")
+
+          tag = f"{tag_prefix}{version}"
+          title = title_template.replace("{tag}", tag).replace("{version}", version)
+
+          if os.environ.get("GITHUB_REF_TYPE") == "tag":
+              actual_tag = os.environ.get("GITHUB_REF_NAME", "")
+              if actual_tag != tag:
+                  sys.exit(f"标签 {actual_tag} 与 release.props 计算的 {tag} 不一致")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"tag={tag}\n")
+              output.write(f"title={title}\n")
+              output.write(f"notes_file={notes_file}\n")
+              output.write(f"latest={'true' if latest else 'false'}\n")
+
+          print(f"version={version}")
+          print(f"tag={tag}")
+          print(f"title={title}")
+          print(f"notes_file={notes_file}")
+          print(f"latest={latest}")
+          PY
+
+      - name: Write summary
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          TITLE: ${{ steps.meta.outputs.title }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          {
+            echo "## Release"
+            echo ""
+            echo "- Version: \`$VERSION\`"
+            echo "- Tag: \`$TAG\`"
+            echo "- Title: $TITLE"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Build ${{ matrix.rid }} self-contained
+    needs: metadata
     runs-on: windows-latest
     strategy:
       fail-fast: true
@@ -29,14 +108,6 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Validate tag
-        shell: pwsh
-        run: |
-          $tag = "${{ inputs.tag }}"
-          if ($tag -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$') {
-            throw "Invalid release tag '$tag'; expected e.g. v1.0.0"
-          }
-
       - name: Publish self-contained client
         shell: pwsh
         run: |
@@ -47,12 +118,12 @@ jobs:
             --self-contained true `
             -p:PublishReadyToRun=false `
             -p:PublishTrimmed=false `
-            -o publish/${{ matrix.rid }}
+            -o "publish/${{ matrix.rid }}"
 
       - name: Package zip
         shell: pwsh
         run: |
-          $tag = "${{ inputs.tag }}"
+          $tag = "${{ needs.metadata.outputs.tag }}"
           New-Item -ItemType Directory -Force -Path release | Out-Null
           $name = "WinAppsManager-$tag-${{ matrix.rid }}-selfcontained.zip"
           Compress-Archive -Path "publish/${{ matrix.rid }}/*" -DestinationPath "release/$name" -CompressionLevel Optimal
@@ -66,9 +137,9 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  create-release:
-    name: Create GitHub Release
-    needs: build
+  publish:
+    name: Publish GitHub Release
+    needs: [metadata, build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -82,31 +153,43 @@ jobs:
           path: release-assets
 
       - name: Validate and list assets
+        env:
+          TAG: ${{ needs.metadata.outputs.tag }}
         run: |
-          tag="${{ inputs.tag }}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid release tag: $tag" >&2
-            exit 1
-          fi
+          set -euo pipefail
           ls -lh release-assets
+          test -f "release-assets/WinAppsManager-${TAG}-win-x64-selfcontained.zip"
+          test -f "release-assets/WinAppsManager-${TAG}-win-x86-selfcontained.zip"
 
-      - name: Create release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+          TITLE: ${{ needs.metadata.outputs.title }}
+          NOTES_FILE: ${{ needs.metadata.outputs.notes_file }}
+          LATEST: ${{ needs.metadata.outputs.latest }}
         run: |
-          tag="${{ inputs.tag }}"
-          notes=$(cat <<'EOF'
-          Windows 7 SP1–11 自包含版，无需安装 .NET 6 Desktop Runtime。
-
-          - `win-x64-selfcontained`：64 位版本
-          - `win-x86-selfcontained`：32 位版本
-
-          下载对应 zip，解压后运行 `WinAppsManager.exe` 即可。客户端默认连接在线服务端，
-          也可以在“设置 → 服务端地址”中改为自建后端。
-          EOF
-          )
-          gh release create "$tag" release-assets/*.zip \
-            --target "$GITHUB_SHA" \
-            --title "WinAppsManager $tag" \
-            --notes "$notes" \
-            --latest
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，覆盖资源与发布说明。"
+            # 旧资源如果不在本次构建中，直接删除，保证 release 内容与项目文件一致。
+            gh release view "$TAG" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                if [ ! -f "release-assets/$asset" ]; then
+                  echo "删除旧资源：$asset"
+                  gh release delete-asset "$TAG" "$asset" --yes
+                fi
+              done
+            gh release upload "$TAG" release-assets/*.zip --clobber
+            gh release edit "$TAG" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --latest="$LATEST"
+          else
+            echo "Release $TAG 不存在，创建新 release。"
+            gh release create "$TAG" release-assets/*.zip \
+              --target "$GITHUB_SHA" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --latest="$LATEST"
+          fi

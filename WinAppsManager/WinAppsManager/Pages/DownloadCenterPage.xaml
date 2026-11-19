@@ -79,13 +79,15 @@
                                 <StackPanel>
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
+                                            <!-- 固定复选框列宽：完成前后都保留这段空间，避免勾选框出现时整行右移。 -->
+                                            <ColumnDefinition Width="30"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
                                         <CheckBox Grid.Column="0"
+                                                  MinWidth="0" Focusable="False"
                                                   IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                                   Visibility="{Binding CanSelectForDeletion, Converter={StaticResource BoolToVisibility}}"
                                                   Checked="InstallerSelection_OnChanged"

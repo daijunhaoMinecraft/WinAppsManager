@@ -45,7 +45,7 @@ Windows 软件管理器：像应用商店一样查找、下载和卸载 Windows 
 - `WinAppsManager-*-win-x64-selfcontained.zip`：64 位，适用于 Windows 7 SP1–11
 - `WinAppsManager-*-win-x86-selfcontained.zip`：32 位，适用于 Windows 7 SP1–11
 
-压缩包已内置 .NET 6 Desktop Runtime，**目标机器无需安装 .NET Runtime**；解压后运行 `WinAppsManager.exe` 即可。GitHub Actions 每次推送都会构建客户端并测试后端；发布版本由手动触发 `Release` workflow 构建并上传。
+压缩包已内置 .NET 6 Desktop Runtime，**目标机器无需安装 .NET Runtime**；解压后运行 `WinAppsManager.exe` 即可。GitHub Actions 每次推送都会构建客户端并测试后端；发布版本由推送 `v<Version>` 标签（或手动触发 `Release` workflow）构建并上传，版本号与发布说明分别维护在仓库根目录的 `release.props` 和 `Release.md`。
 
 ### 2. 可选：本地启动后端
 

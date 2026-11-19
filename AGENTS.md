@@ -95,6 +95,8 @@ WinAppsManager/
     source-api.md                         服务端/客户端统一软件源 API 契约（新增来源只改服务端）
   deploy/                                 systemd / Caddy 部署模板
   artifacts/ui/                           UI 截图（可选交付物）
+  release.props                           发布版本 / 标签 / 标题 / 说明文件配置（客户端版本号来源）
+  Release.md                              GitHub Release 发布说明
   README.md                               项目说明
   Backend/README.md                       后端详细说明
 ```
@@ -185,6 +187,15 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 2. 若改动后端：后端完整 unittest 通过。
 3. 若改动 UI：优先通过构建验证；除非用户明确要求或涉及无法自动验证的运行时行为，不要额外加入或运行冒烟测试。
 4. 更新相关 README/AGENTS；不要让临时截图、下载文件或测试配置残留。
+
+### 4.4 发布
+
+发布信息集中在仓库根目录的两个文件：
+
+- `release.props`：`Version`（客户端程序集版本，`WinAppsManager.csproj` 直接导入该文件）、`ReleaseTagPrefix`、`ReleaseTitle`、`ReleaseNotesFile`、`ReleaseLatest`。
+- `Release.md`：GitHub Release 的正文。
+
+发布流程：修改 `Version` 与 `Release.md` → 提交 → 推送标签 `v<Version>`（或手动运行 `Release` workflow）。workflow 读取这两个文件，构建 `win-x64` / `win-x86` 自包含 zip，创建或覆盖同名 release；标签与 `Version` 不一致会直接失败。已存在的 release 会先删除本次构建中不存在的旧资源，再覆盖 zip 与发布说明。不要在 workflow、csproj 或 README 中再硬编码一份版本号。
 
 ## 5. 后端架构
 
@@ -661,11 +672,12 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 卸载前必须二次确认并说明可以中途停止、但可能残留部分卸载；只有用户点击“停止卸载”或关闭进度窗口时才终止卸载程序进程树。
 - 深度清理只能删列表里通过校验的项：路径必须在允许分支内，删除前过 `LeftoverCleaner.IsDeletable`；注册表绝不删 `SOFTWARE`、`Microsoft`、`Classes`、`Policies`、`Wow6432Node`、`SYSTEM\CurrentControlSet\Services` 整棵子树；文件只允许开始菜单/桌面 `.lnk`、`RootPath` 内文件和“已无子项”的文件夹，绝不删盘根、`Windows`、`System32`、`Program Files` 本身，也不递归删除；文件分组默认不勾选。
 - 不要自动卸载系统组件、更新或 `NoRemove` 条目；不要把卸载结果报告为“已彻底清理”，只报告卸载程序已结束。
+- 发布版本号只写在 `release.props`，不要同时在 csproj 或 workflow 里再写一份；推送的标签必须与 `Version` 一致，发布说明只写在 `Release.md`。
 
 ## 10. 已知限制
 
 - 后端持久缓存默认写在 `Backend/.cache/`（已 `.gitignore`）；只读目录下运行会降级为「只用内存缓存」，用 `cache.directory` 或 `WINAPPSMANAGER_CACHE_DIR` 指到可写目录。
-- 下载中心任务只保留当前进程会话，重启后不恢复历史；后端配置修改后需要重启。
+- 下载中心任务在重启后从历史记录恢复，但只恢复终点状态（不含分段进度与活动任务）；图标在页面加载后按历史记录的远端地址从本地缓存恢复。
 - 启动预热最多占 `refresh.startup_timeout_seconds`（默认 30 秒），预算耗尽时先启动、未完成软件按需抓取；内置源默认只启用 2 款（`builtin.app_ids`），预热很快；联想目录不在预热范围、首次请求按需抓取（约 1.5–2 秒）并落盘，重启后 0.2 秒级读取。
 - 非强制刷新的列表/详情可能返回最长 `cache.max_stale_seconds`（默认 7 天）的旧快照，界面无法区分；需确认新鲜度时用 `GET /api/v1/status` 或 `refresh=true`。
 - 预热既抓取失败又无快照的软件从列表隐藏、详情 503（`refresh.drop_unavailable_apps=true`）；定时刷新单轮失败只记日志，要等下一个间隔。

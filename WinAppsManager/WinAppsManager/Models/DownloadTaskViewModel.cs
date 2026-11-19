@@ -93,10 +93,8 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
                 SizeBytes = record.TotalBytes
             }
         };
-        app.DisplayIconSource = !string.IsNullOrWhiteSpace(record.IconUrl)
-            ? record.IconUrl
-            : record.IconFallbackUrl;
-
+        // IconUrl/IconFallbackUrl 指向远端地址；本地图标文件由下载中心页面在加载后按需解析，
+        // 这里不能把 URL 直接写进 DisplayIconSource（该属性只接受本地缓存路径）。
         var task = new DownloadTaskViewModel(app)
         {
             _version = record.Version,
