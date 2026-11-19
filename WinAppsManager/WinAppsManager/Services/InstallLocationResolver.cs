@@ -5,10 +5,10 @@ namespace WinAppsManager.Services;
 
 /// <summary>
 /// Resolves the folder an application lives in: the registry <c>InstallLocation</c> value first,
-/// then the folder the <c>DisplayIcon</c> path points into and
-/// finally the folder of the uninstall executable. Many installers (Electron, NSIS, burn bundles)
-/// only write <c>DisplayIcon</c>, so without those fallbacks the install date probe has nothing to
-/// look at (the size probe deliberately stays on the declared location) and the cell stays empty.
+/// then the folder the <c>DisplayIcon</c> path points into and finally the folder of the uninstall
+/// executable. Many installers (Electron, NSIS, burn bundles) only write <c>DisplayIcon</c>, so
+/// without those fallbacks the install date probe has nothing to look at (the size probe
+/// deliberately stays on the declared location) and the cell stays empty.
 /// </summary>
 public static class InstallLocationResolver
 {

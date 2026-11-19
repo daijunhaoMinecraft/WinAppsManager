@@ -173,7 +173,7 @@ public sealed class InstalledApplication : INotifyPropertyChanged
         : "大小未知";
 
     /// <summary>
-    /// Install date formatted as ("8月 15, 2026"). Unknown dates stay empty
+    /// Install date formatted as "8月 15, 2026". Unknown dates stay empty
     /// instead of saying "安装日期未知", so the column keeps its alignment.
     /// </summary>
     public string InstallDateText => _installDateText ??=

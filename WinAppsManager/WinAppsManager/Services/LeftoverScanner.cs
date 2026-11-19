@@ -9,18 +9,18 @@ namespace WinAppsManager.Services;
 /// <summary>
 /// Static leftover scanner:
 /// <list type="bullet">
-///   <item>The registry walk recurses through <c>Software</c> in HKCU and in
-///         both HKLM views, and adds a key when its leaf name equals an application name; the
-///         eight branches in <see cref="RegistryScanSkipList"/> are never entered.</item>
-///   <item>The file walk adds the install folder, AppData/ProgramData folders,
-///         and shortcuts under the Start Menu, Desktop and Quick Launch roots whose target is
-///         inside the install folder.</item>
-///   <item>The MSI walk adds Windows Installer product records, components
-///         whose values resolve into the install folder, and <c>Installer\Folders</c> values.</item>
+///   <item>The registry walk recurses through <c>Software</c> in HKCU and in both HKLM views, and
+///         adds a key when its leaf name equals an application name; the eight branches in
+///         <see cref="RegistryScanSkipList"/> are never entered.</item>
+///   <item>The file walk adds the install folder, AppData/ProgramData folders, and shortcuts under
+///         the Start Menu, Desktop and Quick Launch roots whose target is inside the install
+///         folder.</item>
+///   <item>The MSI walk adds Windows Installer product records, components whose values resolve
+///         into the install folder, and <c>Installer\Folders</c> values.</item>
 /// </list>
-/// Install-time monitoring records and vendor rules are not scanned: this application does not
-/// capture installs, so it has no trustworthy source for them. The startup and service groups are
-/// local extensions; the normal scanner does not walk <c>SYSTEM</c> or read startup values.
+/// Install-time monitoring records are not scanned: this application does not monitor installs, so
+/// it has no trustworthy source for them. The startup and service groups are local extensions; the
+/// normal scanner does not walk <c>SYSTEM</c> or read startup values.
 /// File and MSI groups are marked risky and start unchecked.
 /// </summary>
 public static partial class LeftoverScanner
@@ -263,8 +263,8 @@ public static partial class LeftoverScanner
     }
 
     /// <summary>
-    /// Scans registry product keys: every <c>Software</c> child is walked recursively
-    /// in HKCU and in both HKLM views. A key is added when its own leaf name equals one of the
+    /// Scans registry product keys: every <c>Software</c> child is walked recursively in HKCU and
+    /// in both HKLM views. A key is added when its own leaf name equals one of the
     /// application name candidates; a match stops the descent into that key (the whole subtree is
     /// offered as one item), while the eight <see cref="RegistryScanSkipList"/> branches are
     /// skipped entirely. The uninstall branch is left to <see cref="ScanUninstallEntries"/> so the
@@ -1089,8 +1089,8 @@ public static partial class LeftoverScanner
     }
 
     /// <summary>
-    /// Shortcut roots: both Start Menu roots (which contain the
-    /// Programs groups), both Desktop roots and the legacy Quick Launch folder.
+    /// Shortcut roots: both Start Menu roots (which contain the Programs groups), both Desktop
+    /// roots and the legacy Quick Launch folder.
     /// </summary>
     internal static IReadOnlyList<string> ShortcutRoots()
     {
