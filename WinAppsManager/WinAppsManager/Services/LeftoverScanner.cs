@@ -7,16 +7,27 @@ using WinAppsManager.Models;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// Heuristic leftover scanner. Registry items are
-/// matched by "key name equals the program name" or "a value still points at the install
-/// directory"; file items are matched by install/AppData folder name and by shortcut file name
-/// inside the standard Start Menu and Desktop folders; MSI items come from the Windows Installer
-/// database. File and MSI groups are marked risky and start unchecked.
+/// Static leftover scanner:
+/// <list type="bullet">
+///   <item>The registry walk recurses through <c>Software</c> in HKCU and in
+///         both HKLM views, and adds a key when its leaf name equals an application name; the
+///         eight branches in <see cref="RegistryScanSkipList"/> are never entered.</item>
+///   <item>The file walk adds the install folder, AppData/ProgramData folders,
+///         and shortcuts under the Start Menu, Desktop and Quick Launch roots whose target is
+///         inside the install folder.</item>
+///   <item>The MSI walk adds Windows Installer product records, components
+///         whose values resolve into the install folder, and <c>Installer\Folders</c> values.</item>
+/// </list>
+/// Install-time monitoring records and vendor rules are not scanned: this application does not
+/// capture installs, so it has no trustworthy source for them. The startup and service groups are
+/// local extensions; the normal scanner does not walk <c>SYSTEM</c> or read startup values.
+/// File and MSI groups are marked risky and start unchecked.
 /// </summary>
 public static partial class LeftoverScanner
 {
-    private const int MaxProductDepth = 4;
-    private const int MaxVisitedKeys = 20000;
+    private const int MaxRegistryDepth = 32;
+    private const int MaxVisitedKeys = 200000;
+    private const int MaxInstallerComponents = 20000;
     private const int MaxShortcutDepth = 3;
     private const int MaxTreeDepth = 12;
     private const int MaxTreeEntries = 5000;
@@ -34,17 +45,21 @@ public static partial class LeftoverScanner
     private const string AppModelKeyPath =
         @"SOFTWARE\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel";
 
-    /// <summary>Subtrees that are never scanned and never deleted by key.</summary>
-    private static readonly string[] PrunedSubtrees =
+    /// <summary>
+    /// The eight branches the registry walk never recurses into. They are shared system containers:
+    /// matching a key inside them by name would offer Windows or Installer data for deletion. The
+    /// cleaner re-uses this list to refuse deleting a key in these branches.
+    /// </summary>
+    private static readonly string[] RegistryScanSkipList =
     [
-        @"SOFTWARE\Microsoft",
-        @"SOFTWARE\Classes",
-        @"SOFTWARE\Policies",
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\SideBySide",
+        @"SOFTWARE\Microsoft\Fusion",
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\Installer",
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths",
+        @"SOFTWARE\Microsoft\.NETFramework",
+        @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing",
         @"SOFTWARE\Wow6432Node",
-        @"SOFTWARE\RegisteredApplications",
-        @"SOFTWARE\Clients",
-        @"SOFTWARE\Crypto",
-        @"SOFTWARE\ODBC"
+        @"SOFTWARE\Classes"
     ];
 
     private static readonly HashSet<string> GenericNames = new(StringComparer.OrdinalIgnoreCase)
@@ -78,12 +93,19 @@ public static partial class LeftoverScanner
         }
 
         var candidates = BuildNameCandidates(application);
+        // For a hidden patch key like "{GUID}.KB2151757" the split identifier (GUID, KB) is useful
+        // for registry/MSI leftovers, but it must not make the parent product's own uninstall key
+        // (named just "{GUID}") look like residue. The uninstall group therefore only uses the
+        // full key name.
+        IReadOnlyCollection<string> uninstallCandidates = application.IsHiddenComponent
+            ? BuildHiddenKeyCandidates(application)
+            : candidates;
         var groups = new List<LeftoverNode>();
 
         AddGroup(groups, "卸载信息", "注册表中残留的卸载登记项", risky: false,
-            ScanUninstallEntries(application, candidates, cancellationToken));
-        AddGroup(groups, "软件数据", @"HKCU / HKLM\Software 下与该软件同名的注册表键", risky: false,
-            ScanProductKeys(candidates, application.InstallLocation, cancellationToken));
+            ScanUninstallEntries(application, uninstallCandidates, cancellationToken));
+        AddGroup(groups, "软件数据", @"HKCU / HKLM\Software 下与该软件同名的注册表键（递归匹配键名）", risky: false,
+            ScanProductKeys(candidates, cancellationToken));
         AddGroup(groups, "启动项", "开机启动中指向该软件的条目", risky: false,
             ScanValueEntries(cancellationToken, LeftoverKind.StartupEntry,
                 [RunKeyPath, RunOnceKeyPath, StartupApprovedRunPath, StartupApprovedFolderPath],
@@ -199,12 +221,16 @@ public static partial class LeftoverScanner
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 string path = $@"{UninstallKeyPath}\{name}";
-                if (application.HasRegistryEntry &&
-                    application.RegistryHive == hive &&
-                    application.RegistryView == view &&
-                    string.Equals(application.RegistryPath, path, StringComparison.OrdinalIgnoreCase))
+                bool isOwnEntry = application.HasRegistryEntry &&
+                                  application.RegistryHive == hive &&
+                                  application.RegistryView == view &&
+                                  string.Equals(application.RegistryPath, path, StringComparison.OrdinalIgnoreCase);
+                if (isOwnEntry && !application.IsHiddenComponent)
                 {
-                    // The entry of the app that is still installed is not residue.
+                    // The entry of an application that can still be uninstalled normally is not
+                    // residue. A hidden component never has a vendor uninstaller, so its
+                    // registration key (the identifier in the list) is exactly the leftover the
+                    // forced uninstall must offer.
                     continue;
                 }
 
@@ -236,16 +262,24 @@ public static partial class LeftoverScanner
         return results;
     }
 
+    /// <summary>
+    /// Scans registry product keys: every <c>Software</c> child is walked recursively
+    /// in HKCU and in both HKLM views. A key is added when its own leaf name equals one of the
+    /// application name candidates; a match stops the descent into that key (the whole subtree is
+    /// offered as one item), while the eight <see cref="RegistryScanSkipList"/> branches are
+    /// skipped entirely. The uninstall branch is left to <see cref="ScanUninstallEntries"/> so the
+    /// same key is not listed twice.
+    /// </summary>
     private static List<LeftoverNode> ScanProductKeys(
         IReadOnlyCollection<string> candidates,
-        string installLocation,
         CancellationToken cancellationToken)
     {
         var results = new List<LeftoverNode>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int visited = 0;
         foreach (var (hive, view) in HiveViews())
         {
-            WalkProductKeys(hive, view, "SOFTWARE", 0, results, ref visited, candidates, installLocation,
+            WalkProductKeys(hive, view, "SOFTWARE", 0, results, seen, ref visited, candidates,
                 cancellationToken);
         }
 
@@ -258,12 +292,12 @@ public static partial class LeftoverScanner
         string parentPath,
         int depth,
         ICollection<LeftoverNode> results,
+        ISet<string> seen,
         ref int visited,
         IReadOnlyCollection<string> candidates,
-        string installLocation,
         CancellationToken cancellationToken)
     {
-        if (depth >= MaxProductDepth || visited >= MaxVisitedKeys)
+        if (depth >= MaxRegistryDepth || visited >= MaxVisitedKeys)
         {
             return;
         }
@@ -272,69 +306,66 @@ public static partial class LeftoverScanner
         {
             cancellationToken.ThrowIfCancellationRequested();
             visited++;
-            if (visited >= MaxVisitedKeys)
+            if (visited > MaxVisitedKeys)
             {
                 return;
             }
 
             string path = $@"{parentPath}\{name}";
-            if (IsPruned(path))
+            if (IsPruned(path) || IsUninstallBranch(path))
             {
                 continue;
             }
 
-            bool byName = MatchesAny(name, candidates);
-
-            // A key whose own values still point at the install directory belongs to the app
-            // even when the vendor named it differently from the display name.
-            bool byValue = !byName &&
-                           depth <= 1 &&
-                           installLocation.Length >= 4 &&
-                           ValueReferencesLocation(hive, view, path, installLocation);
-
-            if (byName || byValue)
+            if (MatchesAny(name, candidates))
             {
-                results.Add(new LeftoverNode
+                // A match adds the whole key and stops descending into it.
+                if (seen.Add($"{hive}|{view}|{path}"))
                 {
-                    Title = $"{LeftoverNode.HivePrefix(hive)}\\{path}",
-                    Subtitle = byName ? "整个注册表键" : "键值仍指向该软件的安装目录",
-                    Badge = "数据键",
-                    RegistryPath = path,
-                    Hive = hive,
-                    View = view,
-                    Kind = LeftoverKind.ProductData
-                });
+                    results.Add(new LeftoverNode
+                    {
+                        Title = $"{LeftoverNode.HivePrefix(hive)}\\{path}",
+                        Subtitle = "键名与该软件同名",
+                        Badge = "数据键",
+                        RegistryPath = path,
+                        Hive = hive,
+                        View = view,
+                        Kind = LeftoverKind.ProductData
+                    });
+                }
+
                 continue;
             }
 
-            WalkProductKeys(hive, view, path, depth + 1, results, ref visited, candidates, installLocation,
+            // CUninstallItem::GetAppRegPath only looks at top-level Software keys, but compares
+            // them with spaces removed ("Telegram Desktop" matches "TelegramDesktop").
+            if (depth == 0 && MatchesSpaceInsensitiveName(name, candidates))
+            {
+                if (seen.Add($"{hive}|{view}|{path}"))
+                {
+                    results.Add(new LeftoverNode
+                    {
+                        Title = $"{LeftoverNode.HivePrefix(hive)}\\{path}",
+                        Subtitle = "键名与该软件同名（忽略空格）",
+                        Badge = "数据键",
+                        RegistryPath = path,
+                        Hive = hive,
+                        View = view,
+                        Kind = LeftoverKind.ProductData
+                    });
+                }
+
+                continue;
+            }
+
+            WalkProductKeys(hive, view, path, depth + 1, results, seen, ref visited, candidates,
                 cancellationToken);
         }
     }
 
-    private static bool ValueReferencesLocation(
-        RegistryHive hive,
-        RegistryView view,
-        string path,
-        string installLocation)
-    {
-        using var key = OpenKey(hive, view, path);
-        if (key is null)
-        {
-            return false;
-        }
-
-        foreach (string valueName in key.GetValueNames())
-        {
-            if (key.GetValue(valueName) is string text &&
-                text.Contains(installLocation, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
+    private static bool IsUninstallBranch(string path)
+        => string.Equals(path, UninstallKeyPath, StringComparison.OrdinalIgnoreCase) ||
+           path.StartsWith(UninstallKeyPath + "\\", StringComparison.OrdinalIgnoreCase);
 
     private static List<LeftoverNode> ScanValueEntries(
         CancellationToken cancellationToken,
@@ -835,20 +866,24 @@ public static partial class LeftoverScanner
         var results = new List<LeftoverNode>();
         int index = application.RegistryPath.LastIndexOf('\\');
         string keyName = index >= 0 ? application.RegistryPath[(index + 1)..] : application.RegistryPath;
-        if (!Guid.TryParse(keyName, out Guid productCode))
+        if (!TryGetProductCode(keyName, out Guid productCode))
         {
             return results;
         }
 
         string compressed = CompressGuid(productCode);
         string raw = productCode.ToString("B");
+        string location = application.InstallLocation.Trim().TrimEnd('\\');
+        string userDataRoot = InstallerKeyPath + @"\UserData";
+
+        // One product record per user SID, stored under the compressed product code.
         foreach (string userData in ReadSubKeyNames(RegistryHive.LocalMachine, RegistryView.Registry64,
-                     InstallerKeyPath + @"\UserData"))
+                     userDataRoot))
         {
             cancellationToken.ThrowIfCancellationRequested();
             foreach (string code in new[] { compressed, raw, productCode.ToString("N") })
             {
-                string path = $@"{InstallerKeyPath}\UserData\{userData}\Products\{code}";
+                string path = $@"{userDataRoot}\{userData}\Products\{code}";
                 if (OpenKey(RegistryHive.LocalMachine, RegistryView.Registry64, path) is not { } key)
                 {
                     continue;
@@ -891,18 +926,58 @@ public static partial class LeftoverScanner
             });
         }
 
+        // Also walks UserData\<SID>\Components. Each component key
+        // stores the installed paths as values, so the key is only a leftover when one of those
+        // values still resolves into this application's install folder.
+        int visited = 0;
+        foreach (string userData in ReadSubKeyNames(RegistryHive.LocalMachine, RegistryView.Registry64,
+                     userDataRoot))
+        {
+            string componentsRoot = $@"{userDataRoot}\{userData}\Components";
+            foreach (string component in ReadSubKeyNames(RegistryHive.LocalMachine,
+                         RegistryView.Registry64, componentsRoot))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (++visited > MaxInstallerComponents)
+                {
+                    break;
+                }
+
+                string path = $@"{componentsRoot}\{component}";
+                if (location.Length < 4 ||
+                    !RegistryValuesReferenceFolder(RegistryHive.LocalMachine, RegistryView.Registry64,
+                        path, location))
+                {
+                    continue;
+                }
+
+                results.Add(new LeftoverNode
+                {
+                    Title = $"Windows Installer Component: {path}",
+                    Subtitle = "Windows Installer 组件记录；组件值仍指向该软件的安装目录",
+                    Badge = "MSI",
+                    RegistryPath = path,
+                    Hive = RegistryHive.LocalMachine,
+                    View = RegistryView.Registry64,
+                    Kind = LeftoverKind.MsiComponentKey,
+                    IsRisky = true
+                });
+            }
+        }
+
         string foldersPath = InstallerKeyPath + @"\Folders";
         if (OpenKey(RegistryHive.LocalMachine, RegistryView.Registry64, foldersPath) is { } foldersKey)
         {
             using (foldersKey)
             {
-                string location = application.InstallLocation.Trim().TrimEnd('\\');
                 if (location.Length >= 4)
                 {
                     foreach (string valueName in foldersKey.GetValueNames())
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (!string.Equals(valueName.TrimEnd('\\'), location, StringComparison.OrdinalIgnoreCase))
+                        string stored = valueName.TrimEnd('\\');
+                        if (!string.Equals(stored, location, StringComparison.OrdinalIgnoreCase) &&
+                            !stored.StartsWith(location + "\\", StringComparison.OrdinalIgnoreCase))
                         {
                             continue;
                         }
@@ -928,6 +1003,78 @@ public static partial class LeftoverScanner
     }
 
     /// <summary>
+    /// True when any string value of the key still contains the install folder. MSI component
+    /// values keep absolute paths, sometimes without the drive (<c>\Program Files\App\file</c>),
+    /// so both forms are accepted.
+    /// </summary>
+    private static bool RegistryValuesReferenceFolder(
+        RegistryHive hive,
+        RegistryView view,
+        string path,
+        string folder)
+    {
+        using var key = OpenKey(hive, view, path);
+        if (key is null)
+        {
+            return false;
+        }
+
+        foreach (string valueName in key.GetValueNames())
+        {
+            if (key.GetValue(valueName) is string text && StoredPathReferencesFolder(text, folder))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool StoredPathReferencesFolder(string? value, string folder)
+    {
+        string location = folder.Trim().TrimEnd('\\');
+        string text = (value ?? string.Empty).Trim().Trim('"');
+        if (text.Length < 3 || location.Length < 4)
+        {
+            return false;
+        }
+
+        text = Environment.ExpandEnvironmentVariables(text).Replace('/', '\\');
+        if (text.Contains(location, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        string withoutDrive = location.Length > 2 && location[1] == ':'
+            ? location[2..].TrimStart('\\')
+            : location.TrimStart('\\');
+        return withoutDrive.Length >= 3 &&
+               text.TrimStart('\\').StartsWith(withoutDrive, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Reads the MSI product code from an uninstall key name. A normal MSI entry is a plain GUID;
+    /// a hidden patch entry looks like <c>{1D8E6291-…}.KB2533623</c>, so the embedded product GUID
+    /// is used as the identifier for the Installer database lookup.
+    /// </summary>
+    private static bool TryGetProductCode(string keyName, out Guid productCode)
+    {
+        if (Guid.TryParse(keyName, out productCode))
+        {
+            return true;
+        }
+
+        Match match = GuidPattern.Match(keyName);
+        if (match.Success && Guid.TryParse(match.Value, out productCode))
+        {
+            return true;
+        }
+
+        productCode = Guid.Empty;
+        return false;
+    }
+
+    /// <summary>
     /// Windows Installer stores product codes with the first three GUID groups byte-reversed and
     /// without dashes, for example <c>11223344-5566-7788-…</c> becomes <c>4433221166558877…</c>.
     /// </summary>
@@ -941,21 +1088,46 @@ public static partial class LeftoverScanner
         return head + hex[16..];
     }
 
+    /// <summary>
+    /// Shortcut roots: both Start Menu roots (which contain the
+    /// Programs groups), both Desktop roots and the legacy Quick Launch folder.
+    /// </summary>
     internal static IReadOnlyList<string> ShortcutRoots()
     {
-        var roots = new List<string>();
+        var candidates = new List<string>();
+        AddRoot(Environment.SpecialFolder.StartMenu);
+        AddRoot(Environment.SpecialFolder.CommonStartMenu);
         AddRoot(Environment.SpecialFolder.Programs);
         AddRoot(Environment.SpecialFolder.CommonPrograms);
         AddRoot(Environment.SpecialFolder.Desktop);
         AddRoot(Environment.SpecialFolder.CommonDesktopDirectory);
-        return roots;
+        AddPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            @"Microsoft\Internet Explorer\Quick Launch"));
+
+        // StartMenu already contains Programs; keep only the outermost roots so one shortcut is
+        // not collected twice.
+        return candidates
+            .Where(path => path.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(path => !candidates.Any(other =>
+                other.Length > 0 && !string.Equals(other, path, StringComparison.OrdinalIgnoreCase) &&
+                IsUnder(path, other)))
+            .ToArray();
 
         void AddRoot(Environment.SpecialFolder folder)
         {
             string path = Environment.GetFolderPath(folder);
             if (path.Length > 0)
             {
-                roots.Add(path);
+                candidates.Add(path);
+            }
+        }
+
+        void AddPath(string path)
+        {
+            if (path.Length > 0)
+            {
+                candidates.Add(path);
             }
         }
     }
@@ -1010,7 +1182,7 @@ public static partial class LeftoverScanner
 
     internal static bool IsPruned(string path)
     {
-        foreach (string pruned in PrunedSubtrees)
+        foreach (string pruned in RegistryScanSkipList)
         {
             if (string.Equals(path, pruned, StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith(pruned + "\\", StringComparison.OrdinalIgnoreCase))
@@ -1059,14 +1231,7 @@ public static partial class LeftoverScanner
     {
         var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        void Add(string? value)
-        {
-            string text = WhitespacePattern.Replace((value ?? string.Empty).Trim().Trim('"'), " ").Trim();
-            if (text.Length >= 3 && !GenericNames.Contains(text))
-            {
-                candidates.Add(text);
-            }
-        }
+        void Add(string? value) => AddNameCandidate(candidates, value);
 
         Add(application.Name);
         Add(VersionSuffixPattern.Replace(application.Name, string.Empty));
@@ -1075,13 +1240,60 @@ public static partial class LeftoverScanner
         {
             int index = application.RegistryPath.LastIndexOf('\\');
             string keyName = index >= 0 ? application.RegistryPath[(index + 1)..] : application.RegistryPath;
-            if (!Guid.TryParse(keyName, out _))
+            if (!Guid.TryParse(keyName, out _) || application.IsHiddenComponent)
             {
                 Add(keyName);
             }
         }
 
+        if (application.IsHiddenComponent)
+        {
+            // A hidden component has no DisplayName, so its uninstall key name is the identifier:
+            // "{1D8E6291-...}.KB2533623", "Steam App 228980", "{12228a0d-...}", "mspaint-<guid>".
+            // The KB number and the embedded GUID are the stable parts the scanner can match
+            // against other registry keys and Windows Installer product records.
+            foreach (Match match in KnowledgeBasePattern.Matches(application.Name))
+            {
+                Add(match.Value);
+            }
+
+            foreach (Match match in GuidPattern.Matches(application.Name))
+            {
+                Add(match.Value);
+                Add("{" + match.Value + "}");
+            }
+        }
+
         return candidates.ToArray();
+    }
+
+    /// <summary>
+    /// Candidate set for the uninstall-entry group of a hidden component: only the full identifier
+    /// (its key name). The split GUID/KB candidates are intentionally excluded so the parent
+    /// product's own uninstall entry is not offered for deletion.
+    /// </summary>
+    private static IReadOnlyList<string> BuildHiddenKeyCandidates(InstalledApplication application)
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddNameCandidate(candidates, application.Name);
+        AddNameCandidate(candidates, VersionSuffixPattern.Replace(application.Name, string.Empty));
+        if (application.RegistryPath.Length > 0)
+        {
+            int index = application.RegistryPath.LastIndexOf('\\');
+            AddNameCandidate(candidates,
+                index >= 0 ? application.RegistryPath[(index + 1)..] : application.RegistryPath);
+        }
+
+        return candidates.ToArray();
+    }
+
+    private static void AddNameCandidate(ISet<string> candidates, string? value)
+    {
+        string text = WhitespacePattern.Replace((value ?? string.Empty).Trim().Trim('"'), " ").Trim();
+        if (text.Length >= 3 && !GenericNames.Contains(text))
+        {
+            candidates.Add(text);
+        }
     }
 
     private static bool MatchesAny(string value, IReadOnlyCollection<string> candidates)
@@ -1103,9 +1315,48 @@ public static partial class LeftoverScanner
         return false;
     }
 
+    /// <summary>
+    /// The space-insensitive comparison <c>CUninstallItem::GetAppRegPath</c> uses for the
+    /// top-level <c>Software</c> key, e.g. <c>Telegram Desktop</c> vs <c>TelegramDesktop</c>.
+    /// Only an exact (space-stripped) match is accepted; the target's "either contains the other"
+    /// rule would also match vendor containers such as <c>Software\Google</c> for Google Chrome,
+    /// which is too destructive for a default-checked group.
+    /// </summary>
+    private static bool MatchesSpaceInsensitiveName(
+        string value,
+        IReadOnlyCollection<string> candidates)
+    {
+        string normalized = WhitespacePattern.Replace(value.Trim(), string.Empty);
+        if (normalized.Length <= 4)
+        {
+            return false;
+        }
+
+        foreach (string candidate in candidates)
+        {
+            if (string.Equals(
+                    normalized,
+                    WhitespacePattern.Replace(candidate, string.Empty),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static readonly Regex WhitespacePattern = new(@"\s+");
 
     private static readonly Regex VersionSuffixPattern = new(
         @"\s*[\(\[-]?\s*(?:version|ver\.?|v)\s*\d+(?:\.\d+)*\s*[\)\]]?\s*$",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex KnowledgeBasePattern = new(
+        @"KB\d{5,8}",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex GuidPattern = new(
+        @"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}",
+        RegexOptions.CultureInvariant);
 }

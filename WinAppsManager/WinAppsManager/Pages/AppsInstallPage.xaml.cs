@@ -889,7 +889,6 @@ public partial class AppsInstallPage : Page
         CatalogErrorPanel.Visibility = _loadError is not null ? Visibility.Visible : Visibility.Collapsed;
         CatalogErrorText.Text = _loadError is null ? string.Empty
             : _hasSuccessfulLoad ? $"{_loadError} 当前仍显示上次成功加载的目录。" : _loadError;
-        CatalogCacheStatusText.Text = AppCatalogService.CacheDescription;
         SourceStatusText.Text = BuildSourceStatusText();
     }
 
@@ -923,9 +922,20 @@ public partial class AppsInstallPage : Page
         // 该函数会在加载/缓存变化/筛选等多条路径重复调用，因此每次都从基础文案重建，不做字符串追加。
         DateTimeOffset? updatedAt = AppCatalogService.CatalogUpdatedAtUtc
                                     ?? AppCatalogService.CacheState.UpdatedAtUtc;
-        return updatedAt.HasValue
+        status = updatedAt.HasValue
             ? $"{status} · 目录更新于 {updatedAt.Value.ToLocalTime():MM-dd HH:mm}"
             : status;
+
+        // 非网络来源时补一个极短的缓存标记：这一格宽度有限，完整描述（含软件源名和更新时间）
+        // 以前是单独一行，重复且必然被截断，已删除；这里只保留“数据是不是旧的”这个关键信息。
+        string cacheMarker = AppCatalogService.CacheState.Source switch
+        {
+            CatalogCacheSource.Memory => "内存缓存",
+            CatalogCacheSource.Disk => "本地缓存",
+            CatalogCacheSource.Offline => "离线缓存",
+            _ => string.Empty
+        };
+        return cacheMarker.Length == 0 ? status : $"{status} · {cacheMarker}";
     }
 
     private void OnCacheChanged(object? sender, EventArgs args)
@@ -935,7 +945,6 @@ public partial class AppsInstallPage : Page
             _ = Dispatcher.BeginInvoke(new Action(() => OnCacheChanged(sender, args)));
             return;
         }
-        CatalogCacheStatusText.Text = AppCatalogService.CacheDescription;
         SourceStatusText.Text = BuildSourceStatusText();
     }
 
@@ -975,10 +984,13 @@ public partial class AppsInstallPage : Page
 
     private void AppCard_OnLoaded(object sender, RoutedEventArgs args)
     {
-        if (sender is FrameworkElement { DataContext: AppItem app })
+        if (sender is not FrameworkElement { DataContext: AppItem app } card)
         {
-            QueueIconLoad(app);
+            return;
         }
+
+        QueueIconLoad(app);
+
     }
 
     /// <summary>

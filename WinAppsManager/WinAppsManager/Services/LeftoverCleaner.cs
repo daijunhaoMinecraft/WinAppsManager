@@ -6,14 +6,26 @@ namespace WinAppsManager.Services;
 public sealed class LeftoverCleanupResult
 {
     public LeftoverCleanupResult(LeftoverNode node, bool success, string message)
+        : this(node,
+            success ? LeftoverCleanupDisposition.Deleted : LeftoverCleanupDisposition.Failed,
+            message)
+    {
+    }
+
+    public LeftoverCleanupResult(
+        LeftoverNode node,
+        LeftoverCleanupDisposition disposition,
+        string message)
     {
         Node = node;
-        Success = success;
+        Disposition = disposition;
         Message = message;
     }
 
     public LeftoverNode Node { get; }
-    public bool Success { get; }
+    public LeftoverCleanupDisposition Disposition { get; }
+    public bool Success => Disposition is LeftoverCleanupDisposition.Deleted or
+        LeftoverCleanupDisposition.ScheduledForReboot;
     public string Message { get; }
 }
 

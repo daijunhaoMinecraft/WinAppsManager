@@ -59,6 +59,7 @@ public partial class UninstallProgressWindow : Window
         }
 
         _started = true;
+        UiMotion.PlayDialogOpen(this);
         AppLogService.Info(
             $"卸载进度窗口开始执行：{_applications.Count} 个软件" +
             $"（桌面软件 {_applications.Count(application => !application.IsStoreApplication)}，" +
@@ -395,7 +396,38 @@ public partial class UninstallProgressWindow : Window
         }
     }
 
-    private void StopButton_OnClick(object sender, RoutedEventArgs args) => RequestStop();
+    private void StopButton_OnClick(object sender, RoutedEventArgs args) => ConfirmStop();
+
+    /// <summary>
+    /// Cancelling a batch is destructive: the current vendor uninstaller may already have removed
+    /// files or registry entries. Ask once before terminating the process tree, and reuse the same
+    /// prompt when the user closes the progress window.
+    /// </summary>
+    private bool ConfirmStop()
+    {
+        if (_completed || _stopRequested)
+        {
+            return false;
+        }
+
+        MessageBoxResult answer = MessageBox.Show(
+            this,
+            "停止卸载会立即终止当前厂商卸载程序及其子进程。\n\n" +
+            "软件可能停留在部分卸载的状态，之后需要重新安装或手动清理残留。\n\n" +
+            "确定要停止本批卸载吗？",
+            "确认停止卸载",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+        {
+            AppLogService.Info("用户取消了“停止卸载”操作，批次继续执行。");
+            return false;
+        }
+
+        RequestStop();
+        return true;
+    }
 
     private void RequestStop()
     {
@@ -410,7 +442,7 @@ public partial class UninstallProgressWindow : Window
         SummaryText.Text = "正在终止卸载程序及其子进程，请稍候…";
         CurrentText.Text = "正在停止卸载…";
         AppLogService.Info(
-            $"用户请求停止卸载批次：已产生 {Results.Count} / {_applications.Count} 个结果，正在终止卸载程序及其子进程。");
+            $"用户确认停止卸载批次：已产生 {Results.Count} / {_applications.Count} 个结果，正在终止卸载程序及其子进程。");
         _cancellation.Cancel();
     }
 
@@ -423,9 +455,14 @@ public partial class UninstallProgressWindow : Window
             return;
         }
 
-        // Closing the window stops the batch instead of being blocked forever.
+        // Closing the window stops the batch instead of being blocked forever, but only after the
+        // user explicitly confirms the destructive cancellation.
         args.Cancel = true;
+        if (!ConfirmStop())
+        {
+            return;
+        }
+
         _closeWhenFinished = true;
-        RequestStop();
     }
 }

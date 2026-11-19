@@ -126,14 +126,10 @@
                                      IsActive="True" IsIndeterminate="True" Visibility="Collapsed"
                                      VerticalAlignment="Center" Background="Transparent"
                                      Foreground="{DynamicResource Wam.AccentBrush}" />
-                    <TextBlock x:Name="CatalogCacheStatusText" Margin="8,0,0,0" MaxWidth="260"
-                               FontSize="11" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"
-                               ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}" />
                 </StackPanel>
             </StackPanel>
 
-            <Grid Grid.Column="2" MaxWidth="560" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+            <Grid Grid.Column="2" HorizontalAlignment="Stretch" VerticalAlignment="Center">
                 <!-- MaxLength=100 与服务端搜索接口的 q 上限一致，避免超长关键词被服务端以 422 拒绝。 -->
                 <TextBox x:Name="SearchBox" Height="36" Padding="11,0" FontSize="13" MaxLength="100"
                          VerticalContentAlignment="Center"

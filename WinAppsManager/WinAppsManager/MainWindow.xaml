@@ -45,8 +45,25 @@
                 </ui:NavigationViewItem.Icon>
             </ui:NavigationViewItem>
         </ui:NavigationView.MenuItems>
-        <Grid Background="{DynamicResource Wam.PageBackgroundBrush}">
-            <Frame x:Name="FrameView" NavigationUIVisibility="Hidden"/>
+        <!-- 页面容器分三层：
+             1) 最外层 Grid 负责裁剪，页面过渡时的位图位移不会画到左侧导航栏上；
+             2) PageHost 承载真实页面，过渡时它自己淡入/滑入（位图缓存保证帧率）；
+             3) OutgoingSnapshot 是旧页面的位图：旧页面已离开视觉树，只能靠快照滑出/淡出。
+             若把裁剪和 RenderTransform 放在同一个元素上，WPF 会按未变换的布局边界裁剪再整体平移，
+             滑入的内容会画到导航栏上方，因此必须分层。 -->
+        <Grid Background="{DynamicResource Wam.PageBackgroundBrush}" ClipToBounds="True">
+            <Grid x:Name="PageHost">
+                <Frame x:Name="FrameView" NavigationUIVisibility="Hidden"/>
+            </Grid>
+
+            <!-- 位图缩放质量用 LowQuality（双线性）：过渡中位图一直在移动并淡出，
+                 高分辨率 Fant 滤波的每帧开销明显更高，观感却没有区别。 -->
+            <Image x:Name="OutgoingSnapshot"
+                   Visibility="Collapsed"
+                   IsHitTestVisible="False"
+                   Stretch="Fill"
+                   RenderOptions.BitmapScalingMode="LowQuality"
+                   Panel.ZIndex="10"/>
         </Grid>
     </ui:NavigationView>
 </Window>

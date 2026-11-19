@@ -110,11 +110,12 @@
         <DataTemplate x:Key="ReportItemTemplate">
             <Border Style="{StaticResource InstalledListRowStyle}"
                     Cursor="Hand"
+                    ContextMenuOpening="ApplicationRow_ContextMenuOpening"
                     MouseLeftButtonUp="ApplicationRow_OnMouseLeftButtonUp"
                     Loaded="ApplicationRow_OnLoaded">
                 <Border.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
+                        <MenuItem Header="卸载此软件" Tag="uninstall" Click="ContextUninstall_OnClick"/>
                         <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
                         <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                         <Separator/>
@@ -201,11 +202,12 @@
         <DataTemplate x:Key="ListItemTemplate">
             <Border Style="{StaticResource InstalledListRowStyle}"
                     Cursor="Hand"
+                    ContextMenuOpening="ApplicationRow_ContextMenuOpening"
                     MouseLeftButtonUp="ApplicationRow_OnMouseLeftButtonUp"
                     Loaded="ApplicationRow_OnLoaded">
                 <Border.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
+                        <MenuItem Header="卸载此软件" Tag="uninstall" Click="ContextUninstall_OnClick"/>
                         <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
                         <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                         <Separator/>
@@ -294,12 +296,13 @@
         <DataTemplate x:Key="CardItemTemplate">
                         <Border Style="{StaticResource InstalledCardStyle}"
                                 Cursor="Hand"
+                                ContextMenuOpening="ApplicationRow_ContextMenuOpening"
                                 MouseLeftButtonUp="ApplicationRow_OnMouseLeftButtonUp"
                                 Loaded="ApplicationRow_OnLoaded"
                                 ToolTip="{Binding Name}">
                             <Border.ContextMenu>
                                 <ContextMenu>
-                                    <MenuItem Header="卸载此软件" Click="ContextUninstall_OnClick"/>
+                                    <MenuItem Header="卸载此软件" Tag="uninstall" Click="ContextUninstall_OnClick"/>
                                     <MenuItem Header="打开安装位置" Click="ContextOpenLocation_OnClick"/>
                                     <MenuItem Header="强制卸载（清理残留）…" Click="ContextDeepClean_OnClick"/>
                                     <Separator/>
@@ -511,7 +514,7 @@
                 <Button x:Name="DeepCleanButton" Grid.Column="4" Content="强制卸载"
                         Height="34" Padding="12,0" Margin="10,0,0,0"
                         IsEnabled="False" Click="DeepCleanButton_OnClick"
-                        ToolTip="强制卸载：扫描并清理该软件卸载后的注册表、目录和快捷方式残留"
+                        ToolTip="强制卸载：扫描并清理所选软件卸载后的注册表、目录和快捷方式残留"
                         AutomationProperties.Name="强制卸载所选软件（清理残留）"/>
 
                 <Button x:Name="UninstallButton" Grid.Column="5" Content="卸载所选"

@@ -18,6 +18,10 @@ public partial class SettingsPage : Page
 {
     private bool _isSynchronizing = true;
     private bool _isSwitchingSource;
+    private bool _isPageActive;
+
+    /// <summary>缓存统计的请求代号：只应用最后一次请求的结果，避免连续刷新时旧结果覆盖新结果。</summary>
+    private int _cacheStatisticsGeneration;
 
     /// <summary>服务端返回的软件源列表（<c>GET /api/v1/sources</c>）；客户端不维护本地来源表。</summary>
     private IReadOnlyList<SourceInfo> _serverSources = Array.Empty<SourceInfo>();
@@ -48,6 +52,7 @@ public partial class SettingsPage : Page
 
     private async void OnPageLoaded(object sender, RoutedEventArgs args)
     {
+        _isPageActive = true;
         AppSettingsService.SettingsChanged += OnSettingsChanged;
         AppCatalogService.CatalogChanged += OnCatalogChanged;
         AppCatalogService.CacheChanged += OnCacheChanged;
@@ -61,6 +66,7 @@ public partial class SettingsPage : Page
 
     private void OnPageUnloaded(object sender, RoutedEventArgs args)
     {
+        _isPageActive = false;
         AppSettingsService.SettingsChanged -= OnSettingsChanged;
         AppCatalogService.CatalogChanged -= OnCatalogChanged;
         AppCatalogService.CacheChanged -= OnCacheChanged;
@@ -79,11 +85,34 @@ public partial class SettingsPage : Page
     private void RefreshCacheStatus()
     {
         CacheStatusText.Text = AppCatalogService.CacheDescription;
-        var statistics = AppCatalogService.CacheStatistics;
-        CacheFilesText.Text = $"目录文件 {statistics.CatalogFiles} 个 · 图标 {statistics.IconFiles} 个 · 占用 {statistics.Bytes / 1024.0:0.0} KB";
         var state = AppCatalogService.CacheState;
         CacheWarningText.Text = string.Join(" ", new[] { state.NetworkError, state.Warning }.Where(text => !string.IsNullOrWhiteSpace(text)));
         CacheWarningText.Visibility = CacheWarningText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        _ = RefreshCacheStatisticsAsync();
+    }
+
+    /// <summary>
+    /// 缓存统计要逐个枚举并读取缓存目录里的文件属性（图标缓存可达数千个文件）。
+    /// 这里放到线程池执行：在 UI 线程上同步统计会阻塞上百毫秒，页面切换动画因此卡在某一帧。
+    /// </summary>
+    private async Task RefreshCacheStatisticsAsync()
+    {
+        int generation = ++_cacheStatisticsGeneration;
+        try
+        {
+            var statistics = await Task.Run(() => AppCatalogService.CacheStatistics).ConfigureAwait(true);
+            if (generation != _cacheStatisticsGeneration || !_isPageActive)
+            {
+                return;
+            }
+
+            CacheFilesText.Text = $"目录文件 {statistics.CatalogFiles} 个 · 图标 {statistics.IconFiles} 个 · 占用 {statistics.Bytes / 1024.0:0.0} KB";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            CacheFilesText.Text = "缓存统计暂时无法读取。";
+            Debug.WriteLine(error);
+        }
     }
 
     private async void OnClearCache(object sender, RoutedEventArgs args)
@@ -526,6 +555,8 @@ public partial class SettingsPage : Page
             VerboseLoggingCheckBox.IsChecked = current.VerboseLogging;
             // 文件日志关闭时详细级别没有写入目标，禁用开关避免误解；值仍保留在设置里。
             VerboseLoggingCheckBox.IsEnabled = current.EnableFileLogging;
+            // 动效恒定播放，没有开关；这里只说明它会做什么。
+            AnimationHintText.Text = "页面切换、列表加载和弹窗都带淡入过渡，界面动效始终开启。";
             SelectAppSource(AppCatalogService.CurrentSourceId);
         }
         finally
@@ -822,6 +853,7 @@ public partial class SettingsPage : Page
         AppSettingsService.SetVerboseLogging(verbose);
         RefreshSettings();
     }
+
 
     private void OnCopySettingsPath(object sender, RoutedEventArgs args)
     {

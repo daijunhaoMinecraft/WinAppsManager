@@ -1,0 +1,139 @@
+<Window x:Class="WinAppsManager.Dialogs.PendingRebootWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
+        Title="残留需要重启后删除"
+        Width="720"
+        Height="540"
+        MinHeight="420"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Loaded="Window_OnLoaded"
+        AutomationProperties.Name="残留重启删除提示">
+    <Grid Margin="20">
+        <Border Background="{DynamicResource Wam.CardBackgroundBrush}"
+                BorderBrush="{DynamicResource Wam.CardBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="24,22,24,20">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="28" Opacity="0.28" ShadowDepth="6" Color="#000000"/>
+            </Border.Effect>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="42" Height="42" CornerRadius="10"
+                            Background="{DynamicResource Wam.AccentSoftBrush}"
+                            VerticalAlignment="Top" Margin="0,0,13,0">
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Warning_20_Regular}"
+                                     FontSize="20"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center"
+                                     Foreground="{DynamicResource Wam.AccentBrush}"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="部分残留需要重启后删除"
+                                   FontSize="21" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                        <TextBlock x:Name="SummaryText"
+                                   TextWrapping="Wrap" FontSize="12" Margin="0,4,0,0"
+                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock Grid.Row="1" x:Name="StatusText"
+                           Text="请选择“立即重启”完成清理，或选择“完成”稍后自行重启。"
+                           TextWrapping="Wrap" FontSize="11.5" Margin="0,14,0,8"
+                           Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+
+                <Border Grid.Row="2" Background="{DynamicResource Wam.SubtleBackgroundBrush}"
+                        CornerRadius="8" Padding="8,6">
+                    <ListBox ItemsSource="{Binding Items}"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             AutomationProperties.Name="无法立即删除的残留列表">
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0,0,0,6"/>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="{DynamicResource Wam.CardBackgroundBrush}"
+                                        BorderBrush="{DynamicResource Wam.CardBorderBrush}"
+                                        BorderThickness="1" CornerRadius="7" Padding="10,8">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding StatusText}"
+                                                       FontSize="11" FontWeight="SemiBold"
+                                                       Margin="0,0,10,0">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground"
+                                                                Value="{DynamicResource Wam.DangerBrush}"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsScheduled}" Value="True">
+                                                                <Setter Property="Foreground"
+                                                                        Value="{DynamicResource Wam.AccentBrush}"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Grid.Column="1" Text="{Binding Path}"
+                                                       FontSize="11.5" TextWrapping="NoWrap"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip="{Binding Path}"
+                                                       Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
+                                        </Grid>
+                                        <TextBlock Text="{Binding Message}"
+                                                   FontSize="10.5" Margin="0,3,0,0"
+                                                   TextWrapping="Wrap"
+                                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Border>
+
+                <Grid Grid.Row="3" Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="RebootButton" Grid.Column="1" Content="立即重启"
+                            Height="36" Padding="16,0" Click="RebootButton_OnClick"
+                            AutomationProperties.Name="立即重启电脑"/>
+                    <Button x:Name="DoneButton" Grid.Column="2" Content="完成"
+                            MinWidth="92" Height="36" Padding="16,0" Margin="8,0,0,0"
+                            Click="DoneButton_OnClick"
+                            AutomationProperties.Name="稍后自行重启"/>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

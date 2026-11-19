@@ -88,6 +88,8 @@ public partial class ScreenshotViewerWindow : Window
 
     private void OnWindowLoaded(object sender, RoutedEventArgs args)
     {
+        // 先播放入场动画，再加载首张图片：窗口还没渲染第一帧时启动，用户看不到“完整界面闪一下”。
+        UiMotion.PlayDialogOpen(this);
         UpdateCurrent();
         _ = EnsureImageAsync(_index);
         _ = EnsureImageAsync(_index + 1);
@@ -251,7 +253,13 @@ public partial class ScreenshotViewerWindow : Window
         ImageSource? image = _index >= 0 && _index < _images.Count ? _images[_index] : null;
         if (image is not null)
         {
+            // 图片确实换了才播放淡入：同一张图因导航/状态刷新重复走这里时画面不该抖动。
+            bool changed = !ReferenceEquals(PreviewImage.Source, image);
             PreviewImage.Source = image;
+            if (changed)
+            {
+                UiMotion.PlayContentSwap(PreviewImage);
+            }
             StatusPanel.Visibility = Visibility.Collapsed;
             _idleVideoStatus = IdleVideoStatus;
             ApplyIdleVideoStatus();

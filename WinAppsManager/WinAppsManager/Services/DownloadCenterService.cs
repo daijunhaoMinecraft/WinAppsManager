@@ -3,21 +3,45 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
+using System.Security;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using WinAppsManager.Models;
 
 namespace WinAppsManager.Services;
 
+/// <summary>Result of deleting the installer files selected in the download center.</summary>
+public sealed record InstallerDeleteOutcome(
+    int DeletedFiles,
+    int RemovedRecords,
+    IReadOnlyList<string> Errors);
+
 /// <summary>
 /// Owns all install downloads so they keep running independently of the details
-/// page and can be observed from the download center.
+/// page and can be observed from the download center. Finished downloads are persisted
+/// to <c>%LOCALAPPDATA%\WinAppsManager\download-history.json</c> and restored on startup.
 /// </summary>
 public static class DownloadCenterService
 {
     private static readonly ObservableCollection<DownloadTaskViewModel> Items = new();
     private static readonly ReadOnlyObservableCollection<DownloadTaskViewModel> ReadOnlyItems = new(Items);
     private static readonly object Gate = new();
+    private static readonly object HistoryGate = new();
+    private static readonly string HistoryPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WinAppsManager",
+        "download-history.json");
+    private static readonly JsonSerializerOptions HistoryJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
+
+    static DownloadCenterService()
+    {
+        LoadHistory();
+    }
 
     public static ReadOnlyObservableCollection<DownloadTaskViewModel> Downloads => ReadOnlyItems;
     public static event EventHandler? StatusChanged;
@@ -69,6 +93,7 @@ public static class DownloadCenterService
             Items.Insert(0, task);
         }
 
+        SaveHistory();
         task.Completion = RunAsync(task);
         RaiseStatusChanged();
         return task;
@@ -81,9 +106,15 @@ public static class DownloadCenterService
         {
             return false;
         }
-        var removed = Items.Remove(task);
+
+        bool removed;
+        lock (Gate)
+        {
+            removed = Items.Remove(task);
+        }
         if (removed)
         {
+            SaveHistory();
             RaiseStatusChanged();
         }
         return removed;
@@ -99,15 +130,76 @@ public static class DownloadCenterService
     public static int ClearFinished()
     {
         var finished = Items.Where(item => !item.IsActive).ToArray();
-        foreach (var task in finished)
+        lock (Gate)
         {
-            Items.Remove(task);
+            foreach (var task in finished)
+            {
+                Items.Remove(task);
+            }
         }
         if (finished.Length > 0)
         {
+            SaveHistory();
             RaiseStatusChanged();
         }
         return finished.Length;
+    }
+
+    /// <summary>
+    /// Deletes the selected installer files and removes their history records. A task whose file is
+    /// already gone is still removed from the history; a file that cannot be deleted stays in the
+    /// list so the user can retry after closing the locking program.
+    /// </summary>
+    public static InstallerDeleteOutcome DeleteInstallers(IEnumerable<DownloadTaskViewModel> tasks)
+    {
+        ArgumentNullException.ThrowIfNull(tasks);
+        var selected = tasks.Where(task => task.CanRemove).Distinct().ToArray();
+        int deletedFiles = 0;
+        int removedRecords = 0;
+        var errors = new List<string>();
+
+        foreach (var task in selected)
+        {
+            if (task.IsActive)
+            {
+                continue;
+            }
+
+            string? filePath = task.FilePath;
+            if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath))
+            {
+                try
+                {
+                    File.Delete(filePath);
+                    deletedFiles++;
+                }
+                catch (Exception exception) when (exception is IOException or
+                                                      UnauthorizedAccessException or
+                                                      SecurityException)
+                {
+                    errors.Add($"{task.AppName}：{exception.Message}");
+                    continue;
+                }
+            }
+
+            lock (Gate)
+            {
+                if (Items.Remove(task))
+                {
+                    removedRecords++;
+                }
+            }
+        }
+
+        if (removedRecords > 0)
+        {
+            SaveHistory();
+            RaiseStatusChanged();
+        }
+
+        AppLogService.Info(
+            $"下载中心删除安装包：删除文件 {deletedFiles} 个，移除记录 {removedRecords} 个，失败 {errors.Count} 个。");
+        return new InstallerDeleteOutcome(deletedFiles, removedRecords, errors);
     }
 
     public static void Cancel(DownloadTaskViewModel task)
@@ -138,6 +230,7 @@ public static class DownloadCenterService
         if (string.IsNullOrWhiteSpace(task.FilePath) || !File.Exists(task.FilePath))
         {
             task.MarkFileMissing("安装包已被移动或删除，请重新下载。");
+            SaveHistory();
             RaiseStatusChanged();
             return false;
         }
@@ -263,9 +356,121 @@ public static class DownloadCenterService
         finally
         {
             task.DetachCancellation();
+            SaveHistory();
             RaiseStatusChanged();
         }
     }
+
+    private static void LoadHistory()
+    {
+        try
+        {
+            if (!File.Exists(HistoryPath))
+            {
+                return;
+            }
+
+            string json = File.ReadAllText(HistoryPath);
+            var records = JsonSerializer.Deserialize<List<DownloadHistoryRecord>>(json, HistoryJsonOptions);
+            if (records is null || records.Count == 0)
+            {
+                return;
+            }
+
+            lock (Gate)
+            {
+                foreach (var record in records.OrderByDescending(entry => entry.StartedAt))
+                {
+                    var task = DownloadTaskViewModel.Restore(record);
+                    if (task is not null)
+                    {
+                        Items.Add(task);
+                    }
+                }
+            }
+
+            AppLogService.Info($"下载历史已加载：{records.Count} 条。");
+        }
+        catch (Exception exception) when (exception is IOException or
+                                              UnauthorizedAccessException or
+                                              JsonException or
+                                              NotSupportedException)
+        {
+            AppLogService.Warn(
+                $"加载下载历史失败，已忽略历史文件：{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+    }
+
+    private static void SaveHistory()
+    {
+        List<DownloadHistoryRecord> records;
+        lock (Gate)
+        {
+            records = Items
+                .Where(task => task.CanRemove)
+                .Select(ToRecord)
+                .Take(200)
+                .ToList();
+        }
+
+        try
+        {
+            lock (HistoryGate)
+            {
+                string? directory = Path.GetDirectoryName(HistoryPath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
+                string temporaryPath = HistoryPath + ".tmp";
+                File.WriteAllText(
+                    temporaryPath,
+                    JsonSerializer.Serialize(records, HistoryJsonOptions),
+                    new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                File.Move(temporaryPath, HistoryPath, overwrite: true);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or
+                                              UnauthorizedAccessException or
+                                              JsonException or
+                                              NotSupportedException)
+        {
+            AppLogService.Warn(
+                $"保存下载历史失败：{exception.GetType().Name}：{exception.Message}",
+                exception);
+        }
+    }
+
+    private static DownloadHistoryRecord ToRecord(DownloadTaskViewModel task) => new()
+    {
+        AppId = task.AppId,
+        AppName = task.AppName,
+        AppCategory = task.Category,
+        SourceId = task.App.SourceId ?? string.Empty,
+        SourceName = task.App.SourceName ?? string.Empty,
+        AppVersion = task.App.Version,
+        IconUrl = task.App.IconUrl,
+        IconFallbackUrl = task.App.IconFallbackUrl,
+        IconText = task.App.IconText,
+        IconBackground = task.App.IconBackground,
+        AppSizeBytes = task.App.SizeBytes,
+        Version = task.Version,
+        FileName = task.FileName,
+        FilePath = task.FilePath ?? string.Empty,
+        DownloadUrl = task.DownloadUrl,
+        ReleaseId = task.App.LatestRelease?.Id ?? string.Empty,
+        BytesReceived = task.BytesReceived,
+        TotalBytes = task.TotalBytes,
+        Status = task.Phase.ToString(),
+        Message = task.StatusMessage,
+        StartedAt = task.StartedAt,
+        HasSignatureInfo = task.HasSignatureInfo,
+        SignatureIsValid = task.SignatureIsValid,
+        SignatureStatusText = task.SignatureStatusText,
+        SignatureDetailText = task.SignatureDetailText
+    };
 
     private static string DescribeError(Exception exception) => exception switch
     {

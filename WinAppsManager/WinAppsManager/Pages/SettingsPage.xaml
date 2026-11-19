@@ -62,6 +62,15 @@
                         <TextBlock x:Name="ThemeStatusText" Foreground="{DynamicResource Wam.TextSecondaryBrush}"
                                    FontSize="12" TextWrapping="Wrap"/>
                     </Border>
+
+                    <!-- 界面动效不再提供开关：真正生效的是 Windows 的“在 Windows 中显示动画”。
+                         这里只说明状态，避免用户以为关掉某个应用内选项就能停用动画。 -->
+                    <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}" CornerRadius="8"
+                            Padding="12,10" Margin="0,14,0,0">
+                        <TextBlock x:Name="AnimationHintText"
+                                   Style="{StaticResource Wam.SecondaryTextBlockStyle}"
+                                   TextWrapping="Wrap"/>
+                    </Border>
                 </StackPanel>
             </Border>
 

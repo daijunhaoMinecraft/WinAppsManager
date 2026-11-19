@@ -45,11 +45,21 @@ public static class InstalledApplicationProvider
                 continue;
             }
 
-            string signature = string.Join(
-                '\u001f',
-                application.Name.ToUpperInvariant(),
-                application.Version.ToUpperInvariant(),
-                NormalizeCommand(application.UninstallString));
+            // Hidden entries show up once per registry view: the 64-bit key and its WOW6432Node
+            // mirror share the key name and install folder, so hidden entries are merged by
+            // name + install path. Regular entries keep the stricter name/version/command key so
+            // two genuinely different installations of the same product are both listed.
+            string signature = application.IsHiddenComponent
+                ? string.Join(
+                    '\u001f',
+                    "hidden",
+                    application.Name.ToUpperInvariant(),
+                    application.InstallLocation.ToUpperInvariant())
+                : string.Join(
+                    '\u001f',
+                    application.Name.ToUpperInvariant(),
+                    application.Version.ToUpperInvariant(),
+                    NormalizeCommand(application.UninstallString));
             if (seen.Add(signature))
             {
                 applications.Add(application);
@@ -92,6 +102,7 @@ public static class InstalledApplicationProvider
                         continue;
                     }
 
+                    string? installLocation = ReadInstallLocation(subKey);
                     entries.Add(new UninstallRegistryEntry(
                         Id: $"{idPrefix}:{subKeyName}",
                         HiveLabel: hiveLabel,
@@ -99,14 +110,11 @@ public static class InstalledApplicationProvider
                         DisplayName: ReadString(subKey, "DisplayName"),
                         DisplayVersion: ReadString(subKey, "DisplayVersion"),
                         Publisher: ReadString(subKey, "Publisher"),
-                        UninstallString: ReadString(subKey, "UninstallString"),
-                        InstallLocation: ReadInstallLocation(subKey),
+                        UninstallString: ResolveUninstallCommand(subKey, installLocation),
+                        InstallLocation: installLocation,
                         InstallDate: ReadString(subKey, "InstallDate"),
                         EstimatedSizeBytes: ReadEstimatedSizeBytes(subKey),
                         IsSystemComponent: ReadFlag(subKey, "SystemComponent"),
-                        NoRemove: ReadFlag(subKey, "NoRemove"),
-                        ReleaseType: ReadString(subKey, "ReleaseType"),
-                        ParentKeyName: ReadString(subKey, "ParentKeyName"),
                         DisplayIcon: ReadString(subKey, "DisplayIcon"),
                         Hive: hive,
                         View: view,
@@ -135,6 +143,57 @@ public static class InstalledApplicationProvider
             long number => number.ToString(CultureInfo.InvariantCulture),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// 解析“怎样才能把这个软件卸掉”。很多安装器不写 <c>UninstallString</c>，只看那一个字段
+    /// 会把软件当成“不可卸载”直接丢弃（JetBrains Toolbox 安装的 IDE 就是这一类：
+    /// 它们只写 <c>ModifyPath</c>，安卓 Studio 的安装目录里另外带一个 <c>uninstall.exe</c>）。
+    /// 回退顺序与 Windows“应用和功能”接近：
+    /// <list type="number">
+    ///   <item><c>UninstallString</c>：标准卸载命令；</item>
+    ///   <item><c>QuietUninstallString</c>：静默卸载命令，同样可执行；</item>
+    ///   <item>安装目录里的 <c>uninstall.exe</c>：存在才用，避免瞎猜路径；</item>
+    ///   <item><c>ModifyPath</c>：最后兜底。它通常打开厂商的“管理/修改”入口
+    ///         （JetBrains 这里打开 Toolbox，卸载确实要经过它），比让软件彻底隐身更有用。</item>
+    /// </list>
+    /// 全部为空时仍然返回 <c>null</c>，由 <see cref="InstalledApplication.TryCreate"/> 继续丢弃。
+    /// </summary>
+    private static string? ResolveUninstallCommand(RegistryKey key, string? installLocation)
+    {
+        string? command = ReadString(key, "UninstallString");
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            return command;
+        }
+
+        command = ReadString(key, "QuietUninstallString");
+        if (!string.IsNullOrWhiteSpace(command))
+        {
+            return command;
+        }
+
+        if (!string.IsNullOrWhiteSpace(installLocation))
+        {
+            foreach (string fileName in new[] { "uninstall.exe", "Uninstall.exe" })
+            {
+                try
+                {
+                    string candidate = Path.Combine(installLocation, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        // 路径可能含空格，必须加引号，否则会被 UninstallCommandParser 拆错。
+                        return $"\"{candidate}\"";
+                    }
+                }
+                catch (Exception exception) when (exception is ArgumentException or NotSupportedException or SecurityException or IOException)
+                {
+                    // 路径非法或不可访问：继续尝试下一个候选。
+                }
+            }
+        }
+
+        return ReadString(key, "ModifyPath");
     }
 
     /// <summary>

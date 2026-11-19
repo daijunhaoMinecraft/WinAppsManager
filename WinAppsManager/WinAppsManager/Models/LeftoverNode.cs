@@ -19,8 +19,16 @@ public enum LeftoverKind
     FolderItem,
     FileItem,
     MsiProductKey,
+    MsiComponentKey,
     MsiInstallerFolder,
     StoreStateKey
+}
+
+public enum LeftoverCleanupDisposition
+{
+    Deleted,
+    ScheduledForReboot,
+    Failed
 }
 
 /// <summary>
@@ -62,6 +70,9 @@ public sealed class LeftoverNode : INotifyPropertyChanged
     /// <summary>True for items that can destroy files or MSI database rows; unchecked by default.</summary>
     public bool IsRisky { get; init; }
 
+    /// <summary>Set after a deletion attempt so the UI can distinguish reboot scheduling from removal.</summary>
+    public LeftoverCleanupDisposition? CleanupDisposition { get; private set; }
+
     public ObservableCollection<LeftoverNode> Children { get; } = new();
     public LeftoverNode? Parent { get; private set; }
 
@@ -99,8 +110,20 @@ public sealed class LeftoverNode : INotifyPropertyChanged
     /// True only for a selectable item that has no children below it; folder items only act as
     /// containers, so that unchecking one file cannot be overridden by its parent folder.
     /// </summary>
-    public bool IsDeletable => !IsGroup && Children.Count == 0 &&
+    public bool IsDeletable => !IsGroup &&
+                               CleanupDisposition != LeftoverCleanupDisposition.ScheduledForReboot &&
+                               Children.Count == 0 &&
                                (RegistryPath.Length > 0 || FilePath.Length > 0);
+
+    public bool IsSelectable => IsGroup || CleanupDisposition != LeftoverCleanupDisposition.ScheduledForReboot;
+
+    public string CleanupStatusText => CleanupDisposition switch
+    {
+        LeftoverCleanupDisposition.ScheduledForReboot => "已安排重启后删除",
+        _ => string.Empty
+    };
+
+    public bool HasCleanupStatus => CleanupStatusText.Length > 0;
 
     public bool IsFileSystemItem => FilePath.Length > 0;
 
@@ -131,6 +154,29 @@ public sealed class LeftoverNode : INotifyPropertyChanged
         Children.Add(child);
         RefreshFromChildren();
     }
+
+    public void SetCleanupDisposition(LeftoverCleanupDisposition disposition)
+    {
+        if (CleanupDisposition == disposition)
+        {
+            return;
+        }
+
+        CleanupDisposition = disposition;
+        if (disposition == LeftoverCleanupDisposition.ScheduledForReboot)
+        {
+            _isChecked = false;
+            OnPropertyChanged(nameof(IsChecked));
+        }
+
+        OnPropertyChanged(nameof(CleanupDisposition));
+        OnPropertyChanged(nameof(CleanupStatusText));
+        OnPropertyChanged(nameof(HasCleanupStatus));
+        OnPropertyChanged(nameof(IsSelectable));
+        Parent?.RefreshFromChildren();
+    }
+
+    public void MarkScheduledForReboot() => SetCleanupDisposition(LeftoverCleanupDisposition.ScheduledForReboot);
 
     /// <summary>Recomputes the checkbox state from the current children after a tree edit.</summary>
     public void RefreshSelection() => RefreshFromChildren();
@@ -186,6 +232,7 @@ public sealed class LeftoverNode : INotifyPropertyChanged
 
     private void ApplyToSubtree(bool value)
     {
+        value = value && CleanupDisposition != LeftoverCleanupDisposition.ScheduledForReboot;
         foreach (var child in Children)
         {
             child.ApplyToSubtree(value);

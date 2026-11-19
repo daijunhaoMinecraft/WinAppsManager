@@ -159,12 +159,13 @@
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                                   VirtualizingPanel.IsVirtualizing="True"
-                                  AutomationProperties.Name="注册表残留列表">
+                                  AutomationProperties.Name="软件残留列表">
                             <TreeView.Resources>
                                 <HierarchicalDataTemplate DataType="{x:Type models:LeftoverNode}"
                                                           ItemsSource="{Binding Children}">
                                     <StackPanel Orientation="Horizontal" Margin="0,2,0,2">
                                         <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                                                  IsEnabled="{Binding IsSelectable}"
                                                   MinWidth="0" VerticalAlignment="Center"
                                                   Margin="0,0,8,0"
                                                   AutomationProperties.Name="{Binding Title}"/>
@@ -197,6 +198,21 @@
                                                        FontWeight="SemiBold"
                                                        Foreground="{DynamicResource Wam.AccentBrush}"/>
                                         </Border>
+                                        <TextBlock Text="{Binding CleanupStatusText}" FontSize="10.5"
+                                                   Margin="8,0,0,0" VerticalAlignment="Center"
+                                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                                                   Visibility="Collapsed">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasCleanupStatus}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
                                     </StackPanel>
                                 </HierarchicalDataTemplate>
                             </TreeView.Resources>
@@ -208,12 +224,12 @@
                                          FontSize="26"
                                          HorizontalAlignment="Center"
                                          Foreground="{DynamicResource Wam.SuccessBrush}"/>
-                            <TextBlock x:Name="EmptyText" Text="没有发现注册表残留"
+                            <TextBlock x:Name="EmptyText" Text="没有发现软件残留"
                                        FontSize="14" FontWeight="SemiBold" Margin="0,10,0,0"
                                        HorizontalAlignment="Center"
                                        Foreground="{DynamicResource Wam.TextPrimaryBrush}"/>
                             <TextBlock x:Name="EmptyDescriptionText"
-                                       Text="该软件在注册表中没有留下可识别的同名键或指向安装目录的项。"
+                                       Text="该软件没有留下可识别的注册表项、文件夹或快捷方式残留。"
                                        FontSize="11.5" Margin="0,6,0,0" MaxWidth="420"
                                        TextAlignment="Center" TextWrapping="Wrap"
                                        HorizontalAlignment="Center"
@@ -249,11 +265,11 @@
                     <Button x:Name="RescanButton" Grid.Column="1" Content="重新扫描"
                             Height="36" Padding="14,0" Visibility="Collapsed"
                             Click="RescanButton_OnClick"
-                            AutomationProperties.Name="重新扫描注册表残留"/>
+                            AutomationProperties.Name="重新扫描软件残留"/>
                     <Button x:Name="DeleteButton" Grid.Column="2" Content="删除选中"
                             Height="36" Padding="14,0" Margin="8,0,0,0"
                             IsEnabled="False" Click="DeleteButton_OnClick"
-                            AutomationProperties.Name="删除勾选的注册表残留"/>
+                            AutomationProperties.Name="删除勾选的软件残留"/>
                     <Button x:Name="CloseButton" Grid.Column="3" Content="关闭"
                             MinWidth="92" Height="36" Padding="16,0" Margin="8,0,0,0"
                             Click="CloseButton_OnClick"

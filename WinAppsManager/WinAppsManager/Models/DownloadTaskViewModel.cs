@@ -29,6 +29,7 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     private bool _signatureIsValid;
     private string _signatureStatusText = string.Empty;
     private string _signatureDetailText = string.Empty;
+    private bool _isSelected;
     private CancellationTokenSource? _cancellation;
 
     public DownloadTaskViewModel(AppItem app)
@@ -50,8 +51,86 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     public string FileName => _fileName;
     public string DownloadUrl => _downloadUrl;
     public string? FilePath => _filePath;
-    public DateTimeOffset StartedAt { get; }
-    public string StartedText => $"开始于 {StartedAt:HH:mm}";
+    internal long BytesReceived => _bytesReceived;
+    internal long? TotalBytes => _totalBytes;
+    internal string StatusMessage => _statusMessage;
+
+    /// <summary>
+    /// Rebuilds a finished download from the persisted history so the download center still shows
+    /// it after a restart. The task is terminal and read-only except for retry/remove.
+    /// </summary>
+    internal static DownloadTaskViewModel? Restore(DownloadHistoryRecord record)
+    {
+        if (record is null ||
+            (string.IsNullOrWhiteSpace(record.AppId) && string.IsNullOrWhiteSpace(record.AppName)))
+        {
+            return null;
+        }
+
+        var app = new AppItem
+        {
+            Id = record.AppId,
+            Name = record.AppName,
+            Category = record.AppCategory,
+            Version = record.AppVersion,
+            SourceId = string.IsNullOrWhiteSpace(record.SourceId) ? null : record.SourceId,
+            SourceName = record.SourceName,
+            IconUrl = record.IconUrl,
+            IconFallbackUrl = record.IconFallbackUrl,
+            IconText = string.IsNullOrWhiteSpace(record.IconText)
+                ? (record.AppName.Length > 0 ? record.AppName[..1].ToUpperInvariant() : "?")
+                : record.IconText,
+            IconBackground = string.IsNullOrWhiteSpace(record.IconBackground)
+                ? "#0067C0"
+                : record.IconBackground,
+            SizeBytes = record.AppSizeBytes,
+            LatestRelease = new AppRelease
+            {
+                Id = record.ReleaseId,
+                Version = record.Version,
+                FileName = record.FileName,
+                DownloadUrl = record.DownloadUrl,
+                SizeBytes = record.TotalBytes
+            }
+        };
+        app.DisplayIconSource = !string.IsNullOrWhiteSpace(record.IconUrl)
+            ? record.IconUrl
+            : record.IconFallbackUrl;
+
+        var task = new DownloadTaskViewModel(app)
+        {
+            _version = record.Version,
+            _fileName = record.FileName,
+            _downloadUrl = record.DownloadUrl,
+            _bytesReceived = record.BytesReceived,
+            _totalBytes = record.TotalBytes,
+            _statusMessage = record.Message,
+            _filePath = string.IsNullOrWhiteSpace(record.FilePath) ? null : record.FilePath,
+            _hasSignatureInfo = record.HasSignatureInfo,
+            _signatureIsValid = record.SignatureIsValid,
+            _signatureStatusText = record.SignatureStatusText,
+            _signatureDetailText = record.SignatureDetailText,
+            _isFinal = true,
+            StartedAt = record.StartedAt == default ? DateTimeOffset.Now : record.StartedAt
+        };
+        task._phase = record.Status switch
+        {
+            nameof(InstallerDownloadPhase.Completed) => InstallerDownloadPhase.Completed,
+            nameof(InstallerDownloadPhase.Cancelled) => InstallerDownloadPhase.Cancelled,
+            _ => InstallerDownloadPhase.Failed
+        };
+        if (task._phase == InstallerDownloadPhase.Failed &&
+            string.IsNullOrWhiteSpace(task._statusMessage))
+        {
+            task._statusMessage = "下载失败，请重试。";
+        }
+
+        return task;
+    }
+    public DateTimeOffset StartedAt { get; private set; }
+    public string StartedText => StartedAt.Date == DateTimeOffset.Now.Date
+        ? $"开始于 {StartedAt:HH:mm}"
+        : $"开始于 {StartedAt:MM-dd HH:mm}";
     public InstallerDownloadPhase Phase => _phase;
     public bool IsActive => !_isFinal && _phase is InstallerDownloadPhase.Connecting or InstallerDownloadPhase.Downloading or InstallerDownloadPhase.Verifying;
     public bool IsCompleted => _isFinal && _phase == InstallerDownloadPhase.Completed;
@@ -63,6 +142,26 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     public bool CanOpenInstaller => IsCompleted && !string.IsNullOrWhiteSpace(_filePath);
     public bool CanOpenFolder => IsCompleted;
     public bool HasFilePath => !string.IsNullOrWhiteSpace(_filePath);
+
+    /// <summary>Terminal download with a saved installer path; can be selected for file deletion.</summary>
+    public bool CanSelectForDeletion => IsCompleted && !string.IsNullOrWhiteSpace(_filePath);
+
+    /// <summary>Checkbox state used by the download center's multi-select delete action.</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
+
     public bool HasSignatureInfo => _hasSignatureInfo;
     public bool SignatureIsValid => _signatureIsValid;
     public string SignatureStatusText => _signatureStatusText;

@@ -111,6 +111,8 @@ public static class RegistryLeftoverCleaner
                 return IsStoreStateKey(node, path, out reason);
             case LeftoverKind.MsiProductKey:
                 return IsInstallerProductKey(node, path, out reason);
+            case LeftoverKind.MsiComponentKey:
+                return IsInstallerComponentKey(node, path, out reason);
             case LeftoverKind.MsiInstallerFolder:
                 if (node.ValueName is null or { Length: 0 } ||
                     !string.Equals(path, InstallerKeyPath + @"\Folders", StringComparison.OrdinalIgnoreCase))
@@ -175,6 +177,39 @@ public static class RegistryLeftoverCleaner
         if (!allowedBranch)
         {
             reason = "商店应用状态键只允许在 PolicyCache 或 SystemAppData 下删除。";
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// <c>Installer\UserData\&lt;SID&gt;\Components\&lt;component&gt;</c> keys; only one component may be
+    /// deleted at a time.
+    /// </summary>
+    private static bool IsInstallerComponentKey(LeftoverNode node, string path, out string reason)
+    {
+        reason = string.Empty;
+        if (node.Hive != RegistryHive.LocalMachine)
+        {
+            reason = "MSI 组件记录只允许在 HKLM 中删除。";
+            return false;
+        }
+
+        string prefix = InstallerKeyPath + @"\";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "路径不在 Windows Installer 分支内。";
+            return false;
+        }
+
+        string[] remainder = path[prefix.Length..].Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        bool userDataComponent = remainder.Length == 4 &&
+                                 string.Equals(remainder[0], "UserData", StringComparison.OrdinalIgnoreCase) &&
+                                 string.Equals(remainder[2], "Components", StringComparison.OrdinalIgnoreCase);
+        if (!userDataComponent)
+        {
+            reason = "只允许删除 Installer\\UserData\\<SID>\\Components 下的单个组件键。";
             return false;
         }
 
@@ -278,12 +313,15 @@ public static class RegistryLeftoverCleaner
             return new LeftoverCleanupResult(
                 node,
                 false,
-                "拒绝访问，需要以管理员身份运行本应用后才能删除该项。");
+                "拒绝访问，需要以管理员身份运行本应用后才能删除该项；也可以重启 Windows 后重试。");
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException
                                               or ArgumentException)
         {
-            return new LeftoverCleanupResult(node, false, "删除失败，注册表键可能正在被占用。");
+            return new LeftoverCleanupResult(
+                node,
+                false,
+                "删除失败，注册表键可能正在被占用；请重启 Windows 后重试。");
         }
     }
 }

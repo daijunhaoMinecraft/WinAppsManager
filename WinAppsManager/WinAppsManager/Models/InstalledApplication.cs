@@ -7,8 +7,9 @@ using Microsoft.Win32;
 namespace WinAppsManager.Models;
 
 /// <summary>
-/// Categorises an uninstall entry:
-/// normal applications, Windows system components and updates it hides, and Store packages.
+/// Categorises locally discovered uninstall entries: a system component
+/// is marked by <c>SystemComponent</c>, and a hidden component is an entry whose <c>DisplayName</c>
+/// is missing (such entries are still listed instead of being dropped), alongside Store packages.
 /// </summary>
 public enum ApplicationCategory
 {
@@ -30,15 +31,6 @@ public sealed class InstalledApplication : INotifyPropertyChanged
         "#986F0B", "#7A7574", "#005B70", "#4F6BED", "#C50F1F", "#038387"
     ];
 
-    private static readonly HashSet<string> HiddenReleaseTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Update",
-        "Hotfix",
-        "Security Update",
-        "Update Rollup",
-        "ServicePack"
-    };
-
     private bool _isSelected;
     private ImageSource? _iconSource;
 
@@ -54,6 +46,13 @@ public sealed class InstalledApplication : INotifyPropertyChanged
     public bool IsSystemComponent => Category == ApplicationCategory.SystemComponent;
     public bool IsHiddenComponent => Category == ApplicationCategory.HiddenComponent;
     public bool IsApplication => Category == ApplicationCategory.Application;
+
+    /// <summary>
+    /// Hidden components have no vendor uninstall entry by definition (no
+    /// <c>DisplayName</c>/<c>UninstallString</c>); the only supported action is "force uninstall"
+    /// (deep clean), which removes the registration key and its leftovers.
+    /// </summary>
+    public bool CanUninstall => !IsHiddenComponent;
     public string UninstallString { get; init; } = string.Empty;
     public string DisplayIcon { get; init; } = string.Empty;
     public string InstallLocation { get; init; } = string.Empty;
@@ -101,6 +100,15 @@ public sealed class InstalledApplication : INotifyPropertyChanged
 
     /// <summary>Package family name (<c>Name_PublisherId</c>), used for AppModel state keys.</summary>
     public string PackageFamilyName { get; init; } = string.Empty;
+
+    /// <summary>Application entry id from <c>AppxManifest.xml</c>; several entries can share one package.</summary>
+    public string PackageApplicationId { get; init; } = string.Empty;
+
+    /// <summary>Other application entries declared by the same package.</summary>
+    public IReadOnlyList<RelatedPackageApplication> RelatedPackageApplications { get; init; } =
+        Array.Empty<RelatedPackageApplication>();
+
+    public bool HasRelatedPackageApplications => RelatedPackageApplications.Count > 1;
 
     public bool HasRegistryEntry => RegistryPath.Length > 0;
 
@@ -200,24 +208,31 @@ public sealed class InstalledApplication : INotifyPropertyChanged
     public string AvatarBackground => AvatarPalette[GetStableHash(Name) % AvatarPalette.Length];
 
     /// <summary>
-    /// Filters the raw registry entry the same way the Programs and Features list hides
-    /// updates, system components and entries that cannot be removed.
+    /// Creates a displayable entry from local uninstall registration data.
+    /// <para>
+    /// The classification is: <c>SystemComponent</c> marks a system
+    /// component, and an entry whose <c>DisplayName</c> is missing or empty is a hidden component.
+    /// Such entries are kept and fall back to their registry key name, so an installer that omits
+    /// <c>DisplayName</c> cannot disappear from the list silently.
+    /// </para>
     /// </summary>
     public static InstalledApplication? TryCreate(UninstallRegistryEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        string name = entry.DisplayName?.Trim() ?? string.Empty;
+        string displayName = entry.DisplayName?.Trim() ?? string.Empty;
+        var category = Classify(entry, displayName);
+        string name = displayName.Length > 0 ? displayName : ResolveRegistryKeyName(entry);
         if (name.Length == 0)
         {
             return null;
         }
 
-        var category = Classify(entry);
         string uninstallString = entry.UninstallString?.Trim() ?? string.Empty;
         if (uninstallString.Length == 0 && category == ApplicationCategory.Application)
         {
             // A regular application without a command cannot be uninstalled or cleaned up.
+            // System and hidden components are kept: they still have registry data worth cleaning.
             return null;
         }
 
@@ -242,26 +257,37 @@ public sealed class InstalledApplication : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Mirrors the flags read from the uninstall key: <c>SystemComponent</c> marks a
-    /// Windows component, while <c>ParentKeyName</c>, <c>ReleaseType</c> and <c>NoRemove</c> mark the
-    /// entries Programs and Features hides instead of listing.
+    /// Applies the hidden-component rule: <c>SystemComponent</c> wins, then an empty
+    /// <c>DisplayName</c> means hidden; every other entry is a regular application.
     /// </summary>
-    private static ApplicationCategory Classify(UninstallRegistryEntry entry)
+    private static ApplicationCategory Classify(UninstallRegistryEntry entry, string displayName)
     {
         if (entry.IsSystemComponent)
         {
             return ApplicationCategory.SystemComponent;
         }
 
-        if (!string.IsNullOrWhiteSpace(entry.ParentKeyName) ||
-            entry.NoRemove ||
-            (!string.IsNullOrWhiteSpace(entry.ReleaseType) &&
-             HiddenReleaseTypes.Contains(entry.ReleaseType.Trim())))
+        return displayName.Length == 0
+            ? ApplicationCategory.HiddenComponent
+            : ApplicationCategory.Application;
+    }
+
+    /// <summary>
+    /// Registry key name used as the visible name of an entry without <c>DisplayName</c>, e.g.
+    /// <c>Steam App 228980</c> or <c>{1D8E6291-...}.KB2533623</c>.
+    /// </summary>
+    private static string ResolveRegistryKeyName(UninstallRegistryEntry entry)
+    {
+        string path = entry.RegistryPath;
+        int separator = path.LastIndexOf('\\');
+        string keyName = (separator >= 0 ? path[(separator + 1)..] : path).Trim();
+        if (keyName.Length > 0)
         {
-            return ApplicationCategory.HiddenComponent;
+            return keyName;
         }
 
-        return ApplicationCategory.Application;
+        int colon = entry.Id.LastIndexOf(':');
+        return (colon >= 0 ? entry.Id[(colon + 1)..] : entry.Id).Trim();
     }
 
     /// <summary>
@@ -363,10 +389,9 @@ public sealed record UninstallRegistryEntry(
     string? InstallDate,
     long? EstimatedSizeBytes,
     bool IsSystemComponent,
-    bool NoRemove,
-    string? ReleaseType,
-    string? ParentKeyName,
     string? DisplayIcon = null,
     RegistryHive Hive = RegistryHive.CurrentUser,
     RegistryView View = RegistryView.Default,
     string? UrlInfoAbout = null);
+
+public sealed record RelatedPackageApplication(string Id, string Name);

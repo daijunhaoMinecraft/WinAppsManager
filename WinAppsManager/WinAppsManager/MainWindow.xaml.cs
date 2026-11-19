@@ -2,6 +2,7 @@ using System.Windows;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows.Input;
+using System.Windows.Media;
 using iNKORE.UI.WPF.Modern.Controls;
 using WinAppsManager.Models;
 using WinAppsManager.Pages;
@@ -32,6 +33,12 @@ public partial class MainWindow : Window
     private bool _isSyncingNavigation;
     private bool _isWaitingForDownloads;
     private bool _downloadsStopped;
+
+    /// <summary>当前停留的顶层页面（详情页不算）：用来判断导航切换的滑动方向。</summary>
+    private PageType _currentTopLevelPage = PageType.Install;
+
+    /// <summary>最近一次已经播放过过渡的页面实例，用于忽略重复的导航回调（SelectionChanged + ItemInvoked）。</summary>
+    private object? _pageTransitionPlayedFor;
 
     public MainWindow()
     {
@@ -106,6 +113,7 @@ public partial class MainWindow : Window
                 SoftwareNavigationItem.MenuItems.Add(item);
             }
             _categorySignature = signature;
+            UiMotion.PlayNavigationItemsIn(_categoryItems.Values);
         }
         catch (Exception exception)
         {
@@ -185,6 +193,7 @@ public partial class MainWindow : Window
                 _uninstallCategoryItems[category.Name] = item;
                 UninstallNavigationItem.MenuItems.Add(item);
             }
+            UiMotion.PlayNavigationItemsIn(_uninstallCategoryItems.Values);
         }
         catch (Exception exception)
         {
@@ -319,29 +328,112 @@ public partial class MainWindow : Window
 
     public void ChangePage(PageType pageType)
     {
+        // iNKORE NavigationView 对同一次点击可能先后触发 SelectionChanged 与 ItemInvoked，
+        // 导致 ChangePage 被调用两次。第二次直接忽略，否则页面会连着播两遍过渡，
+        // 视觉上像是“卡了一下再重播”。
+        object? current = GetPageContent(pageType);
+        if (current is not null
+            && ReferenceEquals(FrameView.Content, current)
+            && ReferenceEquals(_pageTransitionPlayedFor, current))
+        {
+            _currentTopLevelPage = pageType;
+            return;
+        }
+
+        ShowPageForPageType(pageType);
+    }
+
+    /// <summary>把顶层页面放进内容区。页面切换一律交叉淡化，见 <see cref="UiMotion.PlayPageTransition"/>。</summary>
+    private void ShowPageForPageType(PageType pageType)
+    {
         AppLogService.Info($"切换页面：{GetPageDisplayName(pageType)}（{pageType}）。");
         switch (pageType)
         {
             case PageType.Install:
-                FrameView.Content = _appsInstallPage;
+                ShowPage(_appsInstallPage);
                 SetNavigationSelection(SoftwareNavigationItem);
                 UpdateCategoryIndicators(_appsInstallPage.SelectedCategory);
                 break;
             case PageType.Downloads:
-                FrameView.Content = _downloadCenterPage;
+                ShowPage(_downloadCenterPage);
                 SetNavigationSelection(DownloadsNavigationItem);
                 break;
             case PageType.Uninstall:
-                FrameView.Content = _uninstallPage ??= new UninstallPage();
+                ShowPage(_uninstallPage ??= new UninstallPage());
                 SetNavigationSelection(UninstallNavigationItem);
                 UpdateUninstallCategoryIndicators(_uninstallPage.SelectedCategory);
                 break;
             case PageType.Settings:
-                FrameView.Content = _settingsPage ??= new SettingsPage();
+                ShowPage(_settingsPage ??= new SettingsPage());
                 SetNavigationSelection(SettingsNavigationItem);
                 break;
         }
+
+        _currentTopLevelPage = pageType;
     }
+
+    private object? GetPageContent(PageType pageType) => pageType switch
+    {
+        PageType.Install => _appsInstallPage,
+        PageType.Downloads => _downloadCenterPage,
+        PageType.Uninstall => _uninstallPage,
+        PageType.Settings => _settingsPage,
+        _ => null
+    };
+
+    /// <summary>
+    /// 把页面放进 <see cref="FrameView"/> 并播放过渡。重复设置同一个页面不重播动画，
+    /// 否则切换分类（<see cref="ActivateCategory"/> 会重新调用 <see cref="ChangePage"/>）时列表会莫名闪一下。
+    ///
+    /// 过渡只做两件事：抓一张**旧页面**快照盖在最上层（它已经离开视觉树，只能靠快照），
+    /// 然后让**新页面本身**淡入/滑入。新页面必须是真实控件——早先给新页面也拍快照再滑，
+    /// 快照按下时详情页还没加载完，动画播的是一张半空图，播完硬切成真内容，
+    /// 用户看到的就是“先平移、然后画面突然变成详情页”。
+    /// 帧率由 <see cref="UiMotion.PlayPageTransition"/> 内部的位图缓存保证。
+    /// </summary>
+    private void ShowPage(object page)
+    {
+        // FrameView.Content 已是目标页面时仍然继续：连续快速点击导航项会先后触发
+        // SelectionChanged 与 ItemInvoked，第二次调用时内容可能已经换好了；
+        // 此时只播放过渡、不重复设置内容。
+        bool contentAlreadySet = ReferenceEquals(FrameView.Content, page);
+        if (contentAlreadySet && _pageTransitionPlayedFor == page)
+        {
+            return;
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        // 上一轮过渡可能还在进行：先收尾，清掉残留的透明度/位图缓存与“切换中”标记。
+        UiMotion.CompleteActiveTransition();
+        ImageSource? outgoing = UiMotion.CaptureSnapshot(PageHost);
+        long captureOutgoingMs = stopwatch.ElapsedMilliseconds;
+
+        // 旧页面快照盖上：新页面在它后面完成首次布局，用户看不到“空白”。
+        UiMotion.ShowTransitionPreview(OutgoingSnapshot, outgoing);
+
+        if (!contentAlreadySet)
+        {
+            FrameView.Content = page;
+            PageHost.UpdateLayout();
+        }
+
+        long layoutMs = stopwatch.ElapsedMilliseconds - captureOutgoingMs;
+
+        _pageTransitionPlayedFor = page;
+        // 帧率统计由 UiMotion.PlayPageTransition 内部启动：它会在打断上一轮过渡后再开始，
+        // 提前调用会让统计被下一轮立刻重置（日志里表现为“共 0 帧”）。
+        UiMotion.PlayPageTransition(PageHost, OutgoingSnapshot);
+
+        if (AppLogService.MinimumLevel == AppLogLevel.Verbose)
+        {
+            AppLogService.Verbose(
+                $"页面过渡：Fade，旧页面快照={(outgoing is null ? "无" : $"{captureOutgoingMs} ms")}，" +
+                $"新页面布局={layoutMs} ms。");
+        }
+    }
+
+    /// <summary>从详情页返回列表：用“从左侧滑入”的返回方向，和进入详情页的“从右侧滑入”成对。</summary>
+    private void ReturnToSoftwareList() => ChangePage(PageType.Install);
 
     private void ShowAppDetails(AppItem appItem)
     {
@@ -356,7 +448,7 @@ public partial class MainWindow : Window
         else
         {
             detailsPage = new AppDetailsPage(appItem);
-            detailsPage.BackRequested += (_, _) => ChangePage(PageType.Install);
+            detailsPage.BackRequested += (_, _) => ReturnToSoftwareList();
             detailsPage.DownloadCenterRequested += () => ChangePage(PageType.Downloads);
             _detailsPages.Add(detailKey, detailsPage);
             _detailPageOrder.Add(detailKey);
@@ -370,7 +462,7 @@ public partial class MainWindow : Window
             AppLogService.Verbose($"打开软件详情：{appItem.Name}（{appItem.Id}），新建详情页。");
         }
 
-        FrameView.Content = detailsPage;
+        ShowPage(detailsPage);
     }
 
     private static string GetPageDisplayName(PageType pageType) => pageType switch
@@ -436,7 +528,7 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.Escape || (e.SystemKey == Key.Left && Keyboard.Modifiers == ModifierKeys.Alt))
         {
-            ChangePage(PageType.Install);
+            ReturnToSoftwareList();
             e.Handled = true;
         }
     }

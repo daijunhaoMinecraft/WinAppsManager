@@ -3,14 +3,12 @@ using System.Text;
 namespace WinAppsManager.Services;
 
 /// <summary>
-/// Builds the Appx removal command:
-/// <c>Get-AppxPackage -name &lt;identity&gt; | Remove-AppxPackage</c> for the current user.
-/// Passing the package identity (not the full name) removes every registered version of the
-/// package, and leaving out <c>-PreserveApplicationData</c> also clears its local data.
+/// Builds a current-user Appx removal command for one exact package full name. A package can
+/// declare several application entries, but Remove-AppxPackage removes the containing package.
 /// </summary>
 public static class StoreApplicationUninstallCommand
 {
-    public static string Build(string packageName)
+    public static string Build(string packageName, string packageFullName)
     {
         if (string.IsNullOrWhiteSpace(packageName))
         {
@@ -22,11 +20,19 @@ public static class StoreApplicationUninstallCommand
             throw new ArgumentException("包名称包含无效字符。", nameof(packageName));
         }
 
+        if (string.IsNullOrWhiteSpace(packageFullName) ||
+            packageFullName.Any(character => !char.IsLetterOrDigit(character) && character is not '.' and not '_' and not '-'))
+        {
+            throw new ArgumentException("包全名包含无效字符。", nameof(packageFullName));
+        }
+
         var command = new StringBuilder();
         command.Append("powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command \"");
         command.Append("try { Get-AppxPackage -Name '");
         command.Append(packageName);
-        command.Append("' -ErrorAction Stop | Remove-AppxPackage -Confirm:$false -ErrorAction Stop } ");
+        command.Append("' -ErrorAction Stop | Where-Object { $_.PackageFullName -ieq '");
+        command.Append(packageFullName);
+        command.Append("' } | Remove-AppxPackage -Confirm:$false -ErrorAction Stop } ");
         command.Append("catch { Write-Error $_.Exception.Message; exit 1 }\"");
         return command.ToString();
     }

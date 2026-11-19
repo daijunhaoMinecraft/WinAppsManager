@@ -46,16 +46,106 @@ public partial class DownloadCenterPage : Page
         var active = downloads.Count(task => task.IsActive);
         var finished = downloads.Count(task => !task.IsActive);
         bool hasTasks = downloads.Count > 0;
+        int deletableInstallers = downloads.Count(task => task.CanSelectForDeletion);
+        int selectedInstallers = downloads.Count(task => task.CanSelectForDeletion && task.IsSelected);
 
         EmptyState.Visibility = hasTasks ? Visibility.Collapsed : Visibility.Visible;
         DownloadsScrollViewer.Visibility = hasTasks ? Visibility.Visible : Visibility.Collapsed;
         CancelAllButton.Visibility = active > 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearFinishedButton.Visibility = finished > 0 ? Visibility.Visible : Visibility.Collapsed;
+        SelectAllInstallersButton.Visibility = deletableInstallers > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DeleteInstallersButton.Visibility = deletableInstallers > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        DeleteInstallersButton.IsEnabled = selectedInstallers > 0;
+        DeleteInstallersButton.Content = selectedInstallers > 0
+            ? $"删除选中安装包 ({selectedInstallers})"
+            : "删除选中安装包";
+        SelectAllInstallersButton.Content = deletableInstallers > 0 &&
+                                           selectedInstallers == deletableInstallers
+            ? "取消全选"
+            : "全选安装包";
+
         ActiveSummaryText.Text = !hasTasks
             ? "当前没有下载任务。"
             : active > 0
-                ? $"{active} 个任务正在下载，{finished} 个已结束。"
-                : $"{finished} 个已结束的下载任务。";
+                ? $"{active} 个任务正在下载，{finished} 个已结束。" +
+                  (deletableInstallers > 0 ? $" 可删除安装包 {deletableInstallers} 个。" : string.Empty)
+                : $"{finished} 个已结束的下载任务。" +
+                  (deletableInstallers > 0 ? $" 可删除安装包 {deletableInstallers} 个。" : string.Empty);
+    }
+
+    private void InstallerSelection_OnChanged(object sender, RoutedEventArgs args)
+    {
+        if (IsLoaded)
+        {
+            UpdateChrome();
+        }
+    }
+
+    private void SelectAllInstallersButton_OnClick(object sender, RoutedEventArgs args)
+    {
+        bool select = Downloads.Any(task => task.CanSelectForDeletion && !task.IsSelected);
+        foreach (var task in Downloads.Where(task => task.CanSelectForDeletion))
+        {
+            task.IsSelected = select;
+        }
+
+        AppLogService.Info(
+            $"下载中心{(select ? "全选" : "取消全选")}安装包：可删除 {Downloads.Count(task => task.CanSelectForDeletion)} 个。");
+        UpdateChrome();
+    }
+
+    private void DeleteInstallersButton_OnClick(object sender, RoutedEventArgs args)
+    {
+        var selected = Downloads
+            .Where(task => task.CanSelectForDeletion && task.IsSelected)
+            .ToArray();
+        if (selected.Length == 0)
+        {
+            return;
+        }
+
+        string fileList = string.Join("\n", selected
+            .Take(10)
+            .Select(task => string.IsNullOrWhiteSpace(task.FileName) ? task.AppName : task.FileName));
+        if (selected.Length > 10)
+        {
+            fileList += $"\n… 以及另外 {selected.Length - 10} 个";
+        }
+
+        Window? owner = Window.GetWindow(this);
+        string message = $"将永久删除以下 {selected.Length} 个安装包文件，删除后无法恢复：\n\n{fileList}";
+        MessageBoxResult answer = owner is null
+            ? MessageBox.Show(message, "删除安装包", MessageBoxButton.YesNo,
+                MessageBoxImage.Warning, MessageBoxResult.No)
+            : MessageBox.Show(owner, message, "删除安装包", MessageBoxButton.YesNo,
+                MessageBoxImage.Warning, MessageBoxResult.No);
+        if (answer != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        InstallerDeleteOutcome outcome = DownloadCenterService.DeleteInstallers(selected);
+        UpdateChrome();
+        if (outcome.Errors.Count > 0)
+        {
+            string errorMessage =
+                $"有 {outcome.Errors.Count} 个安装包无法删除，记录已保留，可关闭占用程序后重试：\n\n" +
+                string.Join("\n", outcome.Errors.Take(10));
+            if (owner is null)
+            {
+                MessageBox.Show(errorMessage, "部分安装包无法删除", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+            else
+            {
+                MessageBox.Show(owner, errorMessage, "部分安装包无法删除", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
     }
 
     private async void CancelAllButton_OnClick(object sender, RoutedEventArgs args)

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Security;
 using WinAppsManager.Models;
 
@@ -12,6 +13,12 @@ namespace WinAppsManager.Services;
 /// </summary>
 public static class FileLeftoverCleaner
 {
+    private const uint MoveFileDelayUntilReboot = 0x00000004;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileEx(string existingFileName, string? newFileName, uint flags);
+
     public static IReadOnlyList<LeftoverCleanupResult> Delete(
         IEnumerable<LeftoverNode> nodes,
         CancellationToken cancellationToken = default)
@@ -33,6 +40,15 @@ public static class FileLeftoverCleaner
         foreach (var node in ordered)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (node.CleanupDisposition == LeftoverCleanupDisposition.ScheduledForReboot)
+            {
+                results.Add(new LeftoverCleanupResult(
+                    node,
+                    LeftoverCleanupDisposition.ScheduledForReboot,
+                    "已安排在下次 Windows 重启时删除。"));
+                continue;
+            }
+
             if (!IsDeletable(node, out string reason))
             {
                 results.Add(new LeftoverCleanupResult(node, false, reason));
@@ -226,6 +242,15 @@ public static class FileLeftoverCleaner
 
     private static LeftoverCleanupResult DeleteSingle(LeftoverNode node)
     {
+        string lockNote = string.Empty;
+        if (node.Kind is LeftoverKind.FileItem or LeftoverKind.Shortcut &&
+            FileLockInspector.IsLocked(node.FilePath))
+        {
+            // Check the sharing lock before deleting, end normal user processes that keep the file
+            // open, then fall through to the normal delete/reboot path.
+            lockNote = FileLockInspector.TryRelease(node.FilePath).Note;
+        }
+
         try
         {
             switch (node.Kind)
@@ -234,11 +259,11 @@ public static class FileLeftoverCleaner
                     File.Delete(node.FilePath);
                     // A Start Menu program group that only held this app's links disappears too.
                     RemoveEmptyParents(Path.GetDirectoryName(node.FilePath) ?? string.Empty, node.RootPath);
-                    return new LeftoverCleanupResult(node, true, "已删除该快捷方式。");
+                    return new LeftoverCleanupResult(node, true, AppendNote("已删除该快捷方式。", lockNote));
                 case LeftoverKind.FileItem:
                     File.Delete(node.FilePath);
                     RemoveEmptyParents(node.FilePath, node.RootPath);
-                    return new LeftoverCleanupResult(node, true, "已删除该文件。");
+                    return new LeftoverCleanupResult(node, true, AppendNote("已删除该文件。", lockNote));
                 default:
                     Directory.Delete(node.FilePath, recursive: false);
                     RemoveEmptyParents(Path.GetDirectoryName(node.FilePath) ?? string.Empty, node.RootPath);
@@ -247,7 +272,18 @@ public static class FileLeftoverCleaner
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or SecurityException)
         {
-            return new LeftoverCleanupResult(node, false, "拒绝访问，需要以管理员身份运行本应用后才能删除。");
+            if (TryScheduleForReboot(node))
+            {
+                return new LeftoverCleanupResult(
+                    node,
+                    LeftoverCleanupDisposition.ScheduledForReboot,
+                    AppendNote("当前无法删除，已安排在下次 Windows 重启时自动删除。", lockNote));
+            }
+
+            return new LeftoverCleanupResult(
+                node,
+                LeftoverCleanupDisposition.Failed,
+                AppendNote("拒绝访问，且无法安排重启删除；请重启 Windows 后重试，或以管理员身份运行本应用。", lockNote));
         }
         catch (Exception exception) when (exception is DirectoryNotFoundException or FileNotFoundException)
         {
@@ -256,8 +292,50 @@ public static class FileLeftoverCleaner
         catch (Exception exception) when (exception is IOException or NotSupportedException
                                               or ArgumentException)
         {
-            return new LeftoverCleanupResult(node, false, "删除失败，文件可能正在被占用或目录只读。");
+            if (TryScheduleForReboot(node))
+            {
+                return new LeftoverCleanupResult(
+                    node,
+                    LeftoverCleanupDisposition.ScheduledForReboot,
+                    AppendNote("无法立即删除（文件被占用或目录非空），已安排在下次 Windows 重启时自动删除。", lockNote));
+            }
+
+            return new LeftoverCleanupResult(
+                node,
+                LeftoverCleanupDisposition.Failed,
+                AppendNote("删除失败，且无法安排重启删除；请重启 Windows 后重试。", lockNote));
         }
+    }
+
+    private static string AppendNote(string message, string note)
+        => note.Length == 0 ? message : $"{message}（{note}）";
+
+    /// <summary>
+    /// Registers the path in Windows' pending-rename list, the same delayed removal the target
+    /// program uses (<c>MoveFileEx(..., MOVEFILE_DELAY_UNTIL_REBOOT)</c>). Anything that cannot be
+    /// removed now is scheduled and reported as such; if Windows refuses the registration the
+    /// caller reports a normal failure.
+    /// </summary>
+    private static bool TryScheduleForReboot(LeftoverNode node)
+    {
+        if (node.Kind is not (LeftoverKind.FileItem or LeftoverKind.Shortcut or LeftoverKind.FolderItem
+            or LeftoverKind.InstallFolder or LeftoverKind.AppDataFolder))
+        {
+            return false;
+        }
+
+        string path = Normalize(node.FilePath);
+        if (path.Length == 0)
+        {
+            return false;
+        }
+
+        if (!MoveFileEx(path, null, MoveFileDelayUntilReboot))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>Removes folders that became empty after deleting their files, up to the scan root.</summary>

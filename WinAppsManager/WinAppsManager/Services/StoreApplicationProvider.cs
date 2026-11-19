@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using Microsoft.Win32;
 using WinAppsManager.Models;
 
 namespace WinAppsManager.Services;
@@ -189,7 +190,7 @@ public static class StoreApplicationProvider
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     packageCount++;
-                    AddApplication(element, applications);
+                    AddApplications(element, applications);
                 }
 
                 break;
@@ -197,7 +198,7 @@ public static class StoreApplicationProvider
             case JsonValueKind.Object:
                 // ConvertTo-Json 在只有一个包时会输出单个对象而不是数组，两种形状都要解析。
                 packageCount = 1;
-                AddApplication(document.RootElement, applications);
+                AddApplications(document.RootElement, applications);
                 break;
 
             default:
@@ -217,15 +218,11 @@ public static class StoreApplicationProvider
         return applications;
     }
 
-    private static void AddApplication(JsonElement package, List<InstalledApplication> applications)
+    private static void AddApplications(JsonElement package, List<InstalledApplication> applications)
     {
         try
         {
-            InstalledApplication? application = CreateApplication(package);
-            if (application is not null)
-            {
-                applications.Add(application);
-            }
+            applications.AddRange(CreateApplications(package));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
             or System.Security.SecurityException or ArgumentException or NotSupportedException
@@ -236,35 +233,34 @@ public static class StoreApplicationProvider
         }
     }
 
-    private static InstalledApplication? CreateApplication(JsonElement package)
+    private static IReadOnlyList<InstalledApplication> CreateApplications(JsonElement package)
     {
         string packageName = ReadString(package, "Name");
         string fullName = ReadString(package, "PackageFullName");
         string familyName = ReadString(package, "PackageFamilyName");
         if (packageName.Length == 0 || fullName.Length == 0)
         {
-            return null;
+            return Array.Empty<InstalledApplication>();
         }
 
         if (ReadBoolean(package, "IsFramework") || ReadBoolean(package, "IsResourcePackage")
             || ReadBoolean(package, "IsBundle") || ReadBoolean(package, "IsStub"))
         {
-            return null;
+            return Array.Empty<InstalledApplication>();
         }
 
         string installPath = ReadString(package, "InstallLocation");
         if (installPath.Length == 0 ||
             !installPath.Contains(WindowsAppsSegment, StringComparison.OrdinalIgnoreCase))
         {
-            return null;
+            return Array.Empty<InstalledApplication>();
         }
 
-        if (!TryReadManifest(installPath, out ManifestMetadata manifest))
+        if (!TryReadManifest(installPath, packageName, out PackageManifest manifest))
         {
-            return null;
+            return Array.Empty<InstalledApplication>();
         }
 
-        string name = IsUsableDisplayText(manifest.DisplayName) ? manifest.DisplayName!.Trim() : packageName;
         string publisher = IsUsableDisplayText(manifest.PublisherDisplayName)
             ? manifest.PublisherDisplayName!.Trim()
             : ReadString(package, "Publisher");
@@ -272,30 +268,66 @@ public static class StoreApplicationProvider
         string uninstallCommand;
         try
         {
-            uninstallCommand = StoreApplicationUninstallCommand.Build(packageName);
+            uninstallCommand = StoreApplicationUninstallCommand.Build(packageName, fullName);
         }
         catch (ArgumentException exception)
         {
             Debug.WriteLine(exception);
-            return null;
+            return Array.Empty<InstalledApplication>();
         }
 
-        return new InstalledApplication
+        string version = ReadString(package, "Version");
+        DateOnly? installDate = ReadInstallDate(familyName, fullName, installPath);
+        RelatedPackageApplication[] packageApplications = manifest.Applications.Select(entry =>
         {
-            Id = "store:" + fullName,
-            Name = name,
-            Version = ReadString(package, "Version"),
-            Publisher = publisher,
-            SourceText = StoreSource,
-            Category = ApplicationCategory.StoreApplication,
-            UninstallString = uninstallCommand,
-            DisplayIcon = ResolveLogoPath(installPath, manifest.Logo),
-            InstallLocation = installPath,
-            InstallDate = ReadInstallDate(installPath),
-            PackageFullName = fullName,
-            PackageName = packageName,
-            PackageFamilyName = familyName
-        };
+            string startMenuName = ReadStartMenuName(package, entry.Id);
+            if (IsUsableDisplayText(startMenuName))
+            {
+                return new RelatedPackageApplication(entry.Id, startMenuName);
+            }
+
+            if (IsUsableDisplayText(entry.DisplayName))
+            {
+                return new RelatedPackageApplication(entry.Id, entry.DisplayName!.Trim());
+            }
+
+            if (manifest.Applications.Count == 1 && IsUsableDisplayText(manifest.DisplayName))
+            {
+                return new RelatedPackageApplication(entry.Id, manifest.DisplayName!.Trim());
+            }
+
+            return new RelatedPackageApplication(
+                entry.Id,
+                manifest.Applications.Count == 1 ? packageName : $"{packageName} ({entry.Id})");
+        }).ToArray();
+        var results = new List<InstalledApplication>(manifest.Applications.Count);
+        for (int index = 0; index < manifest.Applications.Count; index++)
+        {
+            ManifestApplication entry = manifest.Applications[index];
+            string name = packageApplications[index].Name;
+            results.Add(new InstalledApplication
+            {
+                Id = "store:" + fullName + "!" + entry.Id,
+                Name = name,
+                Version = version,
+                Publisher = publisher,
+                SourceText = StoreSource,
+                Category = ApplicationCategory.StoreApplication,
+                UninstallString = uninstallCommand,
+                DisplayIcon = ResolveLogoPath(installPath, FirstNonEmpty(entry.Logo, manifest.PackageLogo)),
+                InstallLocation = installPath,
+                InstallDate = installDate,
+                PackageFullName = fullName,
+                PackageName = packageName,
+                PackageFamilyName = familyName,
+                PackageApplicationId = entry.Id,
+                RelatedPackageApplications = packageApplications
+                    .Where((_, relatedIndex) => relatedIndex != index)
+                    .ToArray()
+            });
+        }
+
+        return results;
     }
 
     private static bool IsUsableDisplayText(string? value)
@@ -324,6 +356,34 @@ public static class StoreApplicationProvider
         };
     }
 
+    private static string ReadStartMenuName(JsonElement package, string applicationId)
+    {
+        if (!package.TryGetProperty("StartMenuEntries", out JsonElement entries))
+        {
+            return string.Empty;
+        }
+
+        IEnumerable<JsonElement> candidates = entries.ValueKind switch
+        {
+            JsonValueKind.Array => entries.EnumerateArray().ToArray(),
+            JsonValueKind.Object => new[] { entries },
+            _ => Array.Empty<JsonElement>()
+        };
+        foreach (JsonElement entry in candidates)
+        {
+            if (ReadString(entry, "ApplicationId").Equals(applicationId, StringComparison.OrdinalIgnoreCase))
+            {
+                string name = ReadString(entry, "Name");
+                if (IsUsableDisplayText(name))
+                {
+                    return name;
+                }
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static bool ReadBoolean(JsonElement element, string propertyName)
     {
         if (element.ValueKind != JsonValueKind.Object ||
@@ -340,15 +400,15 @@ public static class StoreApplicationProvider
         };
     }
 
-    /// <summary>AppxManifest.xml 里卸载列表需要的元数据。</summary>
+    /// <summary>Package-level and per-application metadata from AppxManifest.xml.</summary>
     /// <remarks>
     /// 读不到 manifest（文件缺失、被 ACL 拒绝、XML 损坏）时保留该包并使用空元数据，
     /// 名称与发布者回退到 <c>Get-AppxPackage</c> 的身份字段；没有
     /// <c>Applications/Application</c> 的包（框架、资源辅助包）返回 <c>false</c> 直接过滤。
     /// </remarks>
-    private static bool TryReadManifest(string installPath, out ManifestMetadata manifest)
+    private static bool TryReadManifest(string installPath, string packageName, out PackageManifest manifest)
     {
-        manifest = default;
+        manifest = CreateFallbackManifest(packageName);
         string manifestPath;
         try
         {
@@ -382,11 +442,28 @@ public static class StoreApplicationProvider
             return false;
         }
 
-        List<XElement> applicationEntries = FindChild(root, "Applications")
+        List<ManifestApplication> applications = FindChild(root, "Applications")
             ?.Elements()
             .Where(element => element.Name.LocalName == "Application")
-            .ToList() ?? new List<XElement>();
-        if (applicationEntries.Count == 0)
+            .Select(element =>
+            {
+                XElement? visualElements = FindChild(element, "VisualElements");
+                string logo = FirstNonEmpty(
+                    GetAttributeValue(visualElements, "Square44x44Logo"),
+                    GetAttributeValue(visualElements, "Square30x30Logo"),
+                    GetAttributeValue(visualElements, "Square70x70Logo"),
+                    GetAttributeValue(visualElements, "Square71x71Logo"),
+                    GetAttributeValue(visualElements, "Square150x150Logo"),
+                    GetAttributeValue(visualElements, "SmallLogo"),
+                    GetAttributeValue(visualElements, "Logo"));
+                return new ManifestApplication(
+                    GetAttributeValue(element, "Id"),
+                    GetAttributeValue(visualElements, "DisplayName"),
+                    logo);
+            })
+            .Where(application => application.Id.Length > 0)
+            .ToList() ?? new List<ManifestApplication>();
+        if (applications.Count == 0)
         {
             return false;
         }
@@ -394,29 +471,17 @@ public static class StoreApplicationProvider
         XElement? properties = FindChild(root, "Properties");
         string displayName = FindChild(properties, "DisplayName")?.Value.Trim() ?? string.Empty;
         string publisher = FindChild(properties, "PublisherDisplayName")?.Value.Trim() ?? string.Empty;
-        string logo = FindChild(properties, "Logo")?.Value.Trim() ?? string.Empty;
-        if (logo.Length == 0)
-        {
-            // 少数 manifest 只在 Application/VisualElements 上声明图标。
-            foreach (XElement entry in applicationEntries)
-            {
-                XElement? visualElements = FindChild(entry, "VisualElements");
-                logo = GetAttributeValue(visualElements, "Square44x44Logo");
-                if (logo.Length == 0)
-                {
-                    logo = GetAttributeValue(visualElements, "Logo");
-                }
-
-                if (logo.Length > 0)
-                {
-                    break;
-                }
-            }
-        }
-
-        manifest = new ManifestMetadata(displayName, publisher, logo);
+        string packageLogo = FindChild(properties, "Logo")?.Value.Trim() ?? string.Empty;
+        manifest = new PackageManifest(displayName, publisher, packageLogo, applications);
         return true;
     }
+
+    private static PackageManifest CreateFallbackManifest(string packageName)
+        => new(
+            null,
+            null,
+            string.Empty,
+            new[] { new ManifestApplication(packageName, null, string.Empty) });
 
     /// <summary>按 LocalName 找子元素，兼容不同版本的 Appx manifest 命名空间（uap/uap10/uap5…）。</summary>
     private static XElement? FindChild(XElement? parent, string localName)
@@ -426,6 +491,9 @@ public static class StoreApplicationProvider
         => element?.Attributes()
                .FirstOrDefault(attribute => attribute.Name.LocalName == attributeName)
                ?.Value.Trim() ?? string.Empty;
+
+    private static string FirstNonEmpty(params string[] values)
+        => values.FirstOrDefault(value => value.Length > 0) ?? string.Empty;
 
     private static string ResolveLogoPath(string installPath, string? logo)
     {
@@ -453,8 +521,15 @@ public static class StoreApplicationProvider
                 return string.Empty;
             }
 
-            string best = ResolveBestLogo(candidate);
-            return File.Exists(best) ? best : string.Empty;
+            foreach (string logoCandidate in ResolveLogoCandidates(candidate))
+            {
+                if (File.Exists(logoCandidate))
+                {
+                    return logoCandidate;
+                }
+            }
+
+            return string.Empty;
         }
         catch (Exception exception) when (exception is ArgumentException or IOException
             or UnauthorizedAccessException or System.Security.SecurityException
@@ -471,46 +546,67 @@ public static class StoreApplicationProvider
     /// points at the 100% asset.
     /// 打包应用经常只有带缩放后缀的文件而没有同名基准文件，因此这里不要求 <paramref name="logoPath"/> 本身存在。
     /// </summary>
-    private static string ResolveBestLogo(string logoPath)
+    private static IEnumerable<string> ResolveLogoCandidates(string logoPath)
     {
         string? directory = Path.GetDirectoryName(logoPath);
         if (directory is null)
         {
-            return logoPath;
+            yield return logoPath;
+            yield break;
         }
 
         string stem = ScaleSuffix.Replace(Path.GetFileNameWithoutExtension(logoPath), string.Empty);
         foreach (int size in LogoSizeSuffixes)
         {
             string plain = Path.Combine(directory, $"{stem}.targetsize-{size}.png");
-            if (File.Exists(plain))
-            {
-                return plain;
-            }
+            yield return plain;
 
             string unplatedVariant = Path.Combine(directory, $"{stem}.targetsize-{size}_altform-unplated.png");
-            if (File.Exists(unplatedVariant))
-            {
-                return unplatedVariant;
-            }
+            yield return unplatedVariant;
         }
 
         foreach (int scale in LogoScaleSuffixes)
         {
             string scaled = Path.Combine(directory, $"{stem}.scale-{scale}.png");
-            if (File.Exists(scaled))
-            {
-                return scaled;
-            }
+            yield return scaled;
         }
 
         string unplated = Path.Combine(directory, $"{stem}_altform-unplated.png");
-        return File.Exists(unplated) ? unplated : logoPath;
+        yield return unplated;
+        yield return logoPath;
     }
 
     /// <summary>安装日期找不到包安装时间时退回包目录的创建时间；两者都拿不到就留空。</summary>
-    private static DateOnly? ReadInstallDate(string installPath)
+    private static DateOnly? ReadInstallDate(string familyName, string fullName, string installPath)
     {
+        if (familyName.Length > 0 && fullName.Length > 0)
+        {
+            try
+            {
+                RegistryView view = Environment.Is64BitOperatingSystem
+                    ? RegistryView.Registry64
+                    : RegistryView.Default;
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, view);
+                using RegistryKey? key = baseKey.OpenSubKey(
+                    $@"Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Families\{familyName}\{fullName}");
+                object? value = key?.GetValue("InstallTime");
+                if (value is long fileTime && fileTime > 0)
+                {
+                    return DateOnly.FromDateTime(DateTime.FromFileTimeUtc(fileTime).ToLocalTime());
+                }
+
+                if (value is ulong unsignedFileTime && unsignedFileTime > 0 && unsignedFileTime <= long.MaxValue)
+                {
+                    return DateOnly.FromDateTime(DateTime.FromFileTimeUtc((long)unsignedFileTime).ToLocalTime());
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                or System.Security.SecurityException or ArgumentException)
+            {
+                Debug.WriteLine(exception);
+            }
+        }
+
         try
         {
             DateTime created = Directory.GetCreationTime(installPath);
@@ -698,8 +794,26 @@ public static class StoreApplicationProvider
             [Console]::Error.WriteLine($_.Exception.Message)
             exit 1
         }
+        try { $startApps = @(Get-StartApps -ErrorAction Stop) } catch { $startApps = @() }
+        $startAppsByFamily = @{}
+        foreach ($entry in $startApps) {
+            $appId = [string]$entry.AppID
+            $separator = $appId.IndexOf('!')
+            if ($separator -gt 0) {
+                $familyName = $appId.Substring(0, $separator)
+                if (-not $startAppsByFamily.ContainsKey($familyName)) {
+                    $startAppsByFamily[$familyName] = @()
+                }
+                $startAppsByFamily[$familyName] += [pscustomobject]@{
+                    ApplicationId = $appId.Substring($separator + 1)
+                    Name = [string]$entry.Name
+                }
+            }
+        }
         $items = @(
             foreach ($package in $packages) {
+                $familyName = [string]$package.PackageFamilyName
+                $startMenuEntries = @($startAppsByFamily[$familyName])
                 [pscustomobject]@{
                     Name              = [string]$package.Name
                     PackageFullName   = [string]$package.PackageFullName
@@ -711,6 +825,7 @@ public static class StoreApplicationProvider
                     IsResourcePackage = [bool]$package.IsResourcePackage
                     IsBundle          = [bool]$package.IsBundle
                     IsStub            = [bool]($package.IsStub -or $package.IsPartiallyStaged)
+                    StartMenuEntries  = $startMenuEntries
                 }
             }
         )
@@ -733,10 +848,13 @@ public static class StoreApplicationProvider
         }
         """;
 
-    private readonly record struct ManifestMetadata(
+    private sealed record PackageManifest(
         string? DisplayName,
         string? PublisherDisplayName,
-        string? Logo);
+        string PackageLogo,
+        IReadOnlyList<ManifestApplication> Applications);
+
+    private readonly record struct ManifestApplication(string Id, string? DisplayName, string Logo);
 
     private readonly record struct PowerShellResult(string StandardOutput, string StandardError, int ExitCode)
     {

@@ -35,6 +35,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
     private ObservableCollection<InstalledApplication> _apps = new();
 
+
     /// <summary>
     /// Replaced as a whole on every filter/sort change: a single reset is far smoother than
     /// hundreds of incremental Add notifications.
@@ -65,7 +66,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         UpdateSortIndicators();
     }
 
-    /// <summary>The four uninstall categories.</summary>
+    /// <summary>The four local uninstall list categories.</summary>
     public static readonly string[] UninstallCategories = ["应用程序", "系统组件", "隐藏组件", "商店应用"];
 
     public string SelectedCategory => _selectedCategory;
@@ -403,6 +404,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         IEnumerable<InstalledApplication> matches = _allApplications.Where(application =>
             MatchesCategory(application, category) && MatchesSearch(application, terms));
         var ordered = ApplySort(matches).ToArray();
+
         Apps = new ObservableCollection<InstalledApplication>(ordered);
 
         // Only a new set of rows restarts the metadata pass. Restarting it on every sort or
@@ -466,9 +468,8 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         int selectedCount = _allApplications.Count(application => application.IsSelected);
         SelectedCountText.Text = $"已选择 {selectedCount} 个";
         ClearSelectionButton.Visibility = selectedCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        UninstallButton.Content = selectedCount > 0 ? $"卸载所选 ({selectedCount})" : "卸载所选";
-        UninstallButton.IsEnabled = selectedCount > 0 && !_isLoading;
-        DeepCleanButton.IsEnabled = selectedCount == 1 && !_isLoading;
+        UpdateUninstallAvailability(selectedCount);
+        DeepCleanButton.IsEnabled = selectedCount > 0 && !_isLoading;
 
         bool allVisibleSelected = Apps.Count > 0 && Apps.All(application => application.IsSelected);
         _suppressSelectionEvents = true;
@@ -494,6 +495,23 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
                 : _allApplications.Count == 0
                     ? "没有发现可卸载的软件。"
                     : $"共 {_allApplications.Count} 款（应用程序 {applicationCount} · 系统组件 {systemCount} · 隐藏组件 {hiddenCount} · 商店应用 {storeCount}），当前显示 {Apps.Count} 款{StoreErrorSuffix}";
+    }
+
+    /// <summary>
+    /// Hidden components never have a vendor uninstaller, so the normal uninstall entry point is
+    /// hidden for them (in the hidden tab and for a mixed selection). Only "force uninstall"
+    /// (leftover cleanup) stays available, which removes the registration key itself.
+    /// </summary>
+    private void UpdateUninstallAvailability(int selectedCount)
+    {
+        bool hiddenSelected = _allApplications.Any(item => item.IsSelected && item.IsHiddenComponent);
+        bool hiddenCategory = string.Equals(
+            _selectedCategory, UninstallCategories[2], StringComparison.Ordinal);
+        UninstallButton.Content = selectedCount > 0 ? $"卸载所选 ({selectedCount})" : "卸载所选";
+        UninstallButton.IsEnabled = selectedCount > 0 && !_isLoading && !hiddenSelected;
+        UninstallButton.Visibility = hiddenCategory || hiddenSelected
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     private string StoreErrorSuffix => _storeLoadError is null ? string.Empty : $" · {_storeLoadError}";
@@ -525,9 +543,12 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
     /// </summary>
     private void ApplicationRow_OnLoaded(object sender, RoutedEventArgs args)
     {
-        if (sender is not FrameworkElement { DataContext: InstalledApplication application } ||
-            application.HasIcon ||
-            application.DisplayIcon.Length == 0)
+        if (sender is not FrameworkElement { DataContext: InstalledApplication application })
+        {
+            return;
+        }
+
+        if (application.HasIcon || application.DisplayIcon.Length == 0)
         {
             return;
         }
@@ -539,6 +560,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
         _ = LoadQueuedIconsAsync();
     }
+
 
     private async Task LoadQueuedIconsAsync()
     {
@@ -611,9 +633,8 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         int selectedCount = _allApplications.Count(application => application.IsSelected);
         SelectedCountText.Text = $"已选择 {selectedCount} 个";
         ClearSelectionButton.Visibility = selectedCount > 0 ? Visibility.Visible : Visibility.Collapsed;
-        UninstallButton.Content = selectedCount > 0 ? $"卸载所选 ({selectedCount})" : "卸载所选";
-        UninstallButton.IsEnabled = selectedCount > 0 && !_isLoading;
-        DeepCleanButton.IsEnabled = selectedCount == 1 && !_isLoading;
+        UpdateUninstallAvailability(selectedCount);
+        DeepCleanButton.IsEnabled = selectedCount > 0 && !_isLoading;
 
         bool allVisibleSelected = Apps.Count > 0 && Apps.All(application => application.IsSelected);
         _suppressSelectionEvents = true;
@@ -696,6 +717,19 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         {
             return;
         }
+
+        if (applications.Any(application => application.IsHiddenComponent))
+        {
+            SetStatus("隐藏组件没有厂商卸载程序，不提供常规卸载；请使用“强制卸载”清理它的注册表标识和残留。");
+            return;
+        }
+
+        applications = applications
+            .GroupBy(application => application.IsStoreApplication && application.PackageFullName.Length > 0
+                    ? "store:" + application.PackageFullName
+                    : application.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
 
         var owner = Window.GetWindow(this);
         if (owner is null)
@@ -796,35 +830,36 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         UpdateChrome();
         AppLogService.Info(
             $"卸载后自动打开强制卸载：{applications.Count} 个软件" +
-            $"（{DescribeApplications(applications)}）。");
+            $"（{DescribeApplications(applications)}），合并为一次扫描。");
 
         int deleted = 0;
+        int scheduledForReboot = 0;
         int errors = 0;
-        foreach (var application in applications)
+        try
         {
-            try
-            {
-                AppLogService.Info(
-                    $"打开卸载后深度清理：{application.Name}（{application.Id}），来源={application.SourceText}。");
-                var dialog = new DeepCleanWindow(application) { Owner = owner };
-                dialog.ShowDialog();
-                deleted += dialog.DeletedCount;
-            }
-            catch (Exception exception) when (exception is not OutOfMemoryException)
-            {
-                errors++;
-                AppLogService.Warn(
-                    $"卸载后打开强制卸载失败：{application.Name}（{application.Id}），" +
-                    $"{exception.GetType().Name}：{exception.Message}",
-                    exception);
-            }
+            var dialog = new DeepCleanWindow(applications) { Owner = owner };
+            dialog.ShowDialog();
+            deleted = dialog.DeletedCount;
+            scheduledForReboot = dialog.ScheduledForRebootCount;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            errors++;
+            AppLogService.Warn(
+                $"卸载后打开强制卸载失败：{DescribeApplications(applications)}，" +
+                $"{exception.GetType().Name}：{exception.Message}",
+                exception);
         }
 
         await LoadApplicationsAsync();
-        string text = $"{batchSummary} 已确认卸载，强制卸载清理：手动删除 {deleted} 项残留";
+        string text = $"{batchSummary} 已确认卸载，强制卸载清理：立即删除 {deleted} 项残留";
+        if (scheduledForReboot > 0)
+        {
+            text += $"，已安排 {scheduledForReboot} 项在下次 Windows 重启时删除";
+        }
         if (errors > 0)
         {
-            text += $"，{errors} 个软件打开失败";
+            text += "，强制卸载窗口打开失败";
         }
 
         _statusText = text + "。";
@@ -841,45 +876,71 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
     private async void DeepCleanButton_OnClick(object sender, RoutedEventArgs args)
     {
-        var selected = _allApplications.Where(application => application.IsSelected).Take(2).ToArray();
-        if (selected.Length != 1)
+        var selected = _allApplications.Where(application => application.IsSelected).ToArray();
+        if (selected.Length == 0)
         {
             return;
         }
 
-        await OpenDeepCleanAsync(selected[0]);
+        await OpenDeepCleanAsync(selected);
     }
 
     private async void ContextDeepClean_OnClick(object sender, RoutedEventArgs args)
     {
         if (TryGetContextApplication(sender, out var application))
         {
-            await OpenDeepCleanAsync(application);
+            await OpenDeepCleanAsync([application]);
         }
     }
 
-    private async Task OpenDeepCleanAsync(InstalledApplication application)
+    private async Task OpenDeepCleanAsync(IReadOnlyList<InstalledApplication> applications)
     {
         var owner = Window.GetWindow(this);
-        if (owner is null)
+        if (owner is null || applications.Count == 0)
         {
             return;
         }
 
-        AppLogService.Info($"打开深度清理：{application.Name}（{application.Id}），来源={application.SourceText}。");
-        var dialog = new DeepCleanWindow(application) { Owner = owner };
+        string applicationsText = DescribeApplications(applications);
+        AppLogService.Info($"打开深度清理：{applicationsText}，合并为一次扫描。");
+        var dialog = new DeepCleanWindow(applications) { Owner = owner };
         dialog.ShowDialog();
-        if (dialog.DeletedCount == 0)
+        if (dialog.DeletedCount == 0 && dialog.ScheduledForRebootCount == 0)
         {
-            AppLogService.Verbose($"深度清理未删除任何残留：{application.Name}（{application.Id}）。");
+            AppLogService.Verbose($"深度清理未删除任何残留：{applicationsText}。");
             return;
         }
 
         int deleted = dialog.DeletedCount;
-        AppLogService.Info($"深度清理完成：{application.Name}（{application.Id}），已删除 {deleted} 项注册表残留。");
+        int scheduledForReboot = dialog.ScheduledForRebootCount;
+        AppLogService.Info(
+            $"深度清理完成：{applicationsText}，立即删除 {deleted} 项，" +
+            $"重启后删除 {scheduledForReboot} 项。");
         await LoadApplicationsAsync();
-        _statusText = $"深度清理：已删除 {deleted} 项注册表残留。";
+        _statusText = $"深度清理：{applicationsText} 立即删除 {deleted} 项" +
+            (scheduledForReboot > 0 ? $"，重启后删除 {scheduledForReboot} 项。" : "。");
         UpdateChrome();
+    }
+
+    /// <summary>
+    /// Hidden components only offer "force uninstall": remove the normal uninstall entry from the
+    /// row context menu. The toolbar button is handled by
+    /// <see cref="UpdateUninstallAvailability"/>.
+    /// </summary>
+    private void ApplicationRow_ContextMenuOpening(object sender, ContextMenuEventArgs args)
+    {
+        if (sender is not FrameworkElement { DataContext: InstalledApplication application, ContextMenu: { } menu })
+        {
+            return;
+        }
+
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            if (string.Equals(item.Tag as string, "uninstall", StringComparison.Ordinal))
+            {
+                item.Visibility = application.CanUninstall ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
     }
 
     private async void ContextUninstall_OnClick(object sender, RoutedEventArgs args)

@@ -55,6 +55,12 @@
                 <Button x:Name="CancelAllButton" Content="全部取消" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="CancelAllButton_OnClick"
                         AutomationProperties.Name="取消全部下载"/>
+                <Button x:Name="SelectAllInstallersButton" Content="全选安装包" Height="36" Padding="13,0" Margin="0,0,8,0"
+                        Visibility="Collapsed" Click="SelectAllInstallersButton_OnClick"
+                        AutomationProperties.Name="全选可删除的安装包"/>
+                <Button x:Name="DeleteInstallersButton" Content="删除选中安装包" Height="36" Padding="13,0" Margin="0,0,8,0"
+                        Visibility="Collapsed" IsEnabled="False" Click="DeleteInstallersButton_OnClick"
+                        AutomationProperties.Name="删除选中的安装包"/>
                 <Button x:Name="ClearFinishedButton" Content="清除已结束" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="ClearFinishedButton_OnClick"
                         AutomationProperties.Name="清除已结束的下载"/>
@@ -74,11 +80,20 @@
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
-                                        <Border Width="44" Height="44" CornerRadius="10"
+                                        <CheckBox Grid.Column="0"
+                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                  Visibility="{Binding CanSelectForDeletion, Converter={StaticResource BoolToVisibility}}"
+                                                  Checked="InstallerSelection_OnChanged"
+                                                  Unchecked="InstallerSelection_OnChanged"
+                                                  VerticalAlignment="Top" Margin="0,8,10,0"
+                                                  AutomationProperties.Name="选择安装包"/>
+
+                                        <Border Grid.Column="1" Width="44" Height="44" CornerRadius="10"
                                                 VerticalAlignment="Top" Margin="0,0,14,0">
                                             <Border.Style>
                                                 <Style TargetType="Border">
@@ -140,7 +155,7 @@
                                             </Grid>
                                         </Border>
 
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                             <WrapPanel>
                                                 <TextBlock Text="{Binding AppName}" FontSize="17" FontWeight="SemiBold"
                                                            Margin="0,0,8,0" TextTrimming="CharacterEllipsis"
@@ -166,7 +181,7 @@
                                             </StackPanel>
                                         </StackPanel>
 
-                                        <Border Grid.Column="2" Background="{DynamicResource Wam.AccentSoftBrush}"
+                                        <Border Grid.Column="3" Background="{DynamicResource Wam.AccentSoftBrush}"
                                                 CornerRadius="6" Padding="9,4" VerticalAlignment="Top"
                                                 MaxWidth="260" Margin="10,0,0,0">
                                             <TextBlock Text="{Binding StatusText}" FontSize="11" FontWeight="SemiBold"

@@ -88,6 +88,9 @@
                             <TextBlock Text="商店应用只会从当前 Windows 用户卸载，不影响其他用户；该应用的本地用户数据会一并删除。"
                                        TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0"
                                        Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                            <TextBlock x:Name="RelatedStoreNotice" Visibility="Collapsed"
+                                       TextWrapping="Wrap" FontSize="11.5" Margin="0,4,0,0"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
                         </StackPanel>
                     </Border>
                     <TextBlock Text="将按顺序启动以下卸载程序："

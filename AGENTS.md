@@ -39,6 +39,7 @@ WinAppsManager/
         UninstallConfirmationWindow.xaml / .cs  卸载二次确认与可停止说明
         UninstallProgressWindow.xaml / .cs      顺序卸载进度、停止与结果
         DeepCleanWindow.xaml / .cs              深度清理：残留树的勾选与删除
+        PendingRebootWindow.xaml / .cs          重启删除提示：列出未能立即删除的路径，可立即重启或完成
         ScreenshotViewerWindow.xaml / .cs       商店截图/视频大图预览与视频播放（MediaElement）
       Services/
         AppCatalogService.cs              统一软件源 API 客户端、目录/详情/搜索/图标本地缓存、按系统过滤目录
@@ -65,6 +66,8 @@ WinAppsManager/
         LeftoverCleaner.cs                按类型分派残留删除（注册表 / 文件）
         RegistryLeftoverCleaner.cs        勾选注册表残留的受控删除
         FileLeftoverCleaner.cs            勾选文件/文件夹/快捷方式的受控删除
+        FileLockInspector.cs              检测文件共享锁、用 Restart Manager 结束占用进程
+        SystemRestartService.cs           清理完成后按用户选择立即重启 Windows
         ShortcutResolver.cs               通过 WScript.Shell 在 STA 线程解析 .lnk 目标
         FolderPickerService.cs            原生文件夹选择对话框（IFileOpenDialog，设置页下载目录用）
         ExternalLinkService.cs            打开外部 URL
@@ -384,9 +387,11 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 当前实现中，桌面软件采用“控制面板式”的直接卸载；商店应用通过 `Remove-AppxPackage` 卸载。卸载结束后刷新已安装软件列表判断是否还存在；确认已从列表移除后自动打开 `DeepCleanWindow`（“强制卸载”），由用户手动勾选残留项，不再自动删除任何残留。
 
-- `InstalledApplicationProvider` 读取 `HKLM` 的 64/32 位视图和 `HKCU` 的 `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`。
-- 分类在 `InstalledApplication.Classify`（四个视图）：`SystemComponent=1` → 系统组件；`ParentKeyName` 非空、`NoRemove=1`、`ReleaseType` 为更新/修补程序 → 隐藏组件；其余 → 应用程序；商店应用由 `StoreApplicationProvider` 单独标记。只丢弃没有 `DisplayName` 的条目，没有 `UninstallString` 的普通应用程序也丢弃，系统/隐藏组件保留（仍可用于深度清理）。
-- 以“名称 + 版本 + 卸载命令”去重；显示本机/当前用户、版本、发布者、大小、安装日期和安装位置，非应用程序行带“系统 / 隐藏 / 商店”徽章。分类切换在左侧导航“卸载软件”子项（`UninstallPage.UninstallCategories`，默认“应用程序”，无“全部”），`CategoriesChanged` 把四类数量发给 MainWindow；标题显示“已安装软件 · 当前分类”与各分类数量。
+- `InstalledApplicationProvider` 读取 `HKLM` 的 64/32 位视图和 `HKCU` 的 `SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`。**`RegistryView.Registry32` 打开 HKLM 得到的就是 `SOFTWARE\WOW6432Node\...\Uninstall`**（实测两者子键集合完全一致），因此 32 位软件的卸载项已经覆盖，不需要再单独写一条 WOW6432Node 的扫描路径；再加会重复。
+- **卸载命令不能只看 `UninstallString`**：`ResolveUninstallCommand` 按 `UninstallString` → `QuietUninstallString` → 安装目录里的 `uninstall.exe` → `ModifyPath` 回退。JetBrains Toolbox 安装的 IDE 只写 `ModifyPath`（指向 toolbox），早年因此被当作“不可卸载”整条丢弃（实测漏 10 个）。回退后仍为空的条目继续丢弃。`ModifyPath` 兜底会打开厂商管理器（Toolbox），卸载窗口会等它关闭——这是这类软件唯一的卸载入口。
+- **隐藏组件 = 没有 `DisplayName` 的卸载登记项**（2026-11 实测结论）：`DisplayName` 长度为空时写隐藏标志，`SystemComponent` 是另一个独立标志，两者互不替代。本项目按同一规则分类：`SystemComponent=1` → 系统组件；否则 `DisplayName` 为空 → 隐藏组件；其余 → 应用程序。**没有 `DisplayName` 的条目不再丢弃**，显示名回退到注册表键名（如 `Steam App 228980`、`{1D8E6291-...}.KB2533623`），故意不写 `DisplayName` 的安装器也能在“隐藏组件”里被看到并清理。`ParentKeyName` / `NoRemove` / `ReleaseType` 不参与分类（实测 76 条无 `DisplayName` 条目中这些值全为空），也不再读取。没有卸载命令的普通应用程序仍丢弃，系统/隐藏组件保留（仍可用于深度清理）。MSI 的 `Installer\UserData\<SID>\Products` 也会被枚举，但隐藏视图的条目来自四个 `Uninstall` 位置的动态枚举，本项目不把该 MSI 来源并入已安装列表（只在残留扫描中查询 MSI 登记）。
+- 以“名称 + 版本 + 卸载命令”去重；隐藏组件按“键名 + 安装路径”去重（64 位视图与 WOW6432Node 的镜像键同名同路径，合并成一条）。显示本机/当前用户、版本、发布者、大小、安装日期和安装位置，非应用程序行带“系统 / 隐藏 / 商店”徽章。分类切换在左侧导航“卸载软件”子项（`UninstallPage.UninstallCategories`，默认“应用程序”，无“全部”），`CategoriesChanged` 把四类数量发给 MainWindow；标题显示“已安装软件 · 当前分类”与各分类数量。
+- **隐藏组件不提供常规卸载**：`InstalledApplication.CanUninstall` 对隐藏组件为 false；`UninstallPage` 在“隐藏组件”分类或选择包含隐藏项时隐藏工具栏“卸载所选”，行右键菜单去掉“卸载此软件”，`RunUninstallAsync` 也会拒绝隐藏项。隐藏组件只能对单个条目使用“强制卸载”，从而删除它的卸载键标识（键名，如 `{1D8E…}.KB2533623`）及相关残留。
 - 排序是“字段 + 方向”：`SortCombo`（名称 / 发布者 / 大小 / 安装日期）+ `SortDirectionButton`；报表模式点列头（`ReportHeader_OnClick`，`Tag` 是字段名）等于“选字段 + 切换方向”，`UpdateSortIndicators` 同步 ▲/▼；搜索匹配名称、发布者、版本、安装位置、来源和分类名。
 - 显示方式由 `DisplayModeCombo` 切换，三个模板都在 `Page.Resources`，只换 `AppsList.ItemTemplate`（和 `ReportHeader` 可见性），不重建数据：`Report`（默认）固定列宽表头（名称 / 发布者 / 版本 / 大小 / 安装日期 / 安装位置 + 官网 + 复选框），列宽须与 `ReportItemTemplate` 的 `ColumnDefinition` 一致（30 / 210 / 150 / 80 / 78 / 96 / * / 46 / 34）；`List` 紧凑单行；`Card` 三行卡片；三者都显示图标（24px 或 36px），无图标回退字母徽章。
 - 安装日期用 `M月 d, yyyy`（如 `8月 15, 2026`），无日期返回空字符串，**不要**写“安装日期未知”（`DetailsText` 自动省略）。官网取 `URLInfoAbout`，为空回退 `HelpLink`；有官网的行显示“官网”按钮，右键菜单同样提供，统一走 `ExternalLinkService`。
@@ -394,28 +399,36 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 安装目录由 `InstallLocationResolver` 解析：`InstallLocation` → `DisplayIcon` 所在目录 → 卸载程序所在目录；跳过 `msiexec` 这类相对路径命令、盘根和 Windows / Program Files / ProgramData / AppData / 用户目录等共享根。Provider 读 `InstallLocation` 时按 `InstallLocation` → `Inno Setup: App Path` → `InstallDir` 回退并展开环境变量。
 - `UninstallPage` 的后台补全条件是 `InstalledApplication.NeedsFilesystemProbe`（缺大小或日期），**不要**加“安装位置非空”限制；只排队当前分类可见条目，切换分类会取消上一轮并重新排队；每条处理完 `Dispatcher.Yield(Background)`，探测结果用“所有属性已变”通知刷新行。
 - 切换分类/排序时整体替换 `Apps`（只发一次 Reset），复选框只调 `RefreshSelectionSummary`；首次加载显示 `ui:ProgressRing`。列表必须用 `VirtualizedRowListStyle`（见 6.10 第 9 条）；补全按 `EnrichmentBatchSize`（8）成批应用，同一批在同一 dispatcher 回合写入；`SizeText`/`InstallDateText` 在模型缓存；行模板不放 `ToolTip` 绑定、官网入口用 `TextBlock`。
-- 页面同时显示注册表桌面软件和当前用户 Microsoft Store/MSIX 应用，系统/隐藏组件默认不与普通软件混在一起。`StoreApplicationProvider` 在 Windows 10/11 调用 Windows PowerShell `Get-AppxPackage`（单一 net6 构建无 WinRT），解析 JSON 与每个包的 `AppxManifest.xml`，只保留安装位置在 `\WindowsApps\`、有 `Applications/Application` 的包，过滤 framework、resource package、bundle、stub；每个包一条记录，卸载单位是包。Windows 7/8 返回空集合并由界面提示不支持。
-- 商店应用显示 manifest 的 `DisplayName`（`ms-resource:` 时回退包标识名）、`PublisherDisplayName`、版本和 `Logo`；图标支持 PNG 并由统一后台加载器缓存；“商店应用”分类过滤出这些包，搜索也匹配“商店应用”来源文字。
-- 商店卸载命令由 `StoreApplicationUninstallCommand` 生成：`powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command "try { Get-AppxPackage -Name '<包标识名>' -ErrorAction Stop | Remove-AppxPackage -Confirm:$false -ErrorAction Stop } catch { ... exit 1 }"`（原型 `sub_1400CF2A8`）。只对当前用户生效，不用 `-AllUsers`，不保留应用数据，也不做预置包 deprovision。
-- 商店图标以 `AppxManifest.xml` 的 Logo 为基准，优先同名 `.targetsize-48/44/64/32/24.png`、`.scale-200/150/125.png` 或 `_altform-unplated.png` 变体，避免 100% 缩放小图。
-- 商店应用按包卸载，可能包含多个入口；卸载会删除该应用在本机的用户数据，确认框会说明。
+- 页面同时显示注册表桌面软件和当前用户 Microsoft Store/MSIX 应用，系统/隐藏组件默认不与普通软件混在一起。`StoreApplicationProvider` 在 Windows 10/11 调用 Windows PowerShell `Get-AppxPackage`（单一 net6 构建无 WinRT），解析 JSON 与每个包的 `AppxManifest.xml`，只保留安装位置在 `\WindowsApps\`、至少有一个带 `Id` 的 `Applications/Application` 的包，过滤 framework、resource package、bundle、stub；每个 manifest 应用入口一条记录，包仍是卸载和验证单位。Windows 7/8 返回空集合并由界面提示不支持。
+- 商店应用名称优先取 `Get-StartApps` 返回的本地化入口名，再取对应 `VisualElements` 的 `DisplayName`；单入口才回退包级名称，多入口缺少入口名时显示包名和 Application Id。每行记录同包其他入口的名称/Id 与自身 `Application/@Id`，图标优先取该入口 VisualElements 的方形 Logo，并回退包级 `Properties/Logo`；安装日期优先读 `HKCR\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Families\<PackageFamilyName>\<PackageFullName>\InstallTime`，再回退安装目录创建时间。图标支持 PNG 并由统一后台加载器按需缓存。“商店应用”分类过滤出这些入口，搜索也匹配“商店应用”来源文字。
+- 商店卸载命令由 `StoreApplicationUninstallCommand` 生成：按包标识名查找并用 `PackageFullName` 精确筛选，再执行 `Remove-AppxPackage -Confirm:$false`。只对当前用户生效，不用 `-AllUsers`，不保留应用数据，也不做预置包 deprovision。卸载批次按包全名去重，避免同包多入口重复执行；确认框说明同包入口会一起卸载并列出关联名称。
+- 商店图标以 `AppxManifest.xml` 的 Logo 为基准，依次找同名 `.targetsize-48/44/64/32/24.png`、`.scale-200/150/125.png` 或 `_altform-unplated.png` 变体，候选缺失时继续尝试后续尺寸，最后才用 manifest 原始路径，避免小图或有效资源被前一个缺失变体挡住。
+- 商店应用按包卸载，可能包含多个入口；卸载会删除该应用在本机的用户数据，确认框会说明。刷新快照和逐包查询都以 `PackageFullName` 为验证键，不能把每个入口的行 ID 当成独立安装状态。
 - 用户选多个软件点“卸载所选”或行右键“卸载此软件”时先显示 `UninstallConfirmationWindow`：提示可中途停止但可能残留部分状态，列出全部软件并要求先关闭程序；右键菜单还提供打开安装位置、复制软件名称、复制卸载命令和刷新列表。
-- 确认后显示模态 `UninstallProgressWindow`，按列表顺序逐个调用 `UninstallRunner.UninstallAsync(app, token)`；“停止卸载”、关闭窗口或 Alt+F4 都取消当前批次、终止卸载程序及子进程，当前软件记为已取消、剩余记为已跳过。
+- 确认后显示模态 `UninstallProgressWindow`，按列表顺序逐个调用 `UninstallRunner.UninstallAsync(app, token)`；“停止卸载”、关闭窗口或 Alt+F4 都会先弹出 **二次确认**（默认按钮为“否”），确认后才取消当前批次、终止卸载程序及子进程，当前软件记为已取消、剩余记为已跳过；选择“否”时批次继续。
 - `InstalledApplicationIconService` 读取 `DisplayIcon`（支持带引号路径、EXE/DLL 索引、`.ico`、负资源索引和环境变量），用 `PrivateExtractIcons` 提取 48px 图标，冻结后进程内缓存。图标由页面在行显示后后台加载，不阻塞注册表扫描；没有图标回退字母徽章（不加彩色底）。注册表软件图标**按需提取**（`ApplicationRow_OnLoaded` → `LoadQueuedIconsAsync`），不要批量取。
 - 页面加载完成后在线程池做一次紧凑型 GC（`BclCompat.CompactCollect`：net8 用 Aggressive，net6 回退 Forced），把注册表扫描留下的短命字符串还给系统；实测省约 3 MB 私有内存，不要在滚动/排序等交互路径调用。
 - `UninstallCommandParser` 把 `UninstallString` 拆成 `FileName`/`Arguments`，支持带引号路径、未加引号含空格路径、`MsiExec.exe /I{...}`、`.bat`/`.cmd` 与环境变量展开；命令行必须来自注册表，不能接受任意输入。
 - `UninstallRunner` 用 `UseShellExecute=true` 启动（Windows 处理 UAC 与文件关联），把进程加入 `UninstallProcessJob`（作业对象），先等启动器退出再等作业内进程数归零，因此“启动器退出、卸载在子进程里”也会被完整等待；只有用户停止时 `TerminateJobObject`，失败回退 `Process.Kill(entireProcessTree: true)`。
 - 退出码 0/3010/1641 视为结束，1602/1223 为用户取消，1603/1618/其他非零为失败。启动器退出后仍有子进程存活超过 1.2 秒时，非零退出码不判失败，按“已交接、请刷新列表确认”报告；`ExitCode` 因权限读不到时同样按“已结束”。
 - 每批结束后**刷新一次已安装软件列表**（`UninstallProgressWindow` 的 `refreshInstalledApplications` 委托，桌面注册表 + 商店 PowerShell 合并快照），用 `Id`/`PackageFullName`/`RegistryPath` 身份判断每个软件是否还存在；该列表结论覆盖退出码，这是“卸载是否真的成功”的唯一依据。列表刷新失败才回退 `UninstallVerifier` 逐项核对；3010/1641 仍只提示重启。
-- 工具栏“强制卸载”或行右键“强制卸载（清理残留）…”打开 `DeepCleanWindow`，结果树默认收起。`LeftoverScanner` 只读扫描九组：注册表侧（卸载登记项、`HKCU/HKLM\Software` 同名键、Run/RunOnce、`Explorer\StartupApproved` 的 Run/StartupFolder 值、Services、App Paths），命中规则是“键名等于软件名或安装目录名”或“键值仍指向安装目录”；文件侧是安装目录、AppData/ProgramData 同名目录、开始菜单与桌面快捷方式；MSI 侧按卸载键 ProductCode 查 `Installer\UserData\<SID>\Products`、`Installer\Products` 和 `Installer\Folders`（字节反序压缩 GUID）。
+- 工具栏“强制卸载”或行右键“强制卸载（清理残留）…”打开 `DeepCleanWindow`，结果树默认收起。`LeftoverScanner` 的静态扫描流程如下（只读）：
+  - 注册表：在 HKCU 与 HKLM 的 64/32 位视图中从 `Software` 递归枚举；键名等于名称候选（显示名、去掉版本后缀的名字、安装目录名、卸载键名）时加入该键并**停止下钻**，`RegistryScanSkipList` 的 8 条系统分支（SideBySide、Fusion、Installer、App Paths、.NETFramework、Component Based Servicing、Wow6432Node、Classes）不进入；Uninstall 分支交给“卸载信息”组，避免重复列出。
+  - 注册表侧另有卸载登记项、App Paths（默认值指向安装目录）、Run/RunOnce/`Explorer\StartupApproved` 值、Services；后两组是本项目扩展（常规扫描不遍历 `SYSTEM`，也不单独列启动值）。隐藏组件额外把自己卸载键的完整标识放进“卸载信息”（普通应用仍跳过自己的键），并用标识拆出的 GUID/KB 继续匹配 MSI 产品记录和 `SOFTWARE\...\Updates\...\KB…` 键。
+  - 文件侧是安装目录、AppData/ProgramData/LocalLow/Programs 同名目录，以及开始菜单（含程序组）、桌面、Quick Launch 的快捷方式；命中规则是“目标在安装目录内或名称相同”。
+  - MSI 侧按卸载键 ProductCode 查 `Installer\UserData\<SID>\Products`、`Installer\Products`（字节反序压缩 GUID），枚举 `UserData\<SID>\Components\<组件>`（仅组件值仍指向安装目录时加入，`MsiComponentKey`），以及 `Installer\Folders` 中与安装目录相同/前缀匹配的值。
+  - 安装期监控记录与厂商自定义规则**未实现**：需要安装监控会话才有可信数据，而本项目不做安装监控，也没有驱动来源，因此只做静态扫描。
 - 商店应用同样可深度清理：残留是 `HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\PolicyCache\<包族名>` 与 `...\AppModel\SystemAppData\<包族名>` 两类状态缓存，`LeftoverScanner.ScanStoreApplication` 按 `PackageFamilyName`（回退 `PackageName`）匹配，作为“商店应用注册表”分组返回（`StoreStateKey`）。
 - 安装目录、AppData、开始菜单程序组递归展开成“文件夹 → 文件”树（每文件一行，带大小和完整路径）；上限 12 层、5000 条，跳过重解析点避免目录环；整树默认不勾选。
 - 快捷方式优先按“目标是否落在安装目录内”匹配：`ShortcutResolver` 在专用 STA 线程用一个 `WScript.Shell` 批量解析 `.lnk`（等价 IShellLink），名称相同兜底。开始菜单程序组只有“一个链接且无其他程序”时整体给出，否则逐个列出；删链接后清理变空的上级目录。
-- AppData 候选：`%LOCALAPPDATA%\<名称>`、`%APPDATA%\<名称>`、`%PROGRAMDATA%\<名称>`、`%LOCALAPPDATA%\LocalLow\<名称>`、`%LOCALAPPDATA%\Programs\<名称>`；名称候选来自显示名、去掉版本后缀的名字、安装目录名、卸载键的键名（GUID 除外）。
+- AppData 候选：`%LOCALAPPDATA%\<名称>`、`%APPDATA%\<名称>`、`%PROGRAMDATA%\<名称>`、`%LOCALAPPDATA%\LocalLow\<名称>`、`%LOCALAPPDATA%\Programs\<名称>`；名称候选来自显示名、去掉版本后缀的名字、安装目录名、卸载键的键名；隐藏组件额外加入键名中的 GUID 和 KB 号（普通应用仍排除纯 GUID 键名）。
 - 危险分组（安装目录、用户数据目录、快捷方式、MSI 安装数据库）节点带 `IsRisky`，构造后 `IsChecked = false`，显示“谨慎”徽章并默认不勾选；工具栏“全选”会勾上它们，等于用户显式确认。注册表安全分组默认勾选。
-- 删除由 `LeftoverCleaner` 分派并逐条重校验：注册表侧（`RegistryLeftoverCleaner`）只允许卸载项、App Paths、Services 单层子键、Run/RunOnce/`StartupApproved` 单个值、`Installer\Products` 或 `UserData\<SID>\Products` 单层产品键、`Installer\Folders` 单个值、`AppModel\PolicyCache|SystemAppData\<包族名>`（`StoreStateKey`，仅 HKCU），以及 `SOFTWARE` 下至少两级的软件数据键；`Microsoft`、`Classes`、`Policies`、`Wow6432Node` 等受保护分支一律跳过。文件侧（`FileLeftoverCleaner`）按“先文件、后空目录”：文件必须位于节点 `RootPath` 内且 `RootPath` 通过根目录校验；文件夹只有无子项时才删（`Directory.Delete(recursive:false)`），删文件后清理变空的上级目录，不会连带删除未勾选文件。盘根、`Windows`、`System32`、`Program Files` 本身、`%TEMP%` 和用户个人文件夹一律拒绝。
+- 删除由 `LeftoverCleaner` 分派并逐条重校验：注册表侧（`RegistryLeftoverCleaner`）只允许卸载项、App Paths、Services 单层子键、Run/RunOnce/`StartupApproved` 单个值、`Installer\Products` 或 `UserData\<SID>\Products` 单层产品键、`UserData\<SID>\Components` 单层组件键（`MsiComponentKey`）、`Installer\Folders` 单个值、`AppModel\PolicyCache|SystemAppData\<包族名>`（`StoreStateKey`，仅 HKCU），以及 `SOFTWARE` 下至少两级的软件数据键；`RegistryScanSkipList` 的 8 个系统分支（SideBySide、Fusion、Installer、App Paths、.NETFramework、Component Based Servicing、Wow6432Node、Classes）一律跳过。删除键时用 `DeleteSubKeyTree` 递归删除其子键/值，空键随之移除。文件侧（`FileLeftoverCleaner`）按“先文件、后空目录”：文件必须位于节点 `RootPath` 内且 `RootPath` 通过根目录校验；文件夹只有无子项时才删（`Directory.Delete(recursive:false)`），删文件后清理变空的上级目录，不会连带删除未勾选文件。盘根、`Windows`、`System32`、`Program Files` 本身、`%TEMP%` 和用户个人文件夹一律拒绝。
 - 卸载结果文案保持简短（“已卸载 / 注册表中仍存在该项目 / 卸载失败 / 卸载已取消”），详细原因看退出码或汇总；批次结束或取消后刷新注册表并显示汇总；卸载程序弹出向导时用户需自行操作，本应用只等待。流程不做撤销、回滚或恢复点，不会自动重启，3010/1641 只提示需要重启。
-- **卸载后手动深度清理**：批次结束且刷新列表确认软件不存在（`UninstallResult.IsSuccess && RegistryRemoved == true`，**不再要求退出码为 0**）时，`UninstallPage.OpenDeepCleanAfterUninstallAsync` 自动打开 `DeepCleanWindow`，不自动删除任何残留；安全项默认勾选，安装目录/AppData/快捷方式/MSI 等危险项保持默认不勾选，由用户逐项确认后点击删除。一个批次卸载多个软件时逐个打开清理窗口；用户关闭窗口即表示跳过该软件的残留清理。
+- **卸载后手动深度清理**：批次结束且刷新列表确认软件不存在（`UninstallResult.IsSuccess && RegistryRemoved == true`，**不再要求退出码为 0**）时，`UninstallPage.OpenDeepCleanAfterUninstallAsync` 自动打开 `DeepCleanWindow`，不自动删除任何残留；安全项默认勾选，安装目录/AppData/快捷方式/MSI 等危险项保持默认不勾选，由用户逐项确认后点击删除。一个批次卸载多个软件时只打开一个清理窗口，按软件逐个扫描（`BusyText` 显示“正在扫描：软件名（1/N）”），把多组残留合并去重后展示；用户关闭窗口即表示跳过该批次的残留清理。
+- 文件删除前由 `FileLockInspector` 用 `FileShare.None` 检查共享锁，再用 Windows Restart Manager（`rstrtmgr.dll`）找出占用进程并结束普通用户进程（System/smss/csrs/wininit/services/lsass/winlogon/svchost/dwm 等系统进程不结束），随后重试删除；仍失败才走 `MoveFileEx` 延迟删除。
+- 深度清理删除文件、快捷方式或文件夹时，任何无法立即删除的项都会尝试按 Windows `MoveFileEx(path, null, MOVEFILE_DELAY_UNTIL_REBOOT)` 登记为“已安排重启后删除”，节点保留并显示该状态。清理结束后，`PendingRebootWindow` 列出所有“重启后删除”和“仍无法删除”的路径，并提供“立即重启”（`shutdown.exe /r /t 5`）和“完成”两个选项；立即删除、重启后删除和仍失败三种结果分别计数。注册表键和值无法安排重启删除，失败信息提示重启 Windows 或以管理员身份重试。
+- 客户端清单 `app.manifest` 设置 `requestedExecutionLevel level="requireAdministrator"`，程序启动即请求 UAC 管理员权限；强制卸载需要结束占用进程、访问 HKLM 和 Program Files。
 
 ### 6.4 下载流程
 
@@ -424,9 +437,10 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
    - 否则调用 `DownloadCenterService.Start(app)`，随后触发 `DownloadCenterRequested`，MainWindow 切到下载中心。
 2. `DownloadCenterService` 在后台：用 `GetLatestReleaseAsync()` 取最新签名地址，创建 `DownloadTaskViewModel` 加入 `Downloads`，读取设置，经 `ApplyMirror` 改写 GitHub 地址、按 `AppSettingsService.ResolvedDownloadDirectory`（设置里的自定义下载目录，空 = 默认目录）建下载服务、`CreateHttpClient()` 建客户端后调用 `InstallerDownloadService.DownloadAsync()`，进度经 `UiProgress` 回 UI 线程。
 3. 下载完成后任务标记完成，后台读取安装包的 Authenticode 数字签名（签发公司、证书有效期、是否通过 WinVerifyTrust），结果只展示、不阻止打开；**不会自动打开安装包**，用户在下载中心点击“打开安装包”。
-4. 取消、失败、重试、移除由下载中心管理。
-5. 关闭窗口时 `MainWindow.OnClosing` 调用 `DownloadCenterService.CancelAllAsync()`，取消并等待活动任务后关闭。
-6. 安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`；设置页“下载位置”可改为任意绝对路径（支持 `%USERPROFILE%` 等环境变量，目录不存在时自动创建），只影响之后开始的任务；下载中心的“打开下载文件夹”打开当前设置的目录。
+4. 取消、失败、重试、移除由下载中心管理。**已结束的任务会持久化**到 `%LOCALAPPDATA%\WinAppsManager\download-history.json`（最多保留 200 条，原子写），启动时由 `DownloadCenterService` 静态构造函数恢复为可查看的历史任务；`DownloadTaskViewModel.Restore` 从 `DownloadHistoryRecord` 重建 `AppItem`/文件名/状态/签名信息。`ClearFinished` 和单项“移除记录”会同时删除历史文件中的对应记录。
+5. 下载中心支持对**已完成的安装包多选/全选并删除**：每个可删除任务显示复选框，顶部“全选安装包 / 取消全选”和“删除选中安装包 (N)”按钮；删除前弹二次确认，`DownloadCenterService.DeleteInstallers` 删除真实文件并移除历史记录，文件被占用时保留记录并提示。失败/取消的历史任务没有安装包文件，不参与多选删除，只能用“移除记录”清理。
+6. 关闭窗口时 `MainWindow.OnClosing` 调用 `DownloadCenterService.CancelAllAsync()`，取消并等待活动任务后关闭。
+7. 安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`；设置页“下载位置”可改为任意绝对路径（支持 `%USERPROFILE%` 等环境变量，目录不存在时自动创建），只影响之后开始的任务；下载中心的“打开下载文件夹”打开当前设置的目录。
 
 ### 6.5 分段下载与校验
 
@@ -525,7 +539,25 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - `UninstallPage` 在 `StoreApplicationProvider.IsSupported == false`（Windows 7/8）时跳过商店扫描并在状态栏追加 `StoreErrorSuffix`；Windows 10/11 商店包通过 `Get-AppxPackage` 正常枚举与核对。
 - 兼容层：`BclCompat.cs` 收敛 net7/net8 API（`SnakeCaseLower`、`ReadExactlyAsync`、流式 SHA256、`CompactCollect` 等），`Polyfills.cs` 补 `RequiredMemberAttribute` 等编译器标记；`[GeneratedRegex]` 改为静态 `Regex` 字段。
 
-### 6.13 客户端日志
+### 6.13 界面动效
+
+`Services/UiMotion.cs` 是客户端动效的**唯一入口**：页面切换过渡、导航分类项淡入、弹窗打开、相册换图都从这里调用；页面/弹窗里不要再各自写 `Storyboard`，时长与缓动（`FadeEasing`/`DecelerateEasing`）也集中在这里。
+
+  全项目的动效只保留**透明度变化**：页面切换交叉淡化、导航项淡入、弹窗淡入。位移与缩放都已移除——实测它们会和内容异步加载时机打架（先动再硬切）、或让文字在动画期间重新栅格化。
+
+  **列表行不做入场动画**：曾给软件列表/下载中心/卸载列表加过交错淡入（`PlayListRowReveal`，按 index 错开 22ms、上限 14 行）。上限之外的行不动，屏幕上就会出现“上半部分在动、下半部分静止”的分裂观感，搜索/筛选时尤其刺眼。现在三处列表都直接显示，`PlayListRowReveal` 与 `MaxRevealRows`/`RevealStaggerMilliseconds`/`ListRowDuration` 均已删除；筛选/排序/搜索只换数据，不加动画。
+
+- **动效恒定开启，没有任何开关**：应用内的 `AppSettings.EnableAnimations` 和 Windows 的“在 Windows 中显示动画”判断都已移除。原因：`MinAnimate=0` 会让 `SystemParameters.ClientAreaAnimation` 变 false，但 Windows 设置界面不一定同步显示，用户完全查不出“动画没了”的原因。界面动效是本项目特性而非可选项，`AnimationsEnabled` 现在恒为 `true`，设置页只在 `AnimationHintText` 里说明会有什么效果。各方法仍保留禁用分支（现在走不到），保证元素不会被留在半透明或偏移的中间状态。
+- **页面过渡必须基于位图**：`ShowPage` 的顺序是「`CompleteActiveTransition()` 收尾上一轮 → 抓旧页面快照 → `ShowTransitionPreview` 盖上旧页面 → 换 `FrameView.Content` + `UpdateLayout()` → 抓新页面快照 → `PlayPageTransition`」。过渡期间 `PageHost` 置 `Visibility.Hidden`，只对 `OutgoingSnapshot`/`IncomingSnapshot` 两张 `Image` 做位移与淡入淡出。
+  - **不要改回“直接给实时页面做动画”**：页面里的列表实例化、图标解码和内部动画会占住 UI 线程，实测最大帧间隔接近 300 ms（每帧明显停顿）；改成位图后稳定在 10–11 ms，且页面越复杂也不会更卡。
+  - 必须把**裁剪**（外层 `ClipToBounds`）与**动画目标**（内层 `PageHost`）分成两层，否则 WPF 按未变换的边界裁剪再整体平移，滑入的位图会画到左侧导航栏上。
+  - 快照是同步软件渲染（1080×760 约 6–10 ms），只在真的要播过渡时抓；抓不到（首次布局、渲染失败）就退回“上移 + 淡入”。
+- **只有进出详情页是层级关系**：`ResolvePageTransition` 现在只剩 `Fade` 与 `Backward` 两种结果——导航栏同级切换一律 `Fade`（交叉淡化），从详情页回列表是 `Backward` 但同样只做淡化；横向滑动整条链路（`NavForward`/`NavBackward`/`Drill*` 常量）已删除。
+- **重复导航回调**：iNKORE `NavigationView` 对同一次点击可能先后触发 `SelectionChanged` 与 `ItemInvoked`，`ChangePage` 会被调用两次。用 `_pageTransitionPlayedFor` 忽略第二次，否则动画会连着播两遍，看起来像“卡一下再重播”。
+- **帧率诊断**：`BeginFrameProfile`/`EndFrameProfile` 用 `CompositionTarget.Rendering` 统计帧数与最大帧间隔，只在 `VerboseLogging` 开启时生效并在日志里输出 `过渡帧率：…`；判断动画是否卡顿看这条日志，不要靠肉眼猜。注意统计必须在 `CompleteActiveTransition()` **之后**启动，否则会被上一轮的收尾立刻关掉（日志表现为“共 0 帧”）。
+- 设置页的缓存统计（`ClientCacheStore.Statistics()` 要枚举数千个图标文件）已移到线程池 + `_cacheStatisticsGeneration` 代次校验：在 UI 线程同步统计会阻塞上百毫秒，正是早先“切到设置页卡一帧”的原因。
+
+### 6.14 客户端日志
 
 `Services/AppLogService.cs`：文件日志写到 `%LOCALAPPDATA%\WinAppsManager\Logs\app-yyyy-MM-dd.log`（UTF-8 无 BOM，按天分文件、单文件 5 MB 后追加序号、保留 14 天），API 为 `Initialize/Shutdown/ApplySettings/Info/Warn/Error/Verbose/OpenLogFolder/GetLogStatistics/CurrentLogFilePath`；`MinimumLevel` 默认 Info，`VerboseLogging` 开启后记录 Verbose；`Enabled` 表示是否写文件（关闭后只输出 Debug/Trace）。设置加载前产生的日志先最多缓存 500 条，首次 `ApplySettings` 时决定落盘或丢弃，因此关闭文件日志时首次启动不会创建日志文件。`App.OnStartup` 最先初始化并注册三个未处理异常钩子（只记录、不改崩溃行为）；目录加载/在线搜索/源与服务端切换、详情与下载地址解析、下载任务生命周期、卸载与深度清理扫描和批次结果、设置加载警告/保存失败、页面切换、窗口关闭均已接线；分页/筛选/滚动/每次进度更新不记录，避免刷屏。设置页日志卡片可查看路径、文件数与大小，并提供启用文件日志、Verbose 开关、“打开日志目录”“复制路径”。**日志禁止记录签名 URL、代理认证信息、GitHub 令牌、证书配置或安装包内容**；只记录应用名/id、阶段、字节数、耗时、路径、主机名、异常类型与消息。日志文件不要提交。\n\n设置保存和软件源切换可能在线程池线程触发 `SettingsChanged`/`SourceChanged`；UI 订阅者必须先 `Dispatcher.CheckAccess()` 后切回 UI 线程再更新控件（`SettingsPage.OnSettingsChanged` 已这样做），否则会出现“调用线程无法访问此对象”。软件源切换失败必须在 `SettingsPage.SwitchAppSourceAsync` 的 catch 中用 `AppLogService.Error` 记录来源 ID、异常类型和消息，不能只显示在状态栏。
 
