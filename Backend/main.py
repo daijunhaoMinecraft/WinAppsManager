@@ -589,25 +589,27 @@ def create_app(
             "refresh": request.app.state.refresher.report(),
         }
 
-    @router.post("/refresh", tags=["Cache"])
-    async def trigger_refresh(request: Request, response: Response) -> dict:
-        """Run one catalog refresh round now; concurrent calls share a single round."""
-
-        require_builtin_source(request)
-        response.headers["Cache-Control"] = "no-store"
-        report = await request.app.state.refresher.refresh_now()
-        if report is None:
-            logger.info("手动刷新未启动：已有一轮刷新正在进行。")
-            return {"started": False, "reason": "已有刷新任务正在运行"}
-        summary = report.summary()
-        logger.info(
-            "手动刷新完成：成功 %s，复用持久缓存 %s，不可用 %s，用时 %.2f 秒。",
-            summary["ok"],
-            summary["cached"],
-            summary["unavailable"],
-            summary["duration_seconds"],
-        )
-        return {"started": True, **summary}
+    # 手动刷新接口已禁用：公网可调用的 POST 刷新会重复触发全量/目录抓取，造成服务器资源浪费。
+    # 目录更新只由启动预热与后台定时线程负责；如需恢复，取消下面的注释并同步恢复 /sources 的 refresh 能力。
+    # @router.post("/refresh", tags=["Cache"])
+    # async def trigger_refresh(request: Request, response: Response) -> dict:
+    #     """Run one catalog refresh round now; concurrent calls share a single round."""
+    #
+    #     require_builtin_source(request)
+    #     response.headers["Cache-Control"] = "no-store"
+    #     report = await request.app.state.refresher.refresh_now()
+    #     if report is None:
+    #         logger.info("手动刷新未启动：已有一轮刷新正在进行。")
+    #         return {"started": False, "reason": "已有刷新任务正在运行"}
+    #     summary = report.summary()
+    #     logger.info(
+    #         "手动刷新完成：成功 %s，复用持久缓存 %s，不可用 %s，用时 %.2f 秒。",
+    #         summary["ok"],
+    #         summary["cached"],
+    #         summary["unavailable"],
+    #         summary["duration_seconds"],
+    #     )
+    #     return {"started": True, **summary}
 
     @router.get("/apps", response_model=AppCollection, tags=["Apps"])
     async def list_apps(

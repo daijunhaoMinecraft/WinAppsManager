@@ -183,13 +183,14 @@ def create_soft360_router() -> APIRouter:
             request, lambda service: service.get_screenshot(soft_id, index)
         )
 
-    @router.post("/refresh")
-    async def refresh_catalog(request: Request, response: Response) -> dict[str, Any]:
-        response.headers["Cache-Control"] = NO_STORE
-        try:
-            return await _service(request).refresh_catalog()
-        except Soft360NotFoundError as error:
-            raise _not_found(error) from None
+    # 手动刷新接口已禁用：目录只由后台定时线程刷新，避免 POST 被滥用重复抓取 360 接口。
+    # @router.post("/refresh")
+    # async def refresh_catalog(request: Request, response: Response) -> dict[str, Any]:
+    #     response.headers["Cache-Control"] = NO_STORE
+    #     try:
+    #         return await _service(request).refresh_catalog()
+    #     except Soft360NotFoundError as error:
+    #         raise _not_found(error) from None
 
     return router
 

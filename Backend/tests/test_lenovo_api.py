@@ -455,18 +455,15 @@ class CatalogApiTests(unittest.TestCase):
         self.assertEqual(service.catalog_calls, [False])
         self.assertEqual(service.refresh_calls, 0)
 
-    def test_refresh_endpoint_is_the_only_manual_refresh_entry(self):
+    def test_manual_refresh_endpoint_is_disabled(self):
         service = FakeLenovoService()
         with TestClient(create_app(lenovo_service=service)) as client:
-            # GET 带 refresh 参数先证明不会触发刷新，再 POST 才真正同步刷新。
+            # GET 带 refresh 参数仍然只读缓存；POST 手动刷新接口已禁用。
             client.get("/api/v1/store/lenovo/apps", params={"refresh": "true"})
             response = client.post("/api/v1/store/lenovo/refresh")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["cache-control"], "no-store")
-        self.assertEqual(response.json(), service.refresh_result)
-        self.assertTrue(response.json()["refreshed"])
+        self.assertEqual(response.status_code, 404)
         self.assertEqual(service.catalog_calls, [False])
-        self.assertEqual(service.refresh_calls, 1)
+        self.assertEqual(service.refresh_calls, 0)
 
     def test_error_mapping_is_502_and_504(self):
         for failure, status in (
@@ -735,8 +732,7 @@ class DisabledSourceTests(unittest.TestCase):
             video_head = client.head(f"/api/v1/store/lenovo/apps/{SOFT_ID}/screenshots/1/video")
             refresh = client.post("/api/v1/store/lenovo/refresh")
         self.assertEqual(video_head.status_code, 503)
-        self.assertEqual(refresh.status_code, 503)
-        self.assertEqual(refresh.json()["detail"], DISABLED_DETAIL)
+        self.assertEqual(refresh.status_code, 404)
 
 
 class CacheApiTests(unittest.TestCase):

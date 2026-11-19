@@ -63,7 +63,7 @@ sudo systemctl reload caddy
 没有 Caddy 时也可用 Nginx + certbot；关键是：
 
 1. 终止 TLS，转发到 `127.0.0.1:8080`；
-2. 屏蔽 `POST /api/v1/refresh`、`POST /api/v1/store/lenovo/refresh`、`/api/v1/cache*`；
+2. 屏蔽 `/api/v1/cache*`（手动刷新接口已禁用，无需再单独屏蔽）；
 3. 按需限制 `/docs` 公网访问；
 4. 设置合理的请求体大小与超时（视频代理是流式转发，读取超时不要太短）。
 
@@ -94,11 +94,9 @@ journalctl -u winappsmanager-backend.service -f
 tail -f .cache/logs/backend.log
 ```
 
-首次启动如果还没有目录快照，可主动刷新一次目录（否则联想/360 会等待各自的定时刷新间隔）：
+首次启动如果还没有目录快照，联想/360 会由启动补刷或后台定时线程填充；手动刷新接口已禁用，可用下面的命令检查来源状态：
 
 ```bash
-curl -X POST http://127.0.0.1:8020/api/v1/sources/lenovo/refresh
-curl -X POST http://127.0.0.1:8020/api/v1/sources/soft360/refresh
 curl http://127.0.0.1:8020/api/v1/sources
 ```
 
@@ -112,8 +110,7 @@ curl http://127.0.0.1:8020/api/v1/sources
 ## 4. 安全清单（公网部署前逐项确认）
 
 - [ ] 只用 HTTPS 对外，HTTP 自动跳转；不要暴露 `127.0.0.1:8080` 原始端口。
-- [ ] 在反向代理或防火墙层屏蔽 `POST /api/v1/refresh`、`POST /api/v1/store/lenovo/refresh`、
-      `/api/v1/cache*`（客户端不需要这些接口；`/cache` 会暴露本机路径等诊断信息）。
+- [ ] 在反向代理或防火墙层屏蔽 `/api/v1/cache*`（客户端不需要这些接口；`/cache` 会暴露本机路径等诊断信息）。手动刷新接口已在后端禁用。
 - [ ] 如无必要，限制 `/docs` 的访问来源，或只在内网开启。
 - [ ] 后端本身**没有用户认证**；不要把它当作多租户服务，也不要直接放在公网裸奔。
 - [ ] 建议在 Caddy/Nginx 或云防火墙加 IP 限速（目录/搜索/视频代理都是公开读接口）。

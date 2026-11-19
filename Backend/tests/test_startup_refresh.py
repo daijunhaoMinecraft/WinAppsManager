@@ -227,20 +227,16 @@ class RefreshScheduleTests(unittest.TestCase):
             self.assertFalse(report["running"])
             self.assertEqual(provider.force_refreshes, 1)
 
-    def test_manual_refresh_runs_one_round(self):
+    def test_manual_refresh_endpoint_is_disabled(self):
         provider = FakeQQProvider()
         with TestClient(create_app(release_providers={"qq": provider})) as client:
             self.assertEqual(provider.force_refreshes, 1)
             response = client.post("/api/v1/refresh")
-            self.assertEqual(response.status_code, 200)
-            payload = response.json()
-            self.assertTrue(payload["started"])
-            self.assertEqual(payload["ok"], 8)
-            self.assertEqual(provider.force_refreshes, 2)
+            self.assertEqual(response.status_code, 404)
+            # 禁用后不会触发任何新的抓取，也不会计入定时刷新统计。
+            self.assertEqual(provider.force_refreshes, 1)
             report = client.get("/api/v1/status").json()["refresh"]
-            self.assertEqual(report["runs"], 1)
-            self.assertEqual(report["failures"], 0)
-            self.assertIsNotNone(report["last_run_at"])
+            self.assertEqual(report["runs"], 0)
 
     def test_scheduler_interval_is_reported_from_the_configuration(self):
         settings = BackendSettings(

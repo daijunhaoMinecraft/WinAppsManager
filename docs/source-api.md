@@ -38,7 +38,7 @@
         "screenshots": true,
         "cover": true,
         "video": true,
-        "refresh": true
+        "refresh": false
       }
     }
   ],
@@ -59,9 +59,11 @@
 
 | 来源 | categories | catalog | search | details | download | screenshots | cover | video | refresh |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `lenovo` 联想应用商店 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `soft360` 360软件管家 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
+| `lenovo` 联想应用商店 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| `soft360` 360软件管家 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ |
 | `builtin` 内置精选 | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+`refresh` 当前在所有来源均为 `false`：手动刷新接口已禁用（返回 404），目录只由启动预热与各来源的后台定时线程更新，避免公网调用重复抓取上游。
 
 ## 2. 统一接口
 
@@ -74,7 +76,6 @@
 | GET | `/search?q=&limit=` | 服务端搜索（`search_mode=api` 时使用；`q` 1–100 字符，`limit` 1–50，默认 30） |
 | GET | `/apps/{app_id}` | 详情 |
 | GET | `/apps/{app_id}/download?architecture=x64` | 下载地址（`Release`，`architecture` 可选，默认 `x64`） |
-| POST | `/refresh` | 刷新目录（`capabilities.refresh=true`；同步等待刷新完成，响应为来源服务自己的统计字段，例如 `refreshed`/`total`/`updated_at`/`duration_seconds`） |
 | GET | `/apps/{app_id}/icon` | 图标代理（可选，支持 `ETag`/304） |
 | GET | `/apps/{app_id}/screenshots/{index}` | 截图代理（可选，支持 `ETag`/304） |
 | GET | `/apps/{app_id}/cover` | 封面代理（可选，支持 `ETag`/304） |
@@ -83,7 +84,7 @@
 约束：
 
 - `app_id` 是**来源内的应用 ID**（联想 `softID`，如 `L105867`/`11488`；360 `soft_id`，如 `1010`；内置精选目录 ID，如 `qq`），保留原始大小写，由目录/搜索返回的 `id` **原样**使用，不做客户端拼接。客户端缓存时用 `source_id + ":" + app_id` 作为本地主键。
-- 目录/分类/详情/搜索/下载/刷新/视频（含 `HEAD`）响应都是 `Cache-Control: no-store`；下载地址每次实时解析，绝不进入任何中间缓存，也不写日志。
+- 目录/分类/详情/搜索/下载/视频（含 `HEAD`）响应都是 `Cache-Control: no-store`；下载地址每次实时解析，绝不进入任何中间缓存，也不写日志。手动刷新接口（`POST /refresh`）已禁用并返回 404。
 - 图片（图标/截图/封面）响应为 `Cache-Control: public, max-age=86400` + `ETag`，`If-None-Match` 命中（兼容引号、`W/` 前缀与逗号列表）返回 304。
 - 来源被禁用或 `source_id` 未知：404 `{"detail":"软件源不存在或未启用"}`；来源不支持的能力：404 `{"detail":"该软件源不支持此能力。"}`（客户端本应根据 `capabilities` 不请求）。
 - 上游协议/网络错误沿用全局 `ProviderError` 映射：502；超时：504；来源内资源不存在：404；来源被禁用：404（统一 API 不复用旧路由的 503）。
@@ -263,7 +264,7 @@ Backend/unified/
 
 ### 新增一个软件源（仅服务端）
 
-1. 新建 `Backend/unified/<source>_adapter.py`，继承 `SourceAdapter`，声明 `source_id`/`source_name`/`source_description`/`search_mode`/`is_default`/`capabilities`，覆盖需要的 `list_categories`/`list_apps`/`search`/`get_app`/`get_download`/`refresh`/`icon_response`/`screenshot_response`/`cover_response`/`open_video`；
+1. 新建 `Backend/unified/<source>_adapter.py`，继承 `SourceAdapter`，声明 `source_id`/`source_name`/`source_description`/`search_mode`/`is_default`/`capabilities`，覆盖需要的 `list_categories`/`list_apps`/`search`/`get_app`/`get_download`/`icon_response`/`screenshot_response`/`cover_response`/`open_video`（手动刷新接口已禁用，不需要实现 `refresh`）；
 2. 在 `Backend/unified/factory.py` 的 `create_source_registry()` 里注册一个实例（需要新服务/配置时再按联想/360 的方式在 `Backend/main.py` lifespan 中创建该服务并传入）；
 3. 需要开关/参数时在 `Backend/config.py` 增加配置；
 4. 客户端不需要任何改动：`/sources` 自动出现新来源，统一路由自动可用（未实现的能力按 `capabilities` 返回 404）。

@@ -481,20 +481,17 @@ class SearchApiTests(unittest.TestCase):
 
 
 class RefreshApiTests(unittest.TestCase):
-    def test_post_refresh_returns_the_refresh_report(self):
+    def test_post_refresh_is_disabled(self):
         service = FakeSoft360Service()
         with TestClient(create_app(soft360_service=service)) as client:
             response = client.post("/api/v1/store/360/refresh")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["cache-control"], "no-store")
-        self.assertEqual(response.json()["refreshed"], True)
-        self.assertEqual(response.json()["total"], 5111)
-        self.assertEqual(service.refresh_calls, 1)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(service.refresh_calls, 0)
 
     def test_get_refresh_is_not_allowed(self):
         service = FakeSoft360Service()
         with TestClient(create_app(soft360_service=service)) as client:
-            self.assertEqual(client.get("/api/v1/store/360/refresh").status_code, 405)
+            self.assertEqual(client.get("/api/v1/store/360/refresh").status_code, 404)
         self.assertEqual(service.refresh_calls, 0)
 
 
@@ -539,13 +536,14 @@ class DisabledSourceApiTests(unittest.TestCase):
                 ("get", f"/api/v1/store/360/apps/{SOFT_ID}/download"),
                 ("get", f"/api/v1/store/360/apps/{SOFT_ID}/icon"),
                 ("get", f"/api/v1/store/360/apps/{SOFT_ID}/screenshots/0"),
-                ("post", "/api/v1/store/360/refresh"),
             )
             for method, path in paths:
                 with self.subTest(path=path):
                     response = getattr(client, method)(path)
                     self.assertEqual(response.status_code, 503)
                     self.assertEqual(response.json()["detail"], DISABLED_DETAIL)
+            # 手动刷新接口在所有状态下都已禁用（不是 503）。
+            self.assertEqual(client.post("/api/v1/store/360/refresh").status_code, 404)
 
 
 class LifespanTests(unittest.TestCase):

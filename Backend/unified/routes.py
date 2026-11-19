@@ -150,16 +150,18 @@ def create_unified_router() -> APIRouter:
         response.headers["Cache-Control"] = NO_STORE
         return await invoke(lambda: adapter.get_download(app_id, architecture))
 
-    @router.post("/sources/{source_id}/refresh")
-    async def refresh_source(
-        request: Request, response: Response, source_id: SourceIdPath
-    ) -> dict[str, Any]:
-        adapter = adapter_for(request, source_id)
-        require(adapter, "refresh")
-        response.headers["Cache-Control"] = NO_STORE
-        # 刷新结果是来源服务自己的统计字段（refreshed/total/updated_at/duration_seconds...），
-        # 原样返回，不强行套统一模型。
-        return await invoke(adapter.refresh)
+    # 手动刷新接口已禁用：统一来源刷新会直接触发上游目录抓取，公网暴露时容易被滥用。
+    # 目录更新只由各来源自己的后台线程负责；如需恢复，取消下面的注释并同步恢复来源的 refresh 能力。
+    # @router.post("/sources/{source_id}/refresh")
+    # async def refresh_source(
+    #     request: Request, response: Response, source_id: SourceIdPath
+    # ) -> dict[str, Any]:
+    #     adapter = adapter_for(request, source_id)
+    #     require(adapter, "refresh")
+    #     response.headers["Cache-Control"] = NO_STORE
+    #     # 刷新结果是来源服务自己的统计字段（refreshed/total/updated_at/duration_seconds...），
+    #     # 原样返回，不强行套统一模型。
+    #     return await invoke(adapter.refresh)
 
     # -- 媒体（图标 / 截图 / 封面 / 视频）------------------------------------
 

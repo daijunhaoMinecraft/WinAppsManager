@@ -83,7 +83,7 @@ class GithubResponseCacheTests(unittest.IsolatedAsyncioTestCase):
         expected = sha256(b"../../evil/repo").hexdigest()[:32] + ".json"
         self.assertEqual(files[0].name, expected)
         self.assertNotIn("evil", files[0].name)
-        self.assertEqual(files[0].parent, self.directory.resolve())
+        self.assertEqual(files[0].parent.resolve(), self.directory.resolve())
 
     async def test_the_document_uses_the_documented_schema(self):
         clock = MutableClock(1234.5)

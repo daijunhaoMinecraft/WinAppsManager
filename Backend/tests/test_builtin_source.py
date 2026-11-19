@@ -191,11 +191,13 @@ class BuiltinWhitelistTests(unittest.TestCase):
         with TestClient(api) as client:
             # 白名单外的 provider 不会被注册（因此不可能被抓取）。
             self.assertEqual(set(api.state.releases._providers), {"clashverge", "telegram"})
+            # 手动刷新接口已禁用：POST 不会触发抓取。
             response = client.post("/api/v1/refresh")
-            self.assertEqual(response.status_code, 200)
-            payload = response.json()
-            self.assertTrue(payload["started"])
-            self.assertEqual(payload["total"], 2)
+            self.assertEqual(response.status_code, 404)
+            # 直接用内部刷新器验证白名单：只有这两个 provider 会被抓取。
+            report = client.portal.call(api.state.refresher.refresh_now)
+            self.assertIsNotNone(report)
+            self.assertEqual(report.summary()["total"], 2)
             status = client.get("/api/v1/status").json()
         self.assertEqual(set(status["warmup"]["apps"]), {"clashverge", "telegram"})
         self.assertEqual(status["warmup"]["apps"]["clashverge"]["status"], "ok")
@@ -240,15 +242,14 @@ class BuiltinDisabledTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 503)
                     self.assertEqual(response.json()["detail"], DISABLED_DETAIL)
             refresh = client.post("/api/v1/refresh")
-            self.assertEqual(refresh.status_code, 503)
-            self.assertEqual(refresh.json()["detail"], DISABLED_DETAIL)
+            self.assertEqual(refresh.status_code, 404)
 
     def test_no_provider_is_registered_or_called(self):
         api = self.make_app()
         with TestClient(api) as client:
             self.assertEqual(api.state.releases._providers, {})
             client.get("/api/v1/apps")
-            client.post("/api/v1/refresh")
+            self.assertEqual(client.post("/api/v1/refresh").status_code, 404)
             self.assertEqual(api.state.warmup.report()["apps"], {})
         self.assertEqual(self.clash.calls, 0)
         self.assertEqual(self.telegram.calls, 0)

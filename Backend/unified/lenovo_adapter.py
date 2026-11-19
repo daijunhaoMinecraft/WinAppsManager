@@ -201,7 +201,8 @@ class LenovoSourceAdapter(SourceAdapter):
         screenshots=True,
         cover=True,
         video=True,
-        refresh=True,
+        # 手动刷新接口已禁用，目录只由后台定时线程刷新。
+        refresh=False,
     )
 
     def __init__(self, service: Any | None, *, enabled: bool = True) -> None:
@@ -249,9 +250,10 @@ class LenovoSourceAdapter(SourceAdapter):
         service = self._require()
         return await _translate(lambda: service.resolve_download(app_id, architecture=architecture))
 
-    async def refresh(self) -> dict:
-        service = self._require()
-        return await _translate(service.refresh_catalog)
+    # 手动刷新接口已禁用（目录只由后台线程刷新）。
+    # async def refresh(self) -> dict:
+    #     service = self._require()
+    #     return await _translate(service.refresh_catalog)
 
     # -- 媒体 -------------------------------------------------------------
 

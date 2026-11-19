@@ -2,10 +2,10 @@
 
 覆盖：
 
-- ``/sources`` 列出三个来源并下发 ``capabilities``（联想全能力、360 无封面/视频、内置精选
-  无搜索/截图/封面/视频/刷新）；
+- ``/sources`` 列出三个来源并下发 ``capabilities``（联想/360 除手动刷新外均为 true，内置精选
+  无搜索/截图/封面/视频，三个来源的 ``refresh`` 均为 false）；
 - 三个来源的统一 ``categories`` / ``apps`` / ``search`` / 详情 / ``download`` / 图标 / 截图 /
-  封面 / 视频 / 刷新接口的基本形状、``Cache-Control`` 与错误映射（404/502/504）；
+  封面 / 视频接口的基本形状、``Cache-Control`` 与错误映射（404/502/504）；手动刷新接口已禁用（404）；
 - 未启用/未知来源统一 404，未启用来源仍出现在 ``/sources`` 且 ``enabled=false``；
 - 旧路由（``/api/v1/apps``、``/store/lenovo/*``、``/store/360/*``）行为不变；
 - **新增来源只需注册适配器**：自定义 adapter 注册进 :class:`SourceRegistry` 后，统一路由与
@@ -519,7 +519,7 @@ class SourcesListTests(unittest.TestCase):
         self.assertFalse(lenovo["online_search"])
         self.assertEqual(lenovo["app_count"], 5111)
         self.assertTrue(lenovo["updated_at"].startswith("2026-11-14T09:00:00"))
-        # 联想：目录/分类/搜索/详情/下载/截图/封面/视频/刷新全部支持。
+        # 联想：目录/分类/搜索/详情/下载/截图/封面/视频支持；手动刷新接口已禁用。
         self.assertEqual(lenovo["capabilities"], {
             "categories": True,
             "catalog": True,
@@ -529,7 +529,7 @@ class SourcesListTests(unittest.TestCase):
             "screenshots": True,
             "cover": True,
             "video": True,
-            "refresh": True,
+            "refresh": False,
         })
 
         builtin = by_id["builtin"]
@@ -555,7 +555,7 @@ class SourcesListTests(unittest.TestCase):
         self.assertEqual(soft360["search_mode"], "api")
         self.assertTrue(soft360["online_search"])
         self.assertEqual(soft360["app_count"], 5940)
-        # 360：截图/搜索/刷新 true，封面/视频 false。
+        # 360：截图/搜索 true，封面/视频 false；手动刷新接口已禁用。
         self.assertEqual(soft360["capabilities"], {
             "categories": True,
             "catalog": True,
@@ -565,7 +565,7 @@ class SourcesListTests(unittest.TestCase):
             "screenshots": True,
             "cover": False,
             "video": False,
-            "refresh": True,
+            "refresh": False,
         })
 
     def test_disabled_sources_are_reported_but_unified_routes_404(self):
@@ -763,10 +763,7 @@ class LenovoUnifiedApiTests(unittest.TestCase):
         service = FakeLenovoService()
         with TestClient(build_app(lenovo_service=service)) as client:
             response = client.post("/api/v1/sources/lenovo/refresh")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.headers["cache-control"], "no-store")
-            self.assertTrue(response.json()["refreshed"])
-            self.assertEqual(response.json()["total"], 1)
+        self.assertEqual(response.status_code, 404)
 
     def test_missing_app_is_404(self):
         service = FakeLenovoService()
@@ -879,8 +876,7 @@ class Soft360UnifiedApiTests(unittest.TestCase):
         service = FakeSoft360Service()
         with TestClient(build_app(soft360_service=service)) as client:
             response = client.post("/api/v1/sources/soft360/refresh")
-            self.assertEqual(response.status_code, 200)
-            self.assertTrue(response.json()["refreshed"])
+        self.assertEqual(response.status_code, 404)
 
     def test_missing_app_is_404(self):
         with TestClient(build_app()) as client:
@@ -971,7 +967,6 @@ class BuiltinUnifiedApiTests(unittest.TestCase):
                     self.assertEqual(response.json()["detail"], UNSUPPORTED_DETAIL)
             refresh = client.post("/api/v1/sources/builtin/refresh")
             self.assertEqual(refresh.status_code, 404)
-            self.assertEqual(refresh.json()["detail"], UNSUPPORTED_DETAIL)
 
     def test_missing_app_is_404(self):
         with TestClient(build_app()) as client:

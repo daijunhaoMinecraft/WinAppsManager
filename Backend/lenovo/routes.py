@@ -241,13 +241,14 @@ def create_lenovo_router() -> APIRouter:
     async def get_app_cover(request: Request, soft_id: SoftIdPath) -> Response:
         return await _image_endpoint(request, lambda service: service.get_cover(soft_id))
 
-    @router.post("/refresh")
-    async def refresh_catalog(request: Request, response: Response) -> dict[str, Any]:
-        response.headers["Cache-Control"] = NO_STORE
-        try:
-            return await _service(request).refresh_catalog()
-        except LenovoNotFoundError as error:
-            raise _not_found(error) from None
+    # 手动刷新接口已禁用：目录只由后台定时线程刷新，避免 POST 被滥用重复抓取联想接口。
+    # @router.post("/refresh")
+    # async def refresh_catalog(request: Request, response: Response) -> dict[str, Any]:
+    #     response.headers["Cache-Control"] = NO_STORE
+    #     try:
+    #         return await _service(request).refresh_catalog()
+    #     except LenovoNotFoundError as error:
+    #         raise _not_found(error) from None
 
     return router
 

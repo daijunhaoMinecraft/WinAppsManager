@@ -83,7 +83,7 @@ Backend/lenovo/service.py      LenovoStoreService 门面（路由只依赖它）
   - `get_catalog(force_refresh=False)`：内存新鲜 → 直接返回；磁盘新鲜 → 载入内存返回；陈旧/无数据
     → 返回陈旧快照并后台刷新（stale-while-revalidate），无快照则同步抓取；抓取失败且无快照抛
     `LenovoUnavailableError`；有陈旧快照时返回 `stale=true` 的快照。
-  - `force_refresh=True` 只由后台定时刷新与 `POST /refresh` 使用；GET 不提供 refresh 参数（旧客户端的 `?refresh=true` 会被忽略）
+  - `force_refresh=True` 只由后台定时刷新使用；GET 不提供 refresh 参数（旧客户端的 `?refresh=true` 会被忽略）
     读取（与现有 `/apps` 的 refresh 回退行为一致）。
   - 刷新必须单飞（asyncio.Lock），后台任务不能在 shutdown 后继续跑。
   - 目录响应 `Cache-Control: no-store`（缓存语义由客户端自己控制）。
@@ -264,7 +264,7 @@ Backend/lenovo/service.py      LenovoStoreService 门面（路由只依赖它）
 （`Content-Type` 按实际格式，`ETag`、`Cache-Control: public, max-age=86400`，`If-None-Match` 命中 304）。
 未知 soft_id / index 越界 / 没有对应图片 → 404。
 
-`POST /store/lenovo/refresh` → `{"refreshed": true, "total": 5111, "updated_at": "...", "duration_seconds": 3.2}`；
+联想目录刷新只由后台线程执行；`POST /store/lenovo/refresh` 已禁用（404）。目录快照示例：`{"refreshed": true, "total": 5111, "updated_at": "...", "duration_seconds": 3.2}`；
 并发调用合并为同一轮（返回同一结果）。
 
 `DELETE /api/v1/cache` 追加清理联想缓存（目录内存/磁盘、详情、图片），响应加
@@ -355,7 +355,7 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
   - 源感知：`CurrentSource`、`SourceDisplayName`、`SwitchSourceAsync(AppSourcePreference)`、
     `SourceChanged` 事件；src 由 `AppSettingsService` 读取并持久化。
   - 内置源逻辑保持不变；联想源 `GetAppsAsync` 调 `store/lenovo/apps`，把 summary 映射为 `AppItem`
-    （相对 URL 用现有 `ResolveHttpUrl` 解析成绝对地址）；联想目录强制刷新只走 `POST /store/lenovo/refresh`，`forceRefresh` 不再影响联想 GET URL。
+    （相对 URL 用现有 `ResolveHttpUrl` 解析成绝对地址）；手动刷新接口已禁用，`forceRefresh` 不再影响联想 GET URL。
   - `GetAppAsync(id)` 联想源 → `store/lenovo/apps/{soft_id}`（从目录/已知应用表按 id 找 soft_id），
     映射详情 + 截图/封面/更新说明；把详情写回内存和磁盘目录（沿用现有行为）。
   - `GetLatestReleaseAsync(AppItem app)` 新重载 + 原 `(string appId)` 保留：联想源调
@@ -440,7 +440,7 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
 
 ## 6. 后续增量需求（已实现）
 
-1. **内置源启用范围**：`Backend/config.json` 新增 `builtin` 段（`enabled` / `app_ids`），默认只启用 Clash Verge Rev（`clashverge`）与 Telegram（`telegram`）两款。未在白名单里的目录条目保留在 `CatalogRepository.all_apps`，但不会出现在 `/api/v1/apps*`、不会创建 provider、不参与启动预热与定时刷新；`/api/v1/sources` 的 `builtin.enabled/app_count` 反映过滤结果；未知 app id 让后端启动失败。禁用时 `/api/v1/apps*` 与 `POST /refresh` 返回 503。
+1. **内置源启用范围**：`Backend/config.json` 新增 `builtin` 段（`enabled` / `app_ids`），默认只启用 Clash Verge Rev（`clashverge`）与 Telegram（`telegram`）两款。未在白名单里的目录条目保留在 `CatalogRepository.all_apps`，但不会出现在 `/api/v1/apps*`、不会创建 provider、不参与启动预热与定时刷新；`/api/v1/sources` 的 `builtin.enabled/app_count` 反映过滤结果；未知 app id 让后端启动失败。禁用时 `/api/v1/apps*` 返回 503（手动刷新接口已整体禁用）。
 2. **服务端地址可配置（客户端）**：`AppSettings.BackendBaseUrl`（默认 `http://127.0.0.1:8080/`），设置页“服务端地址”支持输入/测试连接（`GET /api/v1/health`）/恢复默认；切换后重建 HttpClient 与按服务端 URL 隔离的本地缓存，事件 `AppCatalogService.BackendChanged` 通知页面。
 3. **软件源动态发现（客户端）**：设置页从 `GET /api/v1/sources` 加载源列表，不可用的源标注“（不可用）”并禁止选择；当前源在服务端不可用时自动回退到 `is_default` 的可用源。
 4. **图标直连联想 CDN**：列表/搜索响应只携带图标 URL；`icon_url` 为联想 CDN 绝对地址（`lsw-fast.lenovo.com.cn` / `imgs.lenovomm.cn` / `pc1.gtimg.com`），客户端直连取图并写入本地图标缓存（请求带 `WinAppsManager/1.0` UA，联想 CDN 拒绝 curl UA），失败回退 `icon_proxy_url` 的后端代理；截图/封面仍走后端代理 + `StoreMediaService` 缓存。
@@ -452,7 +452,7 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
 1. **启动预加载**：`lifespan` 中 `preload_catalog()` 只读 `<cache>/lenovo/catalog.json` 到内存（约 0.17 秒 / 5111 条），不联网；测试注入假服务时用 `getattr` 兼容。
 2. **请求路径只读缓存**：`GET /store/lenovo/apps`（任何查询参数都不会触发抓取）返回内存/磁盘快照，平均 0.1 秒内；`refresh=true` 仅触发一次后台单飞刷新；只有完全没有快照的冷启动才同步抓取一次（约 1.5 秒 / 28 个分类请求）并原子写盘。
 3. **独立后台线程定时刷新**：服务启动时创建 daemon 线程 `lenovo-catalog-refresher`（`threading.Thread`），每 `lenovo.catalog_refresh_interval_seconds`（默认 300 秒，`0` 关闭）通过 `asyncio.run_coroutine_threadsafe` 把刷新投递到主事件循环执行；成功后原子写回 catalog.json，失败保留旧快照并记 WARNING。首次刷新按快照年龄决定：快照超龄则启动立即补刷，快照新鲜则等剩余时间，无快照则等一个间隔（启动不联网，冷启动由首个请求兜底）。
-4. **手动刷新与客户端**：客户端已**移除刷新按钮与手动刷新链路**，目录完全由后端线程更新；服务端保留 `POST /api/v1/store/lenovo/refresh`（同步刷新）供运维/调试使用；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记。
+4. **手动刷新与客户端**：客户端已**移除刷新按钮与手动刷新链路**，目录完全由后端线程更新；服务端手动刷新接口 `POST /api/v1/store/lenovo/refresh` 已禁用（404）；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记。
 5. **诊断**：`GET /api/v1/cache` 的 `lenovo.catalog` 暴露 apps/fetched_at/age_seconds/refresh_interval_seconds/refresher_running/next_refresh_at/last_error/refreshes 等只读字段；后端日志记录预加载、定时刷新启动与每轮结果。
 6. **测试隔离**：`clear()` 在 `cache.persist=false` 时不再删除磁盘快照，避免既有测试误删开发机真实 `Backend/.cache/lenovo/catalog.json`。
 
@@ -477,12 +477,12 @@ def create_lenovo_store_service(client: httpx2.AsyncClient, cache_directory: Pat
 6. **搜索**：页面搜索走 `enc_client/v2/search/*` 加密签名接口，本项目已在 `Backend/soft360/search.py` 逆向（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，算法见 `docs/soft360-search-api.md`）；`/api/v1/store/360/search`
    只对已缓存目录做名称/描述/分类匹配，因此只覆盖热门子集。
 7. **刷新**：`catalog.json`（内存/磁盘）随服务启动预加载；独立线程 `soft360-catalog-refresher`
-   默认每 1800 秒抓取并原子写盘，失败保留旧快照；无快照冷启动等待一个间隔（不联网），
-   `POST /api/v1/store/360/refresh` 可手动同步刷新。GET 只读缓存，任何查询参数都不会触发抓取。
+   默认每 1800 秒抓取并原子写盘，失败保留旧快照；无快照冷启动等待一个间隔（不联网）。
+   `POST /api/v1/store/360/refresh` 已禁用（404）；GET 只读缓存，任何查询参数都不会触发抓取。
 8. **客户端**：`AppSourcePreference` 追加 `Soft360`（保持 Lenovo=0/BuiltIn=1 兼容旧设置）；
    目录/详情/下载/图标/截图复用既有商店数据流；设置页从 `/sources` 映射 `soft360`；缓存按源隔离。
-9. **接口**：`GET /api/v1/store/360/{categories,apps,apps/{soft_id},apps/{soft_id}/download,apps/{soft_id}/icon,apps/{soft_id}/screenshots/{index},search}`，
-   `POST /refresh`；`/sources` 第三项、`/cache` 的 `soft360` 段、`DELETE /cache` 清理同上。
+9. **接口**：`GET /api/v1/store/360/{categories,apps,apps/{soft_id},apps/{soft_id}/download,apps/{soft_id}/icon,apps/{soft_id}/screenshots/{index},search}`；
+   手动刷新接口已禁用；`/sources` 第三项、`/cache` 的 `soft360` 段、`DELETE /cache` 清理同上。
 10. **限制**：目录为热门子集而非全量（搜索已覆盖全量）；加密搜索接口为未公开接口，360 改版可能失效（失败自动回退本地匹配）；`os.ver` 编码按 1..8 推测映射（低于 7 按 7 处理）；
     部分条目 corp 为空、无 SHA256。详见 `docs/soft360-store-api.md`。
 

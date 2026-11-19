@@ -227,7 +227,6 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | GET | `/sources/{source_id}/apps/{app_id}` | 统一详情 |
 | GET | `/sources/{source_id}/apps/{app_id}/download` | 统一下载地址（Release，no-store） |
 | GET | `/sources/{source_id}/apps/{app_id}/icon`、`/screenshots/{index}`、`/cover`、`/screenshots/{index}/video` | 统一媒体代理（能力控制，视频 Range/206） |
-| POST | `/sources/{source_id}/refresh` | 统一目录刷新（能力 refresh） |
 | GET | `/status` | 预热/可用性状态与定时刷新统计，诊断用 |
 | GET | `/apps` | 软件列表，支持 `search`、`category`、`sort`、`architecture`、`refresh`（`builtin.enabled=false` 时 503） |
 | GET | `/apps/{app_id}` | 软件详情，不可用且无快照时返回 503 |
@@ -236,8 +235,7 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | GET | `/apps/{app_id}/releases/{release_id}` | 指定版本，重新签名 |
 | GET | `/apps/{app_id}/icon` | 图标，支持 ETag/304 |
 | GET | `/store/lenovo/categories` | 联想分类树（software/game 两组） |
-| GET | `/store/lenovo/apps` | 联想完整目录（约 5111 条）：请求只读内存/磁盘 `catalog.json`，任何 GET 查询参数都不会触发抓取；手动刷新仅 `POST /store/lenovo/refresh` |
-| POST | `/store/lenovo/refresh` | 同步强制刷新联想目录并写回 `catalog.json`（服务端手动刷新接口；客户端无刷新入口） |
+| GET | `/store/lenovo/apps` | 联想完整目录（约 5111 条）：请求只读内存/磁盘 `catalog.json`，任何 GET 查询参数都不会触发抓取；手动刷新接口已禁用 |
 | GET | `/store/lenovo/apps/{soft_id}` | 联想详情，`soft_id` 保留原始大小写 |
 | GET | `/store/lenovo/apps/{soft_id}/download` | 实时解析下载地址，返回 `Release` 结构，`no-store` |
 | GET | `/store/lenovo/search` | 联想在线搜索，`q` 1–100、`limit` 1–50 |
@@ -247,14 +245,14 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | GET | `/store/lenovo/apps/{soft_id}/cover` | 横版封面代理 |
 | GET | `/store/360/categories` | 360 分类（24 个固定分类 + 快照计数） |
 | GET | `/store/360/apps` | 360 缓存目录（约 5940 款热门子集，GET 只读缓存） |
-| POST | `/store/360/refresh` | 同步刷新 360 目录 |
 | GET | `/store/360/apps/{soft_id}` | 360 详情 |
 | GET | `/store/360/apps/{soft_id}/download` | 360 下载地址（实时解析，`no-store`） |
 | GET | `/store/360/apps/{soft_id}/icon`、`/screenshots/{index}` | 360 图标/截图代理（ETag/304） |
 | GET | `/store/360/search` | 360 全量在线搜索（逆向 enc_client 加密接口，失败回退缓存目录本地匹配） |
 | GET | `/cache` | 内存/磁盘缓存统计、`warmup`/`refresh`/`lenovo`（含 `catalog` 缓存年龄与下次刷新）状态和生效配置 |
 | DELETE | `/cache` | 清理内存和磁盘版本缓存，并清理联想目录/详情/图片缓存 |
-| POST | `/refresh` | 立即跑一轮刷新，并发调用合并为一轮 |
+
+> 自 2026-11 起，所有 `POST .../refresh` 手动刷新接口（`/api/v1/refresh`、`/api/v1/sources/{id}/refresh`、`/api/v1/store/lenovo/refresh`、`/api/v1/store/360/refresh`）已禁用并返回 404，防止公网调用重复抓取上游；`/sources` 的 `capabilities.refresh` 统一为 `false`。目录只由启动预热与各来源的后台定时线程更新。
 
 ### 5.2 数据模型
 
@@ -320,7 +318,7 @@ Rider/Visual Studio 直接运行唯一项目配置即可；Windows 10/11 会自�
 | `soft360.details_ttl_seconds` / `details_persistent_ttl_seconds` | `900` / `21600` | 详情内存/磁盘缓存 TTL |
 | `soft360.timeout_seconds` / `catalog_concurrency` | `20` / `4` | 单次请求超时 / 分类抓取并发 |
 | `soft360.image_cache_ttl_seconds` / `image_cache_max_bytes` | `2592000` / `268435456` | 图片磁盘缓存 TTL / 容量上限 |
-| `builtin.enabled` | `true` | 内置精选源总开关；false 时不建 provider、不预热、不启动定时刷新，`/apps*` 与 `POST /refresh` 返回 503 |
+| `builtin.enabled` | `true` | 内置精选源总开关；false 时不建 provider、不预热、不启动定时刷新，`/apps*` 返回 503（手动刷新接口已整体禁用） |
 | `builtin.app_ids` | `["clashverge","telegram"]` | 内置源启用白名单（空列表=全部 45 款）；只对白名单软件创建 provider/预热/定时刷新，未知 id 启动失败 |
 | `logging.enabled` | `true` | 后端文件日志总开关（关闭后只 console/Debug） |
 | `logging.directory` | `Backend/.cache/logs` | 日志目录；相对路径按后端目录解析，`null` 回落默认 |
@@ -365,8 +363,8 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 ### 5.6 联想/360 应用商店源与内置源启用范围
 
-- **联想源**在 `Backend/lenovo/`：`token.py` 随机设备指纹 + JWT 缓存、`client.py` 原始接口、`catalog.py` 逐分类（soft 19 + game 9，`limit=1000`）抓取并按 `softID` 去重（约 5111 款）与内存/磁盘快照、`details.py` 详情缓存与下载地址解析、`media.py` 图片代理缓存、`service.py` 门面、`routes.py` 暴露 `/api/v1/store/lenovo/*`。**目录缓存语义（2026-11 调整）**：启动时 `preload()` 只读 `catalog.json` 到内存（不联网）；`GET /store/lenovo/apps` 请求路径**只返回内存/磁盘快照**（唯一例外是完全没有快照时的冷启动同步抓取），不会因为请求去抓联想；由**随服务启动的独立后台线程**（`threading.Thread`，名称 `lenovo-catalog-refresher`）按 `catalog_refresh_interval_seconds`（默认 300 秒）定时抓取并原子写回 `catalog.json`，启动时快照超龄会立即补刷一次，失败保留旧快照；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记；手动立即更新仅服务端 `POST /store/lenovo/refresh`（同步，客户端已移除刷新按钮与手动刷新链路）；GET 的 `refresh` 参数已移除，任何查询参数都不会触发抓取。详情内存/磁盘缓存；搜索 60 秒；下载地址**从不缓存**；图片按 URL 哈希落盘（30 天、256MB 上限、ETag/304）。联想接口调研见 `docs/lenovo-store-api.md`，实现契约见 `docs/store-source-design.md`。列表/搜索条目 `icon_url` 是联想 CDN 绝对地址（客户端直连取图），`icon_proxy_url` 是后端代理兜底；详情截图与封面也优先返回任意安全公网 CDN 绝对地址（`url`/`cover_url`，不再维护固定域名白名单），并附 `proxy_url`/`cover_proxy_url` 作为客户端直连失败时的后端兜底。联想业务请求全部在后端完成，客户端不直连联想接口。
-- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL；`pdown://` 描述串只取末尾直链，普通候选优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。详情截图 `url` 优先返回任意安全公网 CDN 绝对地址（含 qhimg/qhmsg 等，不再维护固定域名白名单）并附 `proxy_url` 兜底；`/sources` 的 `search_mode=api` 让客户端在输入时自动调用服务端搜索 API。GET 只读缓存、`POST /refresh` 同步刷新；搜索已逆向 `enc_client/v2/search/search`（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，实现在 `search.py`，算法见 `docs/soft360-search-api.md`），`/search` 覆盖 360 全量目录，失败回退缓存子集匹配；目录本身仍是各分类热门子集，全量 43,731 款不抓全，调研见 `docs/soft360-store-api.md`。
+- **联想源**在 `Backend/lenovo/`：`token.py` 随机设备指纹 + JWT 缓存、`client.py` 原始接口、`catalog.py` 逐分类（soft 19 + game 9，`limit=1000`）抓取并按 `softID` 去重（约 5111 款）与内存/磁盘快照、`details.py` 详情缓存与下载地址解析、`media.py` 图片代理缓存、`service.py` 门面、`routes.py` 暴露 `/api/v1/store/lenovo/*`。**目录缓存语义（2026-11 调整）**：启动时 `preload()` 只读 `catalog.json` 到内存（不联网）；`GET /store/lenovo/apps` 请求路径**只返回内存/磁盘快照**（唯一例外是完全没有快照时的冷启动同步抓取），不会因为请求去抓联想；由**随服务启动的独立后台线程**（`threading.Thread`，名称 `lenovo-catalog-refresher`）按 `catalog_refresh_interval_seconds`（默认 300 秒）定时抓取并原子写回 `catalog.json`，启动时快照超龄会立即补刷一次，失败保留旧快照；`catalog_ttl_seconds` 只决定响应里的 `stale` 标记；手动刷新接口已禁用，GET 的 `refresh` 参数已移除，任何查询参数都不会触发抓取。详情内存/磁盘缓存；搜索 60 秒；下载地址**从不缓存**；图片按 URL 哈希落盘（30 天、256MB 上限、ETag/304）。联想接口调研见 `docs/lenovo-store-api.md`，实现契约见 `docs/store-source-design.md`。列表/搜索条目 `icon_url` 是联想 CDN 绝对地址（客户端直连取图），`icon_proxy_url` 是后端代理兜底；详情截图与封面也优先返回任意安全公网 CDN 绝对地址（`url`/`cover_url`，不再维护固定域名白名单），并附 `proxy_url`/`cover_proxy_url` 作为客户端直连失败时的后端兜底。联想业务请求全部在后端完成，客户端不直连联想接口。
+- **360 源**在 `Backend/soft360/`：`client.py` 调用明文 JSON 目录/详情接口（`cdn_client/v1/soft/list`、`soft/getinfo`），`catalog.py` 抓 24 分类各前 `soft360.catalog_pages_per_category` 页（默认 3，去重约 5940 款）并发内存/磁盘 `soft360/catalog.json`，随服务启动的 `soft360-catalog-refresher` 线程按 `soft360.catalog_refresh_interval_seconds`（默认 1800 秒）刷新；`details.py` 详情缓存与下载地址解析（从 `p2p`/`multi_urls` 提取 http(s) URL；`pdown://` 描述串只取末尾直链，普通候选优先 https；md5 不写入 sha256）；`media.py` 代理 qhimg/mediav 图片（ETag/304）；`routes.py` 暴露 `/api/v1/store/360/*`。详情截图 `url` 优先返回任意安全公网 CDN 绝对地址（含 qhimg/qhmsg 等，不再维护固定域名白名单）并附 `proxy_url` 兜底；`/sources` 的 `search_mode=api` 让客户端在输入时自动调用服务端搜索 API。GET 只读缓存；手动刷新接口已禁用；搜索已逆向 `enc_client/v2/search/search`（AES-128-CBC + RSA PKCS#1 v1.5 + MD5，实现在 `search.py`，算法见 `docs/soft360-search-api.md`），`/search` 覆盖 360 全量目录，失败回退缓存子集匹配；目录本身仍是各分类热门子集，全量 43,731 款不抓全，调研见 `docs/soft360-store-api.md`。
 - **内置源**通过 `builtin.enabled` / `builtin.app_ids` 控制启用范围（默认只启用 `clashverge` 与 `telegram`）。未启用的目录条目保留在 `CatalogRepository.all_apps`，但 `list_apps`/`get_app` 不暴露、不创建 provider、不预热/不刷新；`/sources` 的 `builtin.app_count` 是过滤后的数量。改动内置源启用逻辑时同步 `Backend/tests/test_builtin_source.py`。
 
 ## 6. 客户端架构
