@@ -14,6 +14,7 @@ WinAppsManager 是一个 Windows 软件管理器：
 - **GitHub 认证**：通用 GitHub provider 支持可选的 API 令牌（未认证 60 次/小时，带令牌 5000 次/小时）；令牌只放在被 gitignore 的 `Backend/config.local.json` 或环境变量 `WINAPPSMANAGER_GITHUB_TOKEN`，绝不写日志、缓存或 API 响应。
 - **下载**：客户端分段并发下载，下载任务统一显示在“下载中心”；详情页负责发起任务和显示链接。安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`，可在设置页自定义下载目录。
 - **卸载**：客户端读取 Windows 卸载注册表和当前用户 Microsoft Store/MSIX 包，支持批量选择并逐个启动卸载程序或 `Remove-AppxPackage`。
+- **自启动项**：客户端枚举 `Run`/`RunOnce`（HKLM 含 32 位视图）、启动文件夹快捷方式、“登录时触发”的顶层计划任务（`\Microsoft\` 下的系统任务与任务管理器一样不列）与 Store/UWP 应用启动任务；启用/禁用走 Windows 自己的 `Explorer\StartupApproved` 审批表、任务的 Enabled 标志或 UWP 的 `State`（不删除条目，随时可还原），删除另行确认，新增支持 8 种落点（Run/RunOnce、两个启动文件夹、登录时任务）；名称取 exe 的“文件说明”并单列显示公司，报表列宽可拖动。详见 6.14。
 - **设置**：主题、软件源、服务端地址、下载线程数、下载超时、下载目录、GitHub 加速镜像、代理模式/自定义代理、忽略证书校验。
 
 用户界面和文档主要使用中文；代码标识符使用英文。
@@ -34,10 +35,12 @@ WinAppsManager/
         AppDetailsPage.xaml / .cs         详情、截图相册、下载链接、发起下载
         DownloadCenterPage.xaml / .cs     全局下载任务列表与操作
         UninstallPage.xaml / .cs          已安装软件列表、搜索、批量选择
+        StartupPage.xaml / .cs            自启动项列表、启用/禁用、删除与新增
         SettingsPage.xaml / .cs           主题、软件源、服务端地址、下载、网络、缓存、设置存储
       Dialogs/
         UninstallConfirmationWindow.xaml / .cs  卸载二次确认与可停止说明
         UninstallProgressWindow.xaml / .cs      顺序卸载进度、停止与结果
+        AddStartupItemWindow.xaml / .cs         新增 Run 自启动项：路径、名称、参数、作用范围
         DeepCleanWindow.xaml / .cs              深度清理：残留树的勾选与删除
         PendingRebootWindow.xaml / .cs          重启删除提示：列出未能立即删除的路径，可立即重启或完成
         ScreenshotViewerWindow.xaml / .cs       商店截图/视频大图预览与视频播放（MediaElement）
@@ -68,7 +71,10 @@ WinAppsManager/
         FileLeftoverCleaner.cs            勾选文件/文件夹/快捷方式的受控删除
         FileLockInspector.cs              检测文件共享锁、用 Restart Manager 结束占用进程
         SystemRestartService.cs           清理完成后按用户选择立即重启 Windows
-        ShortcutResolver.cs               通过 WScript.Shell 在 STA 线程解析 .lnk 目标
+        ShortcutResolver.cs               通过 WScript.Shell 在 STA 线程解析 .lnk 目标（含参数）
+        StartupItemProvider.cs            自启动项枚举：Run/RunOnce、启动文件夹，读写 StartupApproved
+        StartupTaskProvider.cs            登录时触发的计划任务：XML 读取状态、schtasks 切换/删除
+        StartupItemService.cs             自启动项写操作：启用/禁用、删除、新增 Run 项
         FolderPickerService.cs            原生文件夹选择对话框（IFileOpenDialog，设置页下载目录用）
         ExternalLinkService.cs            打开外部 URL
   Backend/                                FastAPI 后端
@@ -376,6 +382,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 软件列表（展开后包含“全部”和动态分类）
 - 下载中心
 - 卸载软件（展开后包含“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四个分类，没有“全部”）
+- 自启动项（无子项，来源筛选在页面内的下拉框里）
 - 设置
 
 两个分类子项列表都用同一套模式：`SelectsOnInvoked = false`、父项保持选中、`Tag` 前缀分别是 `category:` 与 `uninstall-category:`、当前分类用蓝色加粗文字标识，重建时遵守下面的规避方式。
@@ -384,12 +391,19 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 
 **重要陷阱**：iNKORE NavigationView 在“动态重建子项且正处于子项选中状态”时会因 selection model 索引越界崩溃。规避方式：分类子项 `SelectsOnInvoked = false`（只触发 `ItemInvoked` 筛选）、父项保持选中、当前分类用蓝色加粗文字（`Foreground` 用 `SetResourceReference` 绑定 `Wam.AccentBrush`/`Wam.TextPrimaryBrush`，直接赋 `Brush` 会固化浅色）、重建前把 `NavView.SelectedItem` 切回父项、分类列表不变时不重建（`_categorySignature`）。不要为“高亮分类”让分类子项成为 SelectedItem，除非确认库版本已修复该崩溃。
 
+**紧凑导航栏与分类子项**：分类子项直接加入父项的 `MenuItems`，**不要**改成 `MenuItemsSource` + `MenuItemTemplate`——`NavigationView.MenuItemTemplate` 是全局的，模板会套到顶级项上，标题会变成类型名（如 `SoftwareNavigationItem`）。导航栏收起时先记住两个分类区的展开状态，再把它们置为 `IsExpanded = false`：紧凑模式下库会为仍展开的父项弹出子项 Flyout，而 Flyout 会复用已挂载在别处的 `NavigationViewItem` 实例，其结果是一大片空白浮层。收起状态下点击“软件列表 / 卸载软件”由 `NavigationView_OnItemInvoked` 直接把 `IsPaneOpen` 置为 true 展开导航栏（走内联分类列表，不弹 Flyout）；恢复 `IsExpanded` 必须等展开动画结束（`DispatcherTimer` 420 ms），在动画中途恢复会让库仍按紧凑模式把子项 repeater 挂到浮层上，展开后分类区只剩空白。
+
+**窗口背景与亚克力导航栏**：窗口不写死 `SystemBackdropType`。设置页“个性化 → 窗口背景”提供 无（默认，不透明）/ 亚克力 / 云母 / 自动（跟随系统）四项（`AppSettings.BackdropStyle`，`AppSettingsService.SetBackdropStyle`），改动立即生效（`SettingsChanged` → `ApplyPreferredBackdrop`）。能力判断集中在 `Services/BackdropSupport.cs`：云母要求非高对比度且内部版本 ≥ 22523（Windows 11 22H2；更低版本 Mica 走的是未公开属性，不作为可选项），亚克力要求非高对比度且库的 `Acrylic10` 可用（Windows 10 1803 / 17063+；Windows 11 上库自动选原生 `Acrylic11`），自动 = 云母 → 亚克力 → 无。设置页只禁用当前系统不支持的选项（各带“需要 Windows …”的悬停说明），不显示额外说明文字；保存的样式在当前系统不可用时（例如在 Windows 10 上保存过“云母”）下拉框显示实际回退后的样式，`settings.json` 里的值保持不变。`MainWindow.ApplyPreferredBackdrop()` 在启动、设置变更和高对比度切换时幂等应用；`BackdropStyle.None` 不调用任何原生接口（Windows 7/8 上 `SetSystemBackdropType` 只允许 `None`，绝不能传入从未应用过的亚克力类型）。导航栏透明只靠覆盖 `NavigationViewDefaultPaneBackground` / `NavigationViewExpandedPaneBackground` 两个资源；不要再写遍历视觉树改 `SplitView.PaneBackground` 的 hack（模板重新应用后会失效，也会让 DynamicResource 不再更新）。`ui:WindowHelper.Acrylic10Color` 绑定 `Wam.Acrylic10TintColor`：iNKORE 会把这里的 alpha 再乘 0.8，默认的 `#40FFFFFF` 会让导航栏在深色窗口后面变成深灰、深色文字看不清，所以由 `AppSettingsService` 按主题下发接近不透明的主题底色。Windows 10 的旧式亚克力在拖动/缩放时会让 DWM 每帧重算整窗模糊，窗口明显发滞（实测拖动期间 DWM CPU 约翻倍、应用 CPU 多约 30%）：`MainWindow` 监听 `WM_ENTERSIZEMOVE`/`WM_EXITSIZEMOVE`，进入移动循环时移除亚克力并把窗口切成不透明底色（`Wam.MoveBackgroundBrush`，取亚克力在深色/浅色内容上的中间色），松手后恢复；Windows 11 的 Mica/Acrylic11 是 DWM 原生优化路径，不做处理。
+
+窗口设置 `ui:TitleBar.ExtendViewIntoTitleBar="True"`，内容铺满整个窗口（标题栏按钮仍由窗口模板绘制在最上层），标题栏那块才能被系统背景或自定义壁纸的 `AcrylicPanel` 一起覆盖；`NavView.Margin` 由代码按 `TitleBar.GetHeight(this)` 下移一个标题栏高度。副作用是库在扩展模式下隐藏标题文字（`IconTitlePanel` 折叠），应用名由导航栏的 `PaneTitle` 展示。启用自定义壁纸时 `AcrylicPanel`（对 `BackdropSourceGrid` 做实时高斯模糊）负责导航栏与标题栏的磨砂效果，没有壁纸时保持 `Collapsed`，磨砂由系统背景提供。
+
 ### 6.2 页面职责
 
 - `AppsInstallPage`：目录加载、搜索/排序/分类筛选/分页（每页 60/120/240）、按 `/sources` 的 `search_mode` 选择本地全量搜索（catalog）或自动服务端 API 搜索（api）（**不提供刷新按钮**，目录由后端独立线程/刷新策略更新，页面只在进入/源切换时读缓存）；分类来自 `/sources/{id}/categories`，失败时按目录聚合；分类选择通过 `SelectCategory(category)` 和事件通知 MainWindow；图标按行按需加载。
 - `AppDetailsPage`：详情加载、下载直链显示/刷新、复制/打开链接、发起下载；截图相册（StoreMediaService 异步加载、点击打开 ScreenshotViewerWindow，视频直接使用详情返回的 `video_proxy_url`）；**不再显示下载进度面板**。已有任务时按钮为“查看下载”。
 - `DownloadCenterPage`：所有下载任务的全局列表；总进度、分段带状进度、速度、剩余时间、安装包数字签名状态、取消/重试/移除/打开安装包/打开下载文件夹。
 - `UninstallPage`：读取 Windows 卸载注册表和当前用户商店应用，按“应用程序 / 系统组件 / 隐藏组件 / 商店应用”四类展示，支持分类筛选、搜索、全选、逐项选择和批量卸载；不依赖后端。
+- `StartupPage`：读取 Run/RunOnce、启动文件夹、登录时计划任务与 UWP 应用启动任务，支持来源筛选、搜索、排序、逐项启用/禁用、右键删除/浏览位置与新增；不依赖后端（见 6.14）。
 - `SettingsPage`：主题、软件源（从服务端 `/sources` 动态加载）、服务端地址（应用/测试连接/恢复默认）、下载线程/超时/下载位置、GitHub 镜像、代理/证书、缓存、日志目录、设置存储。
 
 ### 6.3 卸载软件
@@ -402,7 +416,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 以“名称 + 版本 + 卸载命令”去重；隐藏组件按“键名 + 安装路径”去重（64 位视图与 WOW6432Node 的镜像键同名同路径，合并成一条）。显示本机/当前用户、版本、发布者、大小、安装日期和安装位置，非应用程序行带“系统 / 隐藏 / 商店”徽章。分类切换在左侧导航“卸载软件”子项（`UninstallPage.UninstallCategories`，默认“应用程序”，无“全部”），`CategoriesChanged` 把四类数量发给 MainWindow；标题显示“已安装软件 · 当前分类”与各分类数量。
 - **隐藏组件不提供常规卸载**：`InstalledApplication.CanUninstall` 对隐藏组件为 false；`UninstallPage` 在“隐藏组件”分类或选择包含隐藏项时隐藏工具栏“卸载所选”，行右键菜单去掉“卸载此软件”，`RunUninstallAsync` 也会拒绝隐藏项。隐藏组件只能对单个条目使用“强制卸载”，从而删除它的卸载键标识（键名，如 `{1D8E…}.KB2533623`）及相关残留。
 - 排序是“字段 + 方向”：`SortCombo`（名称 / 发布者 / 大小 / 安装日期）+ `SortDirectionButton`；报表模式点列头（`ReportHeader_OnClick`，`Tag` 是字段名）等于“选字段 + 切换方向”，`UpdateSortIndicators` 同步 ▲/▼；搜索匹配名称、发布者、版本、安装位置、来源和分类名。
-- 显示方式由 `DisplayModeCombo` 切换，三个模板都在 `Page.Resources`，只换 `AppsList.ItemTemplate`（和 `ReportHeader` 可见性），不重建数据：`Report`（默认）固定列宽表头（名称 / 发布者 / 版本 / 大小 / 安装日期 / 安装位置 + 官网 + 复选框），列宽须与 `ReportItemTemplate` 的 `ColumnDefinition` 一致（30 / 210 / 150 / 80 / 78 / 96 / * / 46 / 34）；`List` 紧凑单行；`Card` 三行卡片；三者都显示图标（24px 或 36px），无图标回退字母徽章。
+- 显示方式由 `DisplayModeCombo` 切换，三个模板都在 `Page.Resources`，只换 `AppsList.ItemTemplate`（和 `ReportHeader` 可见性），不重建数据：`Report`（默认）固定列宽表头（名称 / 发布者 / 版本 / 大小 / 安装日期 / 安装位置 + 官网 + 复选框），列宽须与 `ReportItemTemplate` 的 `ColumnDefinition` 一致，固定列由 `UninstallPage.Columns`（`ColumnLayout`，默认 210 / 150 / 80 / 78 / 96 / 46）统一提供，图标 30、安装位置 `*`、复选框 34 保持写死）；`List` 紧凑单行；`Card` 三行卡片；三者都显示图标（24px 或 36px），无图标回退字母徽章。拖动表头分隔条即可改列宽（见 6.14）。
 - 安装日期用 `M月 d, yyyy` 格式（如 `8月 15, 2026`），无日期返回空字符串，**不要**写“安装日期未知”（`DetailsText` 自动省略）。官网取 `URLInfoAbout`，为空回退 `HelpLink`；有官网的行显示“官网”按钮，右键菜单同样提供，统一走 `ExternalLinkService`。
 - 大小/日期缺失时由 `InstalledApplicationEnricher` 后台补：大小递归累加 `InstallLocation`，用 `FindFirstFileExW`/`FindNextFileW` 直接读目录项（单目录上限 8000 项或 400ms、跳过重解析点）；**猜出来的目录只用于取日期，不参与算大小**（`DisplayIcon` 可能指向共享的 Package Cache）。日期按注册表与目录时间兜底：注册表 `InstallDate` → `min(卸载键最后写入时间, 安装目录最后写入时间)`（`RegQueryInfoKey` + `GetFileAttributesExW`，取更早者）→ 留空；**补全不以 `InstallLocation` 非空为前提**，只有 `DisplayIcon` 的软件也要排队。商店应用不做文件系统探测，结果通过 `ApplyFilesystemProbe` 刷新。
 - 安装目录由 `InstallLocationResolver` 解析：`InstallLocation` → `DisplayIcon` 所在目录 → 卸载程序所在目录；跳过 `msiexec` 这类相对路径命令、盘根和 Windows / Program Files / ProgramData / AppData / 用户目录等共享根。Provider 读 `InstallLocation` 时按 `InstallLocation` → `Inno Setup: App Path` → `InstallDir` 回退并展开环境变量。
@@ -447,7 +461,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 2. `DownloadCenterService` 在后台：用 `GetLatestReleaseAsync()` 取最新签名地址，创建 `DownloadTaskViewModel` 加入 `Downloads`，读取设置，经 `ApplyMirror` 改写 GitHub 地址、按 `AppSettingsService.ResolvedDownloadDirectory`（设置里的自定义下载目录，空 = 默认目录）建下载服务、`CreateHttpClient()` 建客户端后调用 `InstallerDownloadService.DownloadAsync()`，进度经 `UiProgress` 回 UI 线程。
 3. 下载完成后任务标记完成，后台读取安装包的 Authenticode 数字签名（签发公司、证书有效期、是否通过 WinVerifyTrust），结果只展示、不阻止打开；**不会自动打开安装包**，用户在下载中心点击“打开安装包”。
 4. 取消、失败、重试、移除由下载中心管理。**已结束的任务会持久化**到 `%LOCALAPPDATA%\WinAppsManager\download-history.json`（最多保留 200 条，原子写），启动时由 `DownloadCenterService` 静态构造函数恢复为可查看的历史任务；`DownloadTaskViewModel.Restore` 从 `DownloadHistoryRecord` 重建 `AppItem`/文件名/状态/签名信息。`ClearFinished` 和单项“移除记录”会同时删除历史文件中的对应记录。
-5. 下载中心支持对**已完成的安装包多选/全选并删除**：每个可删除任务显示复选框，顶部“全选安装包 / 取消全选”和“删除选中安装包 (N)”按钮；删除前弹二次确认，`DownloadCenterService.DeleteInstallers` 删除真实文件并移除历史记录，文件被占用时保留记录并提示。失败/取消的历史任务没有安装包文件，不参与多选删除，只能用“移除记录”清理。
+5. 下载中心**每一行都能勾选**（`DownloadTaskViewModel.CanSelect` 恒为真）：顶部按钮是“全选 / 取消全选”和“删除选中 (N)”。删除前二次确认；`DeleteInstallersButton_OnClick` 先对选中的**正在下载**任务调 `DownloadCenterService.Cancel` 并 `await Task.Completion`，再调 `DownloadCenterService.DeleteInstallers` —— 该方法删掉有文件的安装包、移除记录，并清理未完成的续传分片，文件被占用时保留记录并在末尾提示。取消/失败的任务只有分片没有安装包，同样能被选中清理。可以“继续下载”的条目数显示在顶部摘要里，“重新下载/继续下载”共用一个按钮，文案来自 `RetryButtonText`。
 6. 关闭窗口时 `MainWindow.OnClosing` 调用 `DownloadCenterService.CancelAllAsync()`，取消并等待活动任务后关闭。
 7. 安装包默认保存到 `%LOCALAPPDATA%\WinAppsManager\Downloads`；设置页“下载位置”可改为任意绝对路径（支持 `%USERPROFILE%` 等环境变量，目录不存在时自动创建），只影响之后开始的任务；下载中心的“打开下载文件夹”打开当前设置的目录。
 
@@ -460,7 +474,8 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 允许的安装包后缀是 `.exe`、`.msi`、`.msix`、`.msixbundle`、`.appx`、`.msu`（`InstallerExtensions`）；后端元数据里后缀不在白名单时直接拒绝。`.msu` 是 Windows 更新独立安装程序包（CAB 容器），用于 360 等来源的系统补丁包。
 - 下载完成后按容器校验，而不是一律查 PE 头：`.exe` 检查 `MZ` + `PE\0\0`；`.msi` 检查 OLE 复合文档签名 `D0 CF 11 E0 A1 B1 1A E1`；`.msu` 检查 CAB 签名 `MSCF`；`.msix/.msixbundle/.appx` 检查 ZIP 头 `50 4B 03 04`（`ValidateInstallerAsync`）。**不再校验服务端上报的 `SizeBytes`**；`Content-Length` 只用于进度与空响应保护，不要求与实际字节数一致。
 - 完整传输后保留容器签名与可选 SHA256 校验，通过后才移到正式文件名；**不再比较服务端 SizeBytes/Content-Length 与实际字节数**（服务端可能算错大小），也不因大小不一致中止下载。通用 GitHub provider 只产出 `.exe/.msi/.msix/.msixbundle`，客户端另允许 `.appx` 与 360 补丁包的 `.msu`，但不要把 GitHub 资产写成 `.appx`。
-- `.part` 文件在取消/失败时清理；已有安装包不会被覆盖。
+- **断点续传**：未完成文件固定叫 `{安装包名}.part`（名字固定才能跨重启续传），旁边写 `{安装包名}.part.json` 记录 URL / 大小 / SHA256 / `ETag` / `Last-Modified`。**只有单连接下载的分片可以续传**：分段下载会先 `SetLength` 撑到全长（中间是空洞），这种半成品不连续，失败时必须删掉重下——`TransferState.Resumable` 就是干这个的，它在真正开始单连接读取**之前**置位，所以中途取消也留得住已下载的部分。续传走一条 `Range: bytes=<已有长度>-` + `If-Range: <validator>` 的请求并追加写入；服务器返回 200（忽略 Range）、`Content-Range` 起点或总长对不上、响应被压缩时，退回 `RestartFromScratchAsync` 删分片重下。没有 validator 也没有 SHA256 时干脆不续传。成功后移动文件并删掉 `.part.json`；`DownloadCenterService.Remove / ClearFinished / DeleteInstallers` 会调 `InstallerDownloadService.DeleteResumeFiles` 清掉分片，避免孤儿文件。
+- 已有安装包不会被覆盖（重名时自动加序号）。
 - 下载目录由 `InstallerDownloadService` 构造参数决定：`DownloadCenterService` 传入 `AppSettingsService.ResolvedDownloadDirectory`（自定义目录为空时用 `InstallerDownloadService.DefaultDownloadDirectory`），下载器构造时用 `Path.GetFullPath` 规整；设置页保存时校验绝对路径、展开环境变量并尝试创建目录，非法路径只回退该字段并给出 `LastError`。
 - 默认线程数 4（1–32）、超时 10–300 秒（步进 10）；下载完不自动执行安装包，只有用户点“打开安装包”才打开。数字签名由 `AuthenticodeSignatureService` 在后台读取 `X509Certificate.CreateFromSignedFile` 并用 `WinVerifyTrust` 校验，展示签发公司/有效期/有效性；未签名、证书过期或校验失败只显示警告，绝不阻止打开。
 
@@ -484,6 +499,10 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
 | `Theme` | `System` | `System` / `Light` / `Dark` |
+| `BackdropStyle` | `None` | 窗口背景：`None`（不透明）/ `Acrylic` / `Mica` / `Auto`；系统不支持时按 `BackdropSupport.Resolve` 回退（自动 = 云母 → 亚克力 → 无），非法值读取时回退 `None` 并给出提示 |
+| `AccentColor` | `""` | 主题色 `#RRGGBB`；空 = 默认蓝 `#2563EB`；非法值读取时只回退该字段并给出提示 |
+| `BackgroundImagePath` | `""` | 自定义背景图绝对路径；必须是存在的 png/jpg/jpeg/bmp/gif/tif/tiff，非法值读取时回退纯色背景 |
+| `BackgroundImageOpacity` | `0.35` | 背景图叠加不透明度，0.05–1 |
 | `DownloadConnections` | `4` | 1–32 |
 | `DownloadTimeoutSeconds` | `30` | 10–300 |
 | `DownloadDirectory` | `""` | 空 = `%LOCALAPPDATA%\WinAppsManager\Downloads`；否则必须是绝对路径（启动时只校验不创建，保存时创建） |
@@ -514,7 +533,7 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - 新增主题资源时同时更新：
   - `App.xaml` 的默认值
   - `AppSettingsService.UpdateThemeResources` 的浅色、深色、高对比度分支
-- 现有资源：`PageBackgroundBrush`、`CardBackgroundBrush`、`CardBorderBrush`、`TextPrimaryBrush`、`TextSecondaryBrush`、`AccentBrush`、`AccentSoftBrush`、`SubtleBackgroundBrush`、`SuccessBrush`、`DangerBrush`、`ProgressTrackBrush`。
+- 现有资源：`PageBackgroundBrush`、`CardBackgroundBrush`、`CardBorderBrush`、`TextPrimaryBrush`、`TextSecondaryBrush`、`AccentBrush`、`AccentSoftBrush`、`SubtleBackgroundBrush`、`SuccessBrush`、`DangerBrush`、`ProgressTrackBrush`、`IconPlateBrush`、`Acrylic10TintColor`（Color）、`MoveBackgroundBrush`、`WindowWallpaperBrush`、`PaneTintColor`（Color）、`PaneAcrylicVisibility`（Visibility）。
 - 页面标题/卡片优先复用 `Wam.*` 样式。加载状态使用 `ui:ProgressRing`（`IsActive="True"`、`IsIndeterminate="True"`），不要恢复旧的横条 ProgressBar；状态色用 `SuccessBrush` / `DangerBrush` / `AccentBrush` / `TextSecondaryBrush`。
 
 ### 6.10 XAML 常见陷阱
@@ -566,7 +585,30 @@ GitHub 约定：未认证 60 次/小时、令牌 5000 次/小时；令牌不含�
 - **帧率诊断**：`BeginFrameProfile`/`EndFrameProfile` 用 `CompositionTarget.Rendering` 统计帧数与最大帧间隔，只在 `VerboseLogging` 开启时生效并在日志里输出 `过渡帧率：…`；判断动画是否卡顿看这条日志，不要靠肉眼猜。注意统计必须在 `CompleteActiveTransition()` **之后**启动，否则会被上一轮的收尾立刻关掉（日志表现为“共 0 帧”）。
 - 设置页的缓存统计（`ClientCacheStore.Statistics()` 要枚举数千个图标文件）已移到线程池 + `_cacheStatisticsGeneration` 代次校验：在 UI 线程同步统计会阻塞上百毫秒，正是早先“切到设置页卡一帧”的原因。
 
-### 6.14 客户端日志
+### 6.14 自启动项
+
+`StartupPage` 列出的来源与“任务管理器 → 启动”页一致，覆盖四类：
+
+- **注册表**：`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` 与 `RunOnce`、`HKCU` 的同名两键，以及 64 位系统上 `HKLM` 的 32 位视图（`RegistryView.Registry32` 打开后就是 `WOW6432Node`，32 位程序把自启写在那里）。HKLM 的 Run/RunOnce 两个键要**分别按 64 位视图和 32 位视图各读一遍**，只读默认视图会漏掉 32 位软件。
+- **启动文件夹**：`Environment.SpecialFolder.CommonStartup` 与 `.Startup` 下的 `*.lnk`，命令行由 `ShortcutResolver.ResolveTargets` 一次批量解析得到（目标 + 参数）。
+- **计划任务**：`%SystemRoot%\System32\Tasks` 下的任务定义文件，要求同时具备 `LogonTrigger` 与 `Exec` 动作（与参考实现 UninstallTool 的判定一致）。读取只解析 XML，不启动进程。**`\Microsoft\` 分支一律跳过**：那里是 ClipESU、DirectXDatabaseUpdater、LicenseImdsIntegration 这类 Windows 维护任务，任务管理器同样不显示，列出来只会把真正的自启软件淹没（实测本机会因此少 19 条噪音）。任务定义里的 `RegistrationInfo/Description`（任务计划程序“常规”页的描述）会作为鼠标悬停提示。
+- **应用启动任务（UWP）**：`HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\<包族名>\<任务 Id>\State`，跳过 `PSR` / `Schemas` 两个包级键。`State` 是 `StartupTaskState`：0=Disabled、1=DisabledByUser、2=Enabled、3=EnabledByPolicy，**2/3 视为已启用**。这条来源补上了任务管理器里 TranslucentTB、Xbox、Windows Terminal Preview、Teams 这类商店应用（实测本机 5 条）。这类条目没有 exe：名称、发布者与图标由 `StoreApplicationProvider.ResolvePackageSummaries` 按包族名解析——开始菜单的本地化入口名（`Get-StartApps`，形如 `终端预览` / `ChatGPT` / `XBOX`）+ `AppxManifest.xml` 的 `PublisherDisplayName` 与 Logo 变体，结果按包族名缓存在进程内（首次扫描约 +0.5 s，之后直接复用）。解析时**必须跳过拆分包**：同一族会同时注册 `…_neutral_split.scale-400_…` / `…_neutral_split.language-zh-hans_…`，它们没有自己的 `AppxManifest.xml`，标记是 `_split.` 而不是 `.split.`；包目录按 `%ProgramFiles%\WindowsApps\<包全名>` 猜（注册表里没有安装路径，应用装在别的盘时只能回退包名与字母徽章）。右键对这类条目多一项“在 Microsoft Store 中查看”（`ms-windows-store://pdp/?PFN=…`，由 Store 的清单注册，`ShellExecute` 直接打开），同时隐藏“浏览程序位置…”。
+
+**显示名与公司（`ExecutableMetadataService`）**：列表的“名称”不是登记名——取命令行里**主程序**（不是参数里提到的另一个程序）exe 的版本信息 `FileDescription`（资源管理器“详细信息”里的“文件说明”），取不到才回退注册表值名／快捷方式名／任务名；“公司”列取同一次读取的 `CompanyName`，没有就留空。“命令行”列始终显示真实命令，所以同名条目仍能分辨。实现要点：`ResolveExecutablePath` 处理带引号、不带引号（在第一个 `.exe` 处截断）与只写文件名（`rundll32.exe` 这类先在 System32、Windows 目录里找，再走 `PATH`）三种命令行；`Read` 按路径缓存 `FileVersionInfo`（同一 exe 常出现多次），并把 `TODO: <檔案說明>` 这类没填的占位符当空值。**悬浮提示**（`StartupItem.NameToolTip`）：计划任务显示任务描述，显示名与登记名不同时再补一行“登记名：…”，两者都没有时返回 `null`（不显示空气泡）。
+
+**启用/禁用机制**（关键，别改成删了再写回）：注册表与启动文件夹项一律写 `SOFTWARE\...\Explorer\StartupApproved\{Run|Run32|StartupFolder}` 的 12 字节二进制值——首字节 `0x02` = 启用，`0x03` = 禁用，其后 4 字节偏移处是可选的“禁用时间” FILETIME（`BitConverter` 小端）。判定禁用用 `(data[0] & 1) != 0`；值不存在等价于启用。这是 msconfig 与任务管理器共用的机制，因此**不需要自己的旁路状态文件**，条目本身始终保留，随时可以还原。`Run32` 只服务于 HKLM 的 32 位视图，启动文件夹项用**含 `.lnk` 的文件名**作为值名（实测 `Ollama.lnk` 这类）。计划任务的开关是任务定义里的 `<Settings><Enabled>`，用 `schtasks /Change /ENABLE|/DISABLE` 修改、读 XML 回读；UWP 启动任务写 `State`（禁用写 1，启用写 2，`EnabledByPolicy` 拒绝修改），与 Autoruns 的做法一致，不需要 WinRT。
+
+- 每次启用/禁用后都**回读实际状态**；回读与写入不一致按失败上报，并把界面复选框同步回真实值（`StartupPage` 的复选框是 `Mode=OneWay` 绑定，写操作失败时不会停在用户点出来的状态）。
+- “删除”才真正移除登记：注册表项删值并清掉对应的 `StartupApproved` 记录（否则留下孤儿审批项），启动文件夹项删 `.lnk`，计划任务用 `schtasks /Delete`。UWP 启动任务由应用清单声明，`CanDelete=false`，只能启用/禁用。
+- “添加”支持 8 种落点（`AddStartupItemWindow` → `StartupItemService.AddAsync`）：所有用户/当前用户的 `Run` 与 `RunOnce`（含 HKLM 32 位视图）、两个开始菜单启动文件夹、登录时执行的计划任务；32 位 Run 只在 64 位系统上单独列出（`StartupSourceMetadata.AddableSources`）。注册表项写成 `"路径" 参数` 的 `REG_SZ` 值；启动文件夹用 `ShortcutResolver.TryCreateLink`（WScript.Shell，STA 线程）建 `.lnk`；计划任务用 `StartupTaskProvider.Create`（`schtasks /Create /SC ONLOGON`），创建后以任务定义文件回读确认。三种落点都先查重名，并清掉同名的旧 `StartupApproved` 记录（否则新条目一出现就是禁用状态）。名称用 `Path.GetInvalidFileNameChars` 校验，反斜杠也会被拒绝（计划任务不允许在这里建目录）。
+- **未覆盖**：`RunServices`、`Winlogon\Userinit`、驱动服务等更底层的自启点，以及计划任务里非登录触发（开机、空闲、定时）的任务；`LeftoverScanner` 的“启动项”分组只是按软件名匹配残留，与本页无共用代码。
+- **界面约定**：报表列固定为 名称 / 来源 / 公司 / 命令行 / 状态 / 启用（状态 70、启用 60 写死，命令行 `*`）。行尾的复选框就是启用开关（勾选=启用），页面**不提供“全部启用/全部禁用”批量操作**——自启动项影响开机行为，逐个确认更安全。右键菜单固定四项：`启动时禁止运行`/`启动时允许运行`（同一个 `Tag="toggle"` 项按状态改 Header）、`从列表中删除`、`浏览程序位置…`（资源管理器 `/select`）、`浏览来源…`（注册表项先写 `HKCU\Software\Microsoft\Windows\CurrentVersion\Applets\Regedit\LastKey` 再启动 regedit；启动文件夹用资源管理器选中；计划任务见下面一段）。
+- **计划任务的“浏览来源”**（`Services/TaskSchedulerNavigator.cs`）：打开 `taskschd.msc` 后把左侧目录树展开到任务所在文件夹，并在中间列表里选中任务行。**不要用 UI Automation**：任务计划程序的左树是 MMC 里的 `SysTreeView32`，它没有 UIA 提供程序，`AutomationElement` 只能拿到一个空 Pane（既没有 Tree 也没有 TreeItem，实测 `FindAll(Descendants, TreeItem)` 恒为 0），`NavigateToScheduledTask` 那套写法注定失败。改用 MSAA（`oleacc.dll` 的 `AccessibleObjectFromWindow`）：`get_accName`/`get_accState` 读节点，`accSelect` 选中、`accDoDefaultAction` 展开（节点的默认动作就是展开/折叠）。两个坑：① `IAccessible` 的声明必须补齐 IDispatch 的 4 个槽位再按 `oleacc.h` 顺序列全成员（vtable 对齐）——只声明用到的那几个方法时 `get_accState` 会返回 `null`（状态位全 0，选择/展开判断全部失效），`accSelect` 甚至直接访问越界；② MMC 的树**只显示文件夹**，任务本身是选中文件夹后中间 `SysListView32` 里的行，所以定位目标是“任务所在文件夹”，并且要用键盘（聚焦列表后 `HOME` + `↓`）选中任务行——列表的 WinForms 提供程序对 `accSelect` 只返回 `S_OK` 而不真正改变选择。切换文件夹时 MMC 会重建中间视图，必须每轮重新找窗口取 `IAccessible`，缓存旧窗口会永远读不到新行。任务计划程序每启动一次都新开一个 MMC 窗口，定位优先用本次启动的进程号对应的窗口（进程已退出或被转交给已有实例时才退回现有窗口），否则会把旧窗口展开给用户、新窗口停在根节点。
+- **列宽可拖动**：表头每列右边缘放一个 6px 的 `Thumb`（`ColumnThumbStyle`），拖动时改页面上的 `ColumnLayout`；表头与行模板的 `ColumnDefinition.Width` 都绑定到同一个 `ColumnLayout` 索引器。自启动项的 名称 / 来源 / 公司 三列可拖（默认 260 / 180 / 150）。ColumnDefinition 不在可视化树里，用不了 `RelativeSource`，所以通过 `BindingProxy`（Page.Resources 里的 Freezable）取得页面对象，路径写成 `Data.Columns[n]`。`ColumnLayout` 用 `"Item[]"` 通知刷新所有索引器绑定。卸载页的报表模式复用同一套做法（6 列）。
+- 图标按行按需提取（`StartupRow_OnLoaded` → `LoadQueuedIconsAsync`），路径来自 `ExecutableMetadataService.ResolveExecutablePath`（同一份解析结果也用于取名称与公司）；应用启动任务没有可执行文件，直接回退字母徽章。
+- 页面用 `VirtualizedRowListStyle`（见 6.10），排序/搜索/筛选整体替换 `ObservableCollection`；单条切换后只刷新计数、且仅在按“状态”排序时才推迟一个 dispatcher 回合重建行集合（避免在 CheckBox 事件里替换 ItemsSource）。行模板只有一个 `ToolTip` 绑定（名称列的 `NameToolTip`，只有计划任务或改名条目才有非空值），其余单元格仍不放提示。
+
+### 6.15 客户端日志
 
 `Services/AppLogService.cs`：文件日志写到 `%LOCALAPPDATA%\WinAppsManager\Logs\app-yyyy-MM-dd.log`（UTF-8 无 BOM，按天分文件、单文件 5 MB 后追加序号、保留 14 天），API 为 `Initialize/Shutdown/ApplySettings/Info/Warn/Error/Verbose/OpenLogFolder/GetLogStatistics/CurrentLogFilePath`；`MinimumLevel` 默认 Info，`VerboseLogging` 开启后记录 Verbose；`Enabled` 表示是否写文件（关闭后只输出 Debug/Trace）。设置加载前产生的日志先最多缓存 500 条，首次 `ApplySettings` 时决定落盘或丢弃，因此关闭文件日志时首次启动不会创建日志文件。`App.OnStartup` 最先初始化并注册三个未处理异常钩子（只记录、不改崩溃行为）；目录加载/在线搜索/源与服务端切换、详情与下载地址解析、下载任务生命周期、卸载与深度清理扫描和批次结果、设置加载警告/保存失败、页面切换、窗口关闭均已接线；分页/筛选/滚动/每次进度更新不记录，避免刷屏。设置页日志卡片可查看路径、文件数与大小，并提供启用文件日志、Verbose 开关、“打开日志目录”“复制路径”。**日志禁止记录签名 URL、代理认证信息、GitHub 令牌、证书配置或安装包内容**；只记录应用名/id、阶段、字节数、耗时、路径、主机名、异常类型与消息。日志文件不要提交。\n\n设置保存和软件源切换可能在线程池线程触发 `SettingsChanged`/`SourceChanged`；UI 订阅者必须先 `Dispatcher.CheckAccess()` 后切回 UI 线程再更新控件（`SettingsPage.OnSettingsChanged` 已这样做），否则会出现“调用线程无法访问此对象”。软件源切换失败必须在 `SettingsPage.SwitchAppSourceAsync` 的 catch 中用 `AppLogService.Error` 记录来源 ID、异常类型和消息，不能只显示在状态栏。
 

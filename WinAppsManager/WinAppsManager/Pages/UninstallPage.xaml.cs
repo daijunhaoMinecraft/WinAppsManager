@@ -12,6 +12,7 @@ using System.Windows.Media;
 using WinAppsManager.Dialogs;
 using WinAppsManager.Models;
 using WinAppsManager.Services;
+using InfoBarSeverity = iNKORE.UI.WPF.Modern.Controls.InfoBarSeverity;
 using Page = iNKORE.UI.WPF.Modern.Controls.Page;
 
 namespace WinAppsManager.Pages;
@@ -28,7 +29,6 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
     private bool _hasLoaded;
     private bool _suppressSelectionEvents;
     private string? _loadError;
-    private string? _statusText;
     private string? _storeLoadError;
     private string _selectedCategory = UninstallCategories[0];
     private string _categorySignature = string.Empty;
@@ -69,6 +69,30 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
     /// <summary>The four local uninstall list categories.</summary>
     public static readonly string[] UninstallCategories = ["应用程序", "系统组件", "隐藏组件", "商店应用"];
 
+    /// <summary>
+    /// 报表模式“名称 / 发布者 / 版本 / 大小 / 安装日期 / 官网”六列的可拖动列宽，表头与每个数据行
+    /// 共用同一实例；图标、安装位置（自适应填充）与复选框三列保持固定，不用拖。
+    /// </summary>
+    public ColumnLayout Columns { get; } = new(210, 150, 80, 78, 96, 46);
+
+    private void NameColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(0, args.HorizontalChange);
+
+    private void PublisherColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(1, args.HorizontalChange);
+
+    private void VersionColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(2, args.HorizontalChange);
+
+    private void SizeColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(3, args.HorizontalChange);
+
+    private void DateColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(4, args.HorizontalChange);
+
+    private void WebsiteColumn_OnDragDelta(object sender, DragDeltaEventArgs args)
+        => Columns.Drag(5, args.HorizontalChange);
+
     public string SelectedCategory => _selectedCategory;
 
     public event Action<IReadOnlyList<CategoryOption>>? CategoriesChanged;
@@ -106,7 +130,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
     private async void RefreshButton_OnClick(object sender, RoutedEventArgs args)
     {
-        _statusText = null;
+        SetStatus(null);
         await LoadApplicationsAsync();
     }
 
@@ -455,8 +479,6 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         LoadingPanel.Visibility = _isLoading ? Visibility.Visible : Visibility.Collapsed;
         ErrorPanel.Visibility = _loadError is null ? Visibility.Collapsed : Visibility.Visible;
         ErrorText.Text = _loadError ?? string.Empty;
-        StatusPanel.Visibility = _statusText is null ? Visibility.Collapsed : Visibility.Visible;
-        StatusText.Text = _statusText ?? string.Empty;
         if (!_hasLoaded)
         {
             AppsList.Visibility = Visibility.Collapsed;
@@ -720,7 +742,9 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
         if (applications.Any(application => application.IsHiddenComponent))
         {
-            SetStatus("隐藏组件没有厂商卸载程序，不提供常规卸载；请使用“强制卸载”清理它的注册表标识和残留。");
+            SetStatus(
+                "隐藏组件没有厂商卸载程序，不提供常规卸载；请使用“强制卸载”清理它的注册表标识和残留。",
+                InfoBarSeverity.Warning);
             return;
         }
 
@@ -744,8 +768,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             return;
         }
 
-        _statusText = null;
-        UpdateChrome();
+        SetStatus(null);
         AppLogService.Info(
             $"开始卸载批次：{applications.Count} 个软件（{DescribeApplications(applications)}）。");
         var stopwatch = Stopwatch.StartNew();
@@ -826,8 +849,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             return;
         }
 
-        _statusText = $"{batchSummary} 已确认卸载，正在打开强制卸载以供选择残留…";
-        UpdateChrome();
+        SetStatus($"{batchSummary} 已确认卸载，正在打开强制卸载以供选择残留…");
         AppLogService.Info(
             $"卸载后自动打开强制卸载：{applications.Count} 个软件" +
             $"（{DescribeApplications(applications)}），合并为一次扫描。");
@@ -862,9 +884,8 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             text += "，强制卸载窗口打开失败";
         }
 
-        _statusText = text + "。";
+        SetStatus(text + "。", errors > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
         AppLogService.Info(text + "。");
-        UpdateChrome();
     }
     /// <summary>日志用的简短软件清单：最多列出 5 个名称，避免一次卸载很多时日志行过长。</summary>
     private static string DescribeApplications(IReadOnlyList<InstalledApplication> applications)
@@ -917,9 +938,10 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             $"深度清理完成：{applicationsText}，立即删除 {deleted} 项，" +
             $"重启后删除 {scheduledForReboot} 项。");
         await LoadApplicationsAsync();
-        _statusText = $"深度清理：{applicationsText} 立即删除 {deleted} 项" +
-            (scheduledForReboot > 0 ? $"，重启后删除 {scheduledForReboot} 项。" : "。");
-        UpdateChrome();
+        SetStatus(
+            $"深度清理：{applicationsText} 立即删除 {deleted} 项" +
+            (scheduledForReboot > 0 ? $"，重启后删除 {scheduledForReboot} 项。" : "。"),
+            InfoBarSeverity.Success);
     }
 
     /// <summary>
@@ -981,13 +1003,14 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
     {
         if (!application.HasUrl)
         {
-            SetStatus("该软件没有在卸载注册表中登记官方网站。");
+            SetStatus("该软件没有在卸载注册表中登记官方网站。", InfoBarSeverity.Warning);
             return;
         }
 
         if (!ExternalLinkService.OpenWebsite(application.UrlInfoAbout))
         {
             AppLogService.Warn($"打开软件官网失败：{application.Name}（{application.Id}），地址无效或无法启动默认浏览器。");
+            SetStatus("无法打开该软件的官网，请检查默认浏览器或链接是否有效。", InfoBarSeverity.Error);
         }
     }
 
@@ -1001,9 +1024,11 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         string location = application.InstallLocation;
         if (location.Length == 0 || !Directory.Exists(location))
         {
-            SetStatus(application.IsStoreApplication
-                ? "商店应用安装在 WindowsApps 受保护目录中，无法直接打开安装位置。"
-                : "该软件没有记录可访问的安装位置。");
+            SetStatus(
+                application.IsStoreApplication
+                    ? "商店应用安装在 WindowsApps 受保护目录中，无法直接打开安装位置。"
+                    : "该软件没有记录可访问的安装位置。",
+                InfoBarSeverity.Warning);
             return;
         }
 
@@ -1023,7 +1048,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
                 $"打开软件安装位置失败：{application.Name}（{application.Id}），{exception.GetType().Name}：{exception.Message}",
                 exception);
             Debug.WriteLine(exception);
-            SetStatus("无法打开该软件的安装位置。");
+            SetStatus("无法打开该软件的安装位置。", InfoBarSeverity.Error);
         }
     }
 
@@ -1045,7 +1070,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
 
     private void ContextRefresh_OnClick(object sender, RoutedEventArgs args)
     {
-        _statusText = null;
+        SetStatus(null);
         _ = LoadApplicationsAsync();
     }
 
@@ -1078,7 +1103,7 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
         try
         {
             Clipboard.SetText(text);
-            SetStatus(successMessage);
+            SetStatus(successMessage, InfoBarSeverity.Success);
         }
         catch (ExternalException exception)
         {
@@ -1088,27 +1113,37 @@ public partial class UninstallPage : Page, INotifyPropertyChanged
             try
             {
                 Clipboard.SetDataObject(text, copy: false);
-                SetStatus(successMessage);
+                SetStatus(successMessage, InfoBarSeverity.Success);
             }
             catch (ExternalException fallbackException)
             {
                 Debug.WriteLine(fallbackException);
-                SetStatus("无法访问剪贴板，请稍后重试。");
+                SetStatus("无法访问剪贴板，请稍后重试。", InfoBarSeverity.Error);
             }
         }
     }
 
-    private void SetStatus(string? text)
+    /// <summary>
+    /// 在页面顶部的 <see cref="InfoBar"/> 里显示一条操作结果。<paramref name="message"/> 为空时收起提示；
+    /// 失败用 <c>Error</c>、只完成一部分用 <c>Warning</c>、成功用 <c>Success</c>，其余是普通信息。
+    /// </summary>
+    private void SetStatus(string? message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
-        _statusText = text;
-        UpdateChrome();
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            StatusInfoBar.IsOpen = false;
+            return;
+        }
+
+        StatusInfoBar.Severity = severity;
+        StatusInfoBar.Message = message;
+        StatusInfoBar.IsOpen = true;
     }
 
     private async Task RefreshAfterUninstallAsync(string summary)
     {
         await LoadApplicationsAsync();
-        _statusText = summary;
-        UpdateChrome();
+        SetStatus(summary);
     }
 
     private void BeginLoadIcons(IReadOnlyList<InstalledApplication> applications)

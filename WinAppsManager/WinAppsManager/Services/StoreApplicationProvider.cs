@@ -32,12 +32,16 @@ public static class StoreApplicationProvider
     private const string StoreSource = "商店应用";
     private const string WindowsAppsSegment = @"\WindowsApps\";
     private const string PackageFullNamePlaceholder = "__PACKAGE_FULL_NAME__";
+    private const string PackageFamiliesPlaceholder = "__PACKAGE_FAMILIES__";
 
     /// <summary><c>Get-AppxPackage</c> 的默认超时；正常机器上不到 1 秒。</summary>
     private const int ScanTimeoutMilliseconds = 60_000;
 
     /// <summary>单个包查询的超时；卸载核对每条记录最多跑一次。</summary>
     private const int QueryTimeoutMilliseconds = 20_000;
+
+    /// <summary><c>Get-StartApps</c> 的超时；自启动页解析商店包名称用。</summary>
+    private const int SummaryTimeoutMilliseconds = 20_000;
 
     private static readonly StringComparer NameComparer =
         StringComparer.Create(CultureInfo.GetCultureInfo("zh-CN"), true);
@@ -47,6 +51,15 @@ public static class StoreApplicationProvider
     /// <summary>PackageFullName 只允许包标识里的字符，避免把任意文本拼进 PowerShell 脚本。</summary>
     private static readonly Regex SafePackageFullName =
         new(@"^[A-Za-z0-9][A-Za-z0-9._-]{0,511}$", RegexOptions.CultureInvariant);
+
+    /// <summary>PackageFamilyName 形如 <c>OpenAI.Codex_2p2nqsd0c76g0</c>（名称 + 13 位发布者哈希）。</summary>
+    private static readonly Regex SafePackageFamilyName =
+        new(@"^[A-Za-z0-9][A-Za-z0-9.-]{0,127}_[a-z0-9]{13}$", RegexOptions.CultureInvariant);
+
+    /// <summary>包族名 → 摘要的进程内缓存，见 <see cref="ResolvePackageSummaries"/>。</summary>
+    private static readonly object SummaryCacheSync = new();
+    private static readonly Dictionary<string, StorePackageSummary> SummaryCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly Regex ScaleSuffix = new(
         @"\.(?:scale-\d+|targetsize-\d+|contrast-[a-zA-Z]+)$",
@@ -165,6 +178,343 @@ public static class StoreApplicationProvider
                 "结果按无法判定处理。",
                 exception);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// “自启动项”页里一个 UWP 启动任务所属包的展示信息：本地化名称、发布者、图标文件与安装目录。
+    /// <see cref="LogoPath"/> / <see cref="InstallLocation"/> 为空表示读不到包目录（例如包被移到了别的盘）。
+    /// </summary>
+    public readonly record struct StorePackageSummary(
+        string PackageFamilyName,
+        string DisplayName,
+        string Publisher,
+        string LogoPath,
+        string InstallLocation);
+
+    /// <summary>
+    /// 按包族名解析商店应用的展示信息，供“自启动项”页的 UWP 启动任务使用。
+    /// <para>
+    /// UWP 启动任务只给出包族名与任务 Id，直接显示任务 Id（<c>App</c>、<c>TeamsTfwStartupTask</c>）
+    /// 用户根本认不出是哪个软件。这里沿用卸载页的同一套来源：开始菜单的本地化入口名
+    /// （<c>Get-StartApps</c>，一次调用覆盖全部请求的包）+ <c>AppxManifest.xml</c> 的发布者与 Logo
+    /// （含 <c>.targetsize-*</c> / <c>.scale-*</c> 变体）。<c>ms-resource:</c> 这类需要 PRI 资源索引的
+    /// 名称会被跳过并回退到开始菜单名或包名。
+    /// </para>
+    /// <para>
+    /// 结果按包族名缓存在进程内：商店包在一次运行期间几乎不会变，而自启动页每次刷新都要问一遍，
+    /// 不缓存每次都要等一次 PowerShell。
+    /// </para>
+    /// </summary>
+    public static IReadOnlyDictionary<string, StorePackageSummary> ResolvePackageSummaries(
+        IEnumerable<string> packageFamilyNames,
+        CancellationToken cancellationToken = default)
+    {
+        var result = new Dictionary<string, StorePackageSummary>(StringComparer.OrdinalIgnoreCase);
+        string[] requested = packageFamilyNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Where(name => SafePackageFamilyName.IsMatch(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (requested.Length == 0 || !IsSupported)
+        {
+            return result;
+        }
+
+        string[] missing = Array.Empty<string>();
+        lock (SummaryCacheSync)
+        {
+            var pending = new List<string>(requested.Length);
+            foreach (string familyName in requested)
+            {
+                if (SummaryCache.TryGetValue(familyName, out StorePackageSummary cached))
+                {
+                    result[familyName] = cached;
+                }
+                else
+                {
+                    pending.Add(familyName);
+                }
+            }
+
+            missing = pending.ToArray();
+        }
+
+        if (missing.Length == 0)
+        {
+            return result;
+        }
+
+        try
+        {
+            (Dictionary<string, string> byAumid, Dictionary<string, string> byFamily) =
+                ReadStartMenuNames(missing, cancellationToken);
+            foreach (string familyName in missing)
+            {
+                StorePackageSummary summary = ResolvePackageSummary(familyName, byAumid, byFamily);
+                lock (SummaryCacheSync)
+                {
+                    SummaryCache[familyName] = summary;
+                }
+
+                result[familyName] = summary;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                              or System.Security.SecurityException or InvalidOperationException
+                                              or JsonException or ArgumentException)
+        {
+            AppLogService.Warn(
+                $"解析商店应用信息失败：{exception.GetType().Name}：{exception.Message}。",
+                exception);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 取开始菜单的本地化入口名，返回 “包族名!入口 Id → 名称” 与 “包族名 → 第一个入口名称” 两张表。
+    /// 失败（没有 Appx 模块、超时、JSON 损坏）只记日志，调用方回退到清单里的名字。
+    /// </summary>
+    private static (Dictionary<string, string> ByAumid, Dictionary<string, string> ByFamily)
+        ReadStartMenuNames(string[] familyNames, CancellationToken cancellationToken)
+    {
+        var byAumid = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var byFamily = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string familyList = string.Join(", ", familyNames.Select(name => "'" + name + "'"));
+        string script = SummaryScript.Replace(
+            PackageFamiliesPlaceholder,
+            familyList,
+            StringComparison.Ordinal);
+
+        PowerShellResult result = RunPowerShell(script, SummaryTimeoutMilliseconds, cancellationToken);
+        if (!result.Success)
+        {
+            AppLogService.Warn(
+                $"读取商店应用开始菜单名称失败：Get-StartApps 返回退出码 {result.ExitCode}" +
+                $"（{TrimForLog(result.StandardError)}）。");
+            return (byAumid, byFamily);
+        }
+
+        string json = result.StandardOutput.TrimStart('\uFEFF', '\r', '\n', ' ', '\t');
+        if (json.Length == 0)
+        {
+            return (byAumid, byFamily);
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement entry in root.EnumerateArray())
+                {
+                    AddEntry(entry);
+                }
+            }
+            else if (root.ValueKind == JsonValueKind.Object)
+            {
+                AddEntry(root);
+            }
+        }
+        catch (JsonException exception)
+        {
+            AppLogService.Warn($"读取商店应用开始菜单名称失败：JSON 无法解析（{exception.Message}）。", exception);
+        }
+
+        return (byAumid, byFamily);
+
+        void AddEntry(JsonElement entry)
+        {
+            string family = ReadString(entry, "Family");
+            string appId = ReadString(entry, "AppId");
+            string name = ReadString(entry, "Name");
+            if (family.Length == 0 || !IsUsableDisplayText(name))
+            {
+                return;
+            }
+
+            if (appId.Length > 0)
+            {
+                byAumid[family + "!" + appId] = name;
+            }
+
+            if (!byFamily.ContainsKey(family))
+            {
+                byFamily[family] = name;
+            }
+        }
+    }
+
+    private static StorePackageSummary ResolvePackageSummary(
+        string familyName,
+        IReadOnlyDictionary<string, string> startMenuNamesByAumid,
+        IReadOnlyDictionary<string, string> startMenuNamesByFamily)
+    {
+        int separator = familyName.IndexOf('_', StringComparison.Ordinal);
+        string packageName = separator > 0 ? familyName[..separator] : familyName;
+
+        // 同一个族可能有主包和拆分包，逐个试到能读到 AppxManifest.xml 的那一个。
+        string installPath = string.Empty;
+        string fullName = string.Empty;
+        foreach (string candidate in ReadPackageFullNames(familyName))
+        {
+            fullName = candidate;
+            installPath = FindInstallPath(candidate);
+            if (installPath.Length > 0)
+            {
+                break;
+            }
+        }
+
+        string displayName = string.Empty;
+        string publisher = string.Empty;
+        string logoPath = string.Empty;
+
+        if (installPath.Length > 0 && TryReadManifest(installPath, packageName, out PackageManifest manifest))
+        {
+            ManifestApplication? application = manifest.Applications.Count > 0 ? manifest.Applications[0] : null;
+
+            // 名称优先级：开始菜单里该入口的本地化名称 → 该包任何一个开始菜单入口 → 清单名称。
+            // 多入口包（Teams 的 MSTeamsRemoteModuleContainer 排在 MSTeams 前面）第一个入口往往不是
+            // 用户认识的那个名字，所以整族的开始菜单名要排在清单里的应用名之前。
+            if (application is { Id.Length: > 0 } first && startMenuNamesByAumid.TryGetValue(familyName + "!" + first.Id, out string? menuName)
+                && IsUsableDisplayText(menuName))
+            {
+                displayName = menuName.Trim();
+            }
+
+            if (displayName.Length == 0
+                && startMenuNamesByFamily.TryGetValue(familyName, out string? familyMenuName)
+                && IsUsableDisplayText(familyMenuName))
+            {
+                displayName = familyMenuName.Trim();
+            }
+
+            if (displayName.Length == 0 && application is { } app && IsUsableDisplayText(app.DisplayName))
+            {
+                displayName = app.DisplayName!.Trim();
+            }
+
+            if (displayName.Length == 0 && IsUsableDisplayText(manifest.DisplayName))
+            {
+                displayName = manifest.DisplayName!.Trim();
+            }
+
+            if (IsUsableDisplayText(manifest.PublisherDisplayName))
+            {
+                publisher = manifest.PublisherDisplayName!.Trim();
+            }
+
+            logoPath = ResolveLogoPath(
+                installPath,
+                application is { } withLogo
+                    ? FirstNonEmpty(withLogo.Logo, manifest.PackageLogo)
+                    : manifest.PackageLogo);
+        }
+        else if (startMenuNamesByFamily.TryGetValue(familyName, out string? fallbackMenuName)
+                 && IsUsableDisplayText(fallbackMenuName))
+        {
+            displayName = fallbackMenuName.Trim();
+        }
+
+        if (displayName.Length == 0)
+        {
+            displayName = packageName;
+        }
+
+        if (logoPath.Length == 0 && installPath.Length == 0)
+        {
+            AppLogService.Warn(
+                $"找不到商店应用的包目录，名称与图标只能回退（应用可能不在系统盘或包目录不可读）：{familyName}");
+        }
+
+        return new StorePackageSummary(familyName, displayName, publisher, logoPath, installPath);
+    }
+
+    /// <summary>
+    /// 包族名 → 当前用户下的全部包全名，主包优先、版本高的优先。
+    /// 同一族可能同时注册主包与资源/语言/缩放拆分包（<c>…_neutral_split.scale-400_…</c>），
+    /// 拆分包没有自己的 <c>AppxManifest.xml</c>，不能拿来解析名称和图标。
+    /// </summary>
+    private static IReadOnlyList<string> ReadPackageFullNames(string familyName)
+    {
+        var mains = new List<(string Name, Version Version)>(2);
+        var splits = new List<string>(4);
+        try
+        {
+            RegistryView view = Environment.Is64BitOperatingSystem ? RegistryView.Registry64 : RegistryView.Default;
+            using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, view);
+            using RegistryKey? families = baseKey.OpenSubKey(
+                $@"Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Families\{familyName}");
+            if (families is null)
+            {
+                return Array.Empty<string>();
+            }
+
+            foreach (string candidate in families.GetSubKeyNames())
+            {
+                // 拆分包的段名是 <arch>_split.<qualifier>，所以标记是 "_split." 而不是 ".split."。
+                if (candidate.Contains("_split.", StringComparison.OrdinalIgnoreCase)
+                    || candidate.Contains(".split.", StringComparison.OrdinalIgnoreCase))
+                {
+                    splits.Add(candidate);
+                    continue;
+                }
+
+                mains.Add((candidate, ReadPackageVersion(candidate)));
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                              or System.Security.SecurityException or ArgumentException)
+        {
+            Debug.WriteLine(exception);
+            return Array.Empty<string>();
+        }
+
+        return mains
+            .OrderByDescending(entry => entry.Version)
+            .Select(entry => entry.Name)
+            .Concat(splits)
+            .ToArray();
+    }
+
+    private static Version ReadPackageVersion(string packageFullName)
+    {
+        string[] parts = packageFullName.Split('_');
+        return parts.Length > 1 && Version.TryParse(parts[1], out Version? version)
+            ? version
+            : new Version(0, 0);
+    }
+
+    /// <summary>
+    /// 包目录：<c>%ProgramFiles%\WindowsApps\&lt;包全名&gt;</c>。没有单独的注册表项记录安装盘，
+    /// “新应用保存到别的盘”时这里会读不到，调用方回退到包名与字母徽章。
+    /// </summary>
+    private static string FindInstallPath(string packageFullName)
+    {
+        try
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            if (programFiles.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            string path = Path.Combine(programFiles, "WindowsApps", packageFullName);
+            return File.Exists(Path.Combine(path, "AppxManifest.xml")) ? path : string.Empty;
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException
+                                              or UnauthorizedAccessException or NotSupportedException)
+        {
+            Debug.WriteLine(exception);
+            return string.Empty;
         }
     }
 
@@ -778,6 +1128,32 @@ public static class StoreApplicationProvider
         string trimmed = text.Trim();
         return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength] + "…";
     }
+
+    /// <summary>
+    /// 只取指定包族名的开始菜单入口名，供自启动页解析 UWP 启动任务的显示名。
+    /// stdout 固定为 UTF-8；<c>__PACKAGE_FAMILIES__</c> 由调用方替换成已校验的包族名列表。
+    /// </summary>
+    private const string SummaryScript = """
+        $ProgressPreference = 'SilentlyContinue'
+        try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch { }
+        $families = @(__PACKAGE_FAMILIES__)
+        try { $startApps = @(Get-StartApps -ErrorAction Stop) } catch { $startApps = @() }
+        $items = @(
+            foreach ($entry in $startApps) {
+                $appId = [string]$entry.AppID
+                $separator = $appId.IndexOf('!')
+                if ($separator -le 0) { continue }
+                $family = $appId.Substring(0, $separator)
+                if ($families -notcontains $family) { continue }
+                [pscustomobject]@{
+                    Family = $family
+                    AppId  = $appId.Substring($separator + 1)
+                    Name   = [string]$entry.Name
+                }
+            }
+        )
+        [Console]::Out.Write((ConvertTo-Json -InputObject $items -Depth 3 -Compress))
+        """;
 
     /// <summary>
     /// 枚举当前用户全部包。字段与 <c>Get-AppxPackage</c> 的输出一一对应；

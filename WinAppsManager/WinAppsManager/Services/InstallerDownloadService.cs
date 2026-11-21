@@ -7,6 +7,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 using WinAppsManager.Models;
 
@@ -42,12 +43,31 @@ public sealed class InstallerDownloadService
         ValidateOptions(settings);
         cancellationToken.ThrowIfCancellationRequested();
         Directory.CreateDirectory(_downloadDirectory);
-        var partialPath = Path.Combine(_downloadDirectory, $"{metadata.FileName}.{Guid.NewGuid():N}.part");
+        var partialPath = GetPartialPath(metadata.FileName);
         await using var tracker = new InstallerDownloadTracker(progress, settings.ConnectionCount, metadata.SizeBytes);
+        // 取消 / 失败时是否保留 .part：只有单连接下载写出的文件是连续的，可以续传；
+        // 分段下载会先 SetLength 把文件撑到全长（中间是空洞），这种半成品必须删掉重下。
+        // 这个标志在真正开始单连接读取之前就置位，所以中途取消也能留住已经下载的部分。
+        var transfer = new TransferState();
+        var completed = false;
         try
         {
-            var received = await TransferAsync(metadata, uri, partialPath, settings, tracker, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
+            long received;
+            if (TryLoadResumeState(metadata, partialPath, out ResumeState resume, out long existingBytes))
+            {
+                AppLogService.Info(
+                    $"继续未完成的下载：{metadata.FileName}，已下载 {existingBytes} / {resume.TotalBytes} 字节。");
+                transfer.Resumable = true;
+                received = existingBytes >= resume.TotalBytes
+                    ? existingBytes
+                    : await ResumeAsync(metadata, uri, partialPath, resume, existingBytes, settings, tracker, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                DeletePartialFile(partialPath);
+                DeleteResumeState(partialPath);
+                received = await TransferAsync(metadata, uri, partialPath, settings, tracker, cancellationToken, transfer).ConfigureAwait(false);
+            }            cancellationToken.ThrowIfCancellationRequested();
             tracker.SetPhase(InstallerDownloadPhase.Verifying);
             cancellationToken.ThrowIfCancellationRequested();
             if (!string.IsNullOrWhiteSpace(metadata.Sha256))
@@ -71,8 +91,10 @@ public sealed class InstallerDownloadService
                 filePath = GetAvailableFilePath(metadata.FileName);
                 File.Move(partialPath, filePath);
             }
+            DeleteResumeState(partialPath);
             await tracker.StopAsync().ConfigureAwait(false);
             tracker.SetPhase(InstallerDownloadPhase.Completed);
+            completed = true;
             return new DownloadedInstaller(filePath, received, metadata.Id);
         }
         catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
@@ -93,11 +115,25 @@ public sealed class InstallerDownloadService
             tracker.SetPhase(InstallerDownloadPhase.Failed, "下载未完成，请重试。");
             throw;
         }
-        finally { DeletePartialFile(partialPath); }
+        finally
+        {
+            if (!completed && !transfer.Resumable)
+            {
+                DeletePartialFile(partialPath);
+                DeleteResumeState(partialPath);
+            }
+        }
     }
 
-    private async Task<long> TransferAsync(AppRelease release, Uri uri, string path, InstallerDownloadOptions options,
-        InstallerDownloadTracker tracker, CancellationToken ct)
+    /// <summary>一次下载尝试的传输模式：<see cref="Resumable"/> 为真表示磁盘上留下的是连续文件。</summary>
+    private sealed class TransferState
+    {
+        public bool Resumable { get; set; }
+    }
+
+    private async Task<long> TransferAsync(AppRelease release, Uri uri, string path,
+        InstallerDownloadOptions options, InstallerDownloadTracker tracker, CancellationToken ct,
+        TransferState state)
     {
         if (options.ConnectionCount == 1 || (release.SizeBytes.HasValue && release.SizeBytes.Value / options.MinimumSegmentSize < 2))
         {
@@ -111,6 +147,7 @@ public sealed class InstallerDownloadService
                 AppLogService.Warn($"安装包单连接回退：{release.FileName}，安装包较小，无法拆分分段。");
             }
 
+            state.Resumable = true;
             using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
             return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout,
                 fallbackMessage).ConfigureAwait(false);
@@ -119,6 +156,7 @@ public sealed class InstallerDownloadService
         if (probe.StatusCode == HttpStatusCode.OK)
         {
             AppLogService.Warn($"安装包单连接回退：{release.FileName}，服务器未提供分段响应。");
+            state.Resumable = true;
             return await DownloadSingleAsync(release, probe, path, tracker, ct, options.Timeout,
                 "服务器未提供分段响应，正在使用单连接下载。").ConfigureAwait(false);
         }
@@ -127,6 +165,7 @@ public sealed class InstallerDownloadService
         {
             AppLogService.Warn(
                 $"安装包单连接回退：{release.FileName}，服务器不支持分段请求（HTTP {(int)probe.StatusCode}）。");
+            state.Resumable = true;
             using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
             return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout, "服务器不支持分段请求，正在使用单连接下载。").ConfigureAwait(false);
         }
@@ -144,6 +183,7 @@ public sealed class InstallerDownloadService
         {
             AppLogService.Warn($"安装包单连接回退：{release.FileName}，服务器未提供安装包总大小。");
             probe.Dispose();
+            state.Resumable = true;
             using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
             return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout,
                 "服务器未提供安装包总大小，正在使用单连接下载。").ConfigureAwait(false);
@@ -160,11 +200,13 @@ public sealed class InstallerDownloadService
                     : "服务器未提供 Etag/Last-Modified 校验信息且没有 SHA256";
             AppLogService.Warn($"安装包单连接回退：{release.FileName}，{fallbackReason}。");
             probe.Dispose();
+            state.Resumable = true;
             using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
             return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout,
                 count < 2 ? "安装包较小，正在使用单连接下载。" : "服务器未提供可靠的分段校验信息，正在使用单连接下载。").ConfigureAwait(false);
         }
         probe.Dispose();
+        state.Resumable = false;
         AppLogService.Info($"开始分段下载安装包：{release.FileName}，{count} 个连接，共 {total} 字节。");
         try
         {
@@ -176,9 +218,99 @@ public sealed class InstallerDownloadService
             AppLogService.Warn($"安装包单连接回退：{release.FileName}，服务器改变了分段响应（Range/ETag/Last-Modified 不一致）。");
             DeletePartialFile(path);
             tracker.SetPhase(InstallerDownloadPhase.Connecting, "服务器改变了分段响应，正在切换为单连接重新下载。");
+            state.Resumable = true;
             using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
             return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout,
                 "服务器改变了分段响应，已切换为单连接重新下载。").ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// 续传：从 <paramref name="existingBytes"/> 处请求剩余部分并追加到已有的 <c>.part</c>。
+    /// 服务器忽略 Range、范围对不上或响应被压缩时，退回“删除分片、从头下载”。
+    /// </summary>
+    private async Task<long> ResumeAsync(AppRelease release, Uri uri, string path, ResumeState state,
+        long existingBytes, InstallerDownloadOptions options, InstallerDownloadTracker tracker, CancellationToken ct)
+    {
+        tracker.Configure(
+            state.TotalBytes,
+            [new InstallerDownloadSegmentProgress(1, 0, state.TotalBytes - 1, existingBytes, InstallerDownloadSegmentState.Downloading)],
+            $"正在从 {DownloadDisplayFormatting.Bytes(existingBytes)} 处继续下载。");
+        var validator = CreateValidator(state);
+        using var response = await SendAsync(uri, new RangeHeaderValue(existingBytes, null), validator, ct, options.Timeout)
+            .ConfigureAwait(false);
+
+        if (response.StatusCode == HttpStatusCode.OK
+            || (response.StatusCode == HttpStatusCode.PartialContent
+                && (response.Content.Headers.ContentRange?.From != existingBytes
+                    || (response.Content.Headers.ContentRange?.Length is { } length && length != state.TotalBytes))))
+        {
+            AppLogService.Warn($"安装包续传失败：{release.FileName}，服务器没有按请求返回剩余范围，已从头重新下载。");
+            return await RestartFromScratchAsync(
+                release, uri, path, options, tracker, ct, "服务器不支持续传，已从头重新下载。").ConfigureAwait(false);
+        }
+
+        response.EnsureSuccessStatusCode();
+        if (response.StatusCode != HttpStatusCode.PartialContent)
+        {
+            return await RestartFromScratchAsync(
+                release, uri, path, options, tracker, ct, "服务器返回了意外的响应，已从头重新下载。").ConfigureAwait(false);
+        }
+
+        ValidateContentType(response);
+        if (HasContentEncoding(response))
+        {
+            return await RestartFromScratchAsync(
+                release, uri, path, options, tracker, ct, "服务器对续传响应启用了压缩，已从头重新下载。").ConfigureAwait(false);
+        }
+
+        SaveResumeState(path, release, response, state.TotalBytes);
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutSource.CancelAfter(options.Timeout);
+        var buffer = ArrayPool<byte>.Shared.Rent(81920);
+        long received = existingBytes;
+        try
+        {
+            await using var source = await response.Content.ReadAsStreamAsync(timeoutSource.Token).ConfigureAwait(false);
+            await using var destination = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.None,
+                buffer.Length, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            while (true)
+            {
+                timeoutSource.CancelAfter(options.Timeout);
+                var count = await source.ReadAsync(buffer.AsMemory(), timeoutSource.Token).ConfigureAwait(false);
+                if (count == 0)
+                {
+                    break;
+                }
+
+                await destination.WriteAsync(buffer.AsMemory(0, count), timeoutSource.Token).ConfigureAwait(false);
+                received = checked(received + count);
+                tracker.AddBytes(0, count);
+            }
+
+            await destination.FlushAsync(timeoutSource.Token).ConfigureAwait(false);
+            tracker.SetSegmentState(0, InstallerDownloadSegmentState.Completed);
+            return received;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    /// <summary>放弃续传：删掉分片后重新发起一次完整的单连接下载。</summary>
+    private Task<long> RestartFromScratchAsync(AppRelease release, Uri uri, string path,
+        InstallerDownloadOptions options, InstallerDownloadTracker tracker, CancellationToken ct, string message)
+    {
+        DeletePartialFile(path);
+        DeleteResumeState(path);
+        tracker.SetPhase(InstallerDownloadPhase.Connecting, message);
+        return RestartCoreAsync();
+
+        async Task<long> RestartCoreAsync()
+        {
+            using var response = await SendAsync(uri, null, null, ct, options.Timeout).ConfigureAwait(false);
+            return await DownloadSingleAsync(release, response, path, tracker, ct, options.Timeout, message).ConfigureAwait(false);
         }
     }
 
@@ -228,6 +360,8 @@ public sealed class InstallerDownloadService
         var total = contentLength ?? release.SizeBytes;
         tracker.Configure(total, [new InstallerDownloadSegmentProgress(1, 0, total.HasValue ? total - 1 : null,
             0, InstallerDownloadSegmentState.Downloading)], message);
+        // 记住这次响应的 validator 与总长：取消/失败后靠它判断“服务器上的文件没变”，才敢接着下。
+        SaveResumeState(path, release, response, total);
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutSource.CancelAfter(timeout);
         var buffer = ArrayPool<byte>.Shared.Rent(81920);
@@ -412,6 +546,9 @@ public sealed class InstallerDownloadService
         Process.Start(new ProcessStartInfo(absolutePath) { UseShellExecute = true });
     }
 
+    /// <summary>未完成下载的固定路径：<c>{安装包名}.part</c>。名字固定才能跨重启续传。</summary>
+    private string GetPartialPath(string fileName) => Path.Combine(_downloadDirectory, fileName + ".part");
+
     private string GetAvailableFilePath(string fileName)
     {
         var candidate = Path.Combine(_downloadDirectory, fileName);
@@ -477,6 +614,188 @@ public sealed class InstallerDownloadService
         try { if (File.Exists(path)) File.Delete(path); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { Debug.WriteLine(error); }
     }
+
+    // ---- 断点续传：未完成分片 <文件>.part + 元数据 <文件>.part.json ----
+
+    /// <summary>续传所需的元数据；URL / 文件名 / 大小 / 校验信息对不上就不续传。</summary>
+    private sealed record ResumeState(
+        string DownloadUrl,
+        string FileName,
+        string? Sha256,
+        long TotalBytes,
+        string? ETag,
+        DateTimeOffset? LastModified);
+
+    private static string GetResumeStatePath(string partialPath) => partialPath + ".json";
+
+    /// <summary>某个安装包是否留有可续传的分片（供下载中心决定显示“继续下载”）。</summary>
+    public static bool HasResumeState(string? fileName, string? downloadDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        try
+        {
+            string directory = string.IsNullOrWhiteSpace(downloadDirectory)
+                ? DefaultDownloadDirectory
+                : Path.GetFullPath(downloadDirectory);
+            string partial = Path.Combine(directory, fileName + ".part");
+            return File.Exists(partial) && File.Exists(GetResumeStatePath(partial));
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException
+                                              or NotSupportedException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine(exception);
+            return false;
+        }
+    }
+
+    /// <summary>删除某个安装包留下的续传分片与元数据（移除下载记录 / 清空历史时调用）。</summary>
+    public static void DeleteResumeFiles(string? fileName, string? downloadDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return;
+        }
+
+        try
+        {
+            string directory = string.IsNullOrWhiteSpace(downloadDirectory)
+                ? DefaultDownloadDirectory
+                : Path.GetFullPath(downloadDirectory);
+            string partial = Path.Combine(directory, fileName + ".part");
+            DeletePartialFile(partial);
+            DeleteResumeState(partial);
+        }
+        catch (Exception exception) when (exception is ArgumentException or IOException
+                                              or NotSupportedException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine(exception);
+        }
+    }
+
+    private static void DeleteResumeState(string partialPath)
+    {
+        try
+        {
+            string statePath = GetResumeStatePath(partialPath);
+            if (File.Exists(statePath))
+            {
+                File.Delete(statePath);
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine(error);
+        }
+    }
+
+    private static void SaveResumeState(string partialPath, AppRelease release, HttpResponseMessage? response,
+        long? totalBytes)
+    {
+        try
+        {
+            if (totalBytes is not > 0)
+            {
+                return;
+            }
+
+            var state = new ResumeState(
+                release.DownloadUrl,
+                release.FileName,
+                release.Sha256,
+                totalBytes.Value,
+                response?.Headers.ETag is { IsWeak: false } tag ? tag.ToString() : null,
+                response?.Content.Headers.LastModified);
+            File.WriteAllText(GetResumeStatePath(partialPath), JsonSerializer.Serialize(state));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                          or NotSupportedException or JsonException)
+        {
+            Debug.WriteLine(error);
+        }
+    }
+
+    private static bool TryLoadResumeState(AppRelease release, string partialPath, out ResumeState state,
+        out long existingBytes)
+    {
+        state = null!;
+        existingBytes = 0;
+        try
+        {
+            if (!File.Exists(partialPath))
+            {
+                return false;
+            }
+
+            string statePath = GetResumeStatePath(partialPath);
+            if (!File.Exists(statePath))
+            {
+                return false;
+            }
+
+            var loaded = JsonSerializer.Deserialize<ResumeState>(File.ReadAllText(statePath));
+            if (loaded is null || loaded.TotalBytes <= 0)
+            {
+                return false;
+            }
+
+            if (!string.Equals(loaded.DownloadUrl, release.DownloadUrl, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(loaded.FileName, release.FileName, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(release.Sha256)
+                && !string.Equals(loaded.Sha256, release.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // 既没有 validator 也没有 SHA256 时无法判断服务器上的文件有没有变，宁可重下。
+            if (string.IsNullOrWhiteSpace(loaded.ETag) && loaded.LastModified is null
+                && string.IsNullOrWhiteSpace(release.Sha256))
+            {
+                return false;
+            }
+
+            long length = new FileInfo(partialPath).Length;
+            if (length <= 0 || length > loaded.TotalBytes)
+            {
+                return false;
+            }
+
+            state = loaded;
+            existingBytes = length;
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                              or JsonException or ArgumentException or NotSupportedException)
+        {
+            Debug.WriteLine(exception);
+            return false;
+        }
+    }
+
+    private static RangeConditionHeaderValue? CreateValidator(ResumeState state)
+    {
+        if (!string.IsNullOrWhiteSpace(state.ETag))
+        {
+            try
+            {
+                return new RangeConditionHeaderValue(EntityTagHeaderValue.Parse(state.ETag));
+            }
+            catch (FormatException exception)
+            {
+                Debug.WriteLine(exception);
+            }
+        }
+
+        return state.LastModified is { } modified ? new RangeConditionHeaderValue(modified) : null;
+    }
+
 
     private static HttpClient CreateHttpClient()
     {

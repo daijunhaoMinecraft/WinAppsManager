@@ -2,403 +2,566 @@
          xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
          xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
+         xmlns:colorpicker="clr-namespace:ColorPicker;assembly=ColorPicker"
          Background="{DynamicResource Wam.PageBackgroundBrush}"
          Foreground="{DynamicResource Wam.TextPrimaryBrush}"
          Title="设置"
          Loaded="OnPageLoaded"
          Unloaded="OnPageUnloaded">
+
+    <Page.Resources>
+        <!-- 分组标题样式 -->
+        <Style x:Key="SettingsGroupHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource Wam.TextPrimaryBrush}"/>
+            <Setter Property="Margin" Value="2,22,0,10"/>
+        </Style>
+    </Page.Resources>
+
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Margin="28,26,28,32" MaxWidth="960" HorizontalAlignment="Stretch">
+        <!-- 内容上限放宽到 1120：导航栏收起后内容区变宽，旧的 860 会让整页居中、两侧出现大片空白。 -->
+        <StackPanel Margin="32,24,32,40" MaxWidth="1120" HorizontalAlignment="Stretch">
+            <!-- 页头 -->
             <TextBlock Text="设置" Style="{StaticResource Wam.PageTitleTextBlockStyle}"/>
-            <TextBlock Text="让软件管理更符合你的使用习惯。"
-                       Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,8,0,24"/>
+            <TextBlock Text="自定义界面外观、软件源与下载网络偏好。"
+                       Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,16"/>
 
-            <Border x:Name="SettingsErrorPanel" Style="{StaticResource Wam.CardBorderStyle}"
-                    Background="{DynamicResource Wam.AccentSoftBrush}" Visibility="Collapsed" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="设置提示" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                    <TextBlock x:Name="SettingsErrorText" TextWrapping="Wrap"/>
-                    <Button Content="重新保存设置" Click="OnRetrySaveSettings" HorizontalAlignment="Left"
-                            Padding="15,7" Margin="0,12,0,0"/>
-                </StackPanel>
-            </Border>
+            <!-- 全局错误/保存提示条 -->
+            <ui:InfoBar x:Name="SettingsErrorBar"
+                        Title="设置保存提示"
+                        Severity="Warning"
+                        IsClosable="False"
+                        IsOpen="False"
+                        Margin="0,0,0,12">
+                <ui:InfoBar.ActionButton>
+                    <Button Content="重新保存" Click="OnRetrySaveSettings"/>
+                </ui:InfoBar.ActionButton>
+            </ui:InfoBar>
 
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="外观" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="选择应用主题，更改会立即生效并自动保存。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,20"/>
-                    <UniformGrid Columns="3">
-                        <RadioButton x:Name="SystemThemeOption" Tag="System" GroupName="AppTheme"
-                                     Checked="OnThemeChecked" VerticalContentAlignment="Top" Margin="0,0,14,0"
-                                     AutomationProperties.Name="跟随系统主题">
-                            <StackPanel>
-                                <TextBlock Text="跟随系统" FontWeight="SemiBold"/>
-                                <TextBlock Text="与 Windows 的外观保持一致" TextWrapping="Wrap" FontSize="12"
-                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" Margin="0,5,0,0"/>
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton x:Name="LightThemeOption" Tag="Light" GroupName="AppTheme"
-                                     Checked="OnThemeChecked" VerticalContentAlignment="Top" Margin="0,0,14,0"
-                                     AutomationProperties.Name="浅色主题">
-                            <StackPanel>
-                                <TextBlock Text="浅色" FontWeight="SemiBold"/>
-                                <TextBlock Text="明亮、简洁的浅色界面" TextWrapping="Wrap" FontSize="12"
-                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" Margin="0,5,0,0"/>
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton x:Name="DarkThemeOption" Tag="Dark" GroupName="AppTheme"
-                                     Checked="OnThemeChecked" VerticalContentAlignment="Top"
-                                     AutomationProperties.Name="深色主题">
-                            <StackPanel>
-                                <TextBlock Text="深色" FontWeight="SemiBold"/>
-                                <TextBlock Text="柔和、舒适的深色界面" TextWrapping="Wrap" FontSize="12"
-                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}" Margin="0,5,0,0"/>
-                            </StackPanel>
-                        </RadioButton>
-                    </UniformGrid>
-                    <Border Background="{DynamicResource Wam.AccentSoftBrush}" CornerRadius="7"
-                            Padding="12,10" Margin="0,20,0,0">
-                        <TextBlock x:Name="ThemeStatusText" Foreground="{DynamicResource Wam.TextSecondaryBrush}"
-                                   FontSize="12" TextWrapping="Wrap"/>
-                    </Border>
+            <!-- ==================== 1. 个性化 ==================== -->
+            <TextBlock Text="个性化" Style="{StaticResource SettingsGroupHeaderStyle}" Margin="2,4,0,10"/>
 
-                    <!-- 界面动效不再提供开关：真正生效的是 Windows 的“在 Windows 中显示动画”。
-                         这里只说明状态，避免用户以为关掉某个应用内选项就能停用动画。 -->
-                    <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}" CornerRadius="8"
-                            Padding="12,10" Margin="0,14,0,0">
-                        <TextBlock x:Name="AnimationHintText"
-                                   Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                                   TextWrapping="Wrap"/>
-                    </Border>
-                </StackPanel>
-            </Border>
+            <!-- 颜色模式 -->
+            <ui:SettingsCard Header="颜色模式"
+                             Description="选择应用的浅色或深色外观，更改立即生效"
+                             Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="FontColor"/>
+                </ui:SettingsCard.HeaderIcon>
+                <ComboBox x:Name="ThemeModeCombo"
+                          Width="205"
+                          SelectionChanged="OnThemeComboSelectionChanged"
+                          AutomationProperties.Name="选择颜色模式">
+                    <ComboBoxItem Tag="System">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="14" Height="14" CornerRadius="3" ClipToBounds="True"
+                                    BorderBrush="{DynamicResource Wam.CardBorderBrush}" BorderThickness="1"
+                                    VerticalAlignment="Center">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Background="#F5F7FA"/>
+                                    <Border Grid.Column="1" Background="#1E222A"/>
+                                </Grid>
+                            </Border>
+                            <TextBlock Text="跟随系统" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </ComboBoxItem>
+                    <ComboBoxItem Tag="Light">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="14" Height="14" CornerRadius="3"
+                                    Background="#F5F7FA" BorderBrush="#CBD5E1" BorderThickness="1"
+                                    VerticalAlignment="Center"/>
+                            <TextBlock Text="浅色模式" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </ComboBoxItem>
+                    <ComboBoxItem Tag="Dark">
+                        <StackPanel Orientation="Horizontal">
+                            <Border Width="14" Height="14" CornerRadius="3"
+                                    Background="#1E222A" BorderBrush="#475569" BorderThickness="1"
+                                    VerticalAlignment="Center"/>
+                            <TextBlock Text="深色模式" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </ComboBoxItem>
+                </ComboBox>
+            </ui:SettingsCard>
 
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="服务端地址" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="客户端从这里获取软件目录、详情、图标和下载地址。默认连接在线服务端 https://winapps.theconsole.top/，也可以填写局域网或自建后端地址（http/https）。切换后软件目录会重新加载，已经开始的下载任务不受影响。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,0"/>
-                    <Grid Margin="0,14,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="BackendBaseUrlTextBox" MinHeight="36" Padding="11,0"
-                                 VerticalContentAlignment="Center"
-                                 AutomationProperties.Name="服务端地址"/>
-                        <Button x:Name="ApplyBackendButton" Grid.Column="1" Content="应用"
-                                MinHeight="36" Padding="15,0" Margin="8,0,0,0"
-                                Click="OnApplyBackendBaseUrl"
-                                AutomationProperties.Name="应用服务端地址"/>
-                        <Button x:Name="TestBackendButton" Grid.Column="2" Content="测试连接"
-                                MinHeight="36" Padding="15,0" Margin="8,0,0,0"
-                                Click="OnTestBackendBaseUrl"
-                                AutomationProperties.Name="测试服务端连接"/>
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <Button x:Name="ResetBackendButton" Content="恢复默认" Padding="14,6"
-                                Click="OnResetBackendBaseUrl"
-                                AutomationProperties.Name="恢复默认服务端地址"/>
-                    </StackPanel>
-                    <TextBlock x:Name="BackendStatusText" FontSize="12" Margin="0,10,0,0" TextWrapping="Wrap"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="软件源" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="软件源列表与当前可用状态由当前服务端决定（GET /api/v1/sources）。客户端不内置任何来源：服务端新增来源后会自动出现，切换来源会重新加载目录，已经开始的下载任务不受影响。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,16"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="软件源" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <ComboBox x:Name="AppSourceCombo" Grid.Column="1" Width="228" MinHeight="36"
-                                  VerticalAlignment="Center"
-                                  VerticalContentAlignment="Center" HorizontalContentAlignment="Left"
-                                  SelectionChanged="OnAppSourceChanged"
-                                  AutomationProperties.Name="软件源"/>
-                        <Button x:Name="RefreshSourcesButton" Grid.Column="2" Content="重新读取来源"
-                                MinHeight="36" Padding="12,0" Margin="8,0,0,0"
-                                Click="OnRefreshServerSources"
-                                AutomationProperties.Name="重新读取服务端软件源列表"/>
-                    </Grid>
-                    <TextBlock Text="来源名称、默认来源、搜索方式与截图/视频/刷新等能力全部来自服务端；不可用的来源会标注并禁止选择。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,10,0,0"/>
-                    <Border Background="{DynamicResource Wam.AccentSoftBrush}" CornerRadius="7"
-                            Padding="12,10" Margin="0,16,0,0">
-                        <TextBlock x:Name="AppSourceStatusText" FontSize="12" TextWrapping="Wrap"
-                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-                    </Border>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="下载" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="设置并发线程数、网络超时、下载位置和 GitHub 加速镜像。更改会自动保存，并用于之后开始的下载。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,0"/>
-
-                    <Grid Margin="0,20,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="下载线程数" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <Border Grid.Column="1" Background="{DynamicResource Wam.AccentSoftBrush}"
-                                CornerRadius="5" Padding="9,3">
-                            <TextBlock x:Name="DownloadConnectionsValueText" FontSize="12"
-                                       Foreground="{DynamicResource Wam.AccentBrush}"/>
-                        </Border>
-                    </Grid>
-                    <Slider x:Name="DownloadConnectionsSlider" Minimum="1" Maximum="32" TickFrequency="1"
-                            SmallChange="1" IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
-                            Margin="0,6,0,0" ValueChanged="OnDownloadConnectionsValueChanged"
-                            AutomationProperties.Name="下载线程数"/>
-                    <TextBlock Text="建议使用 4 个线程；增加线程数不一定能提高速度。服务器不支持分段时自动使用单连接。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,0"/>
-
-                    <Grid Margin="0,22,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="下载超时" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <Border Grid.Column="1" Background="{DynamicResource Wam.AccentSoftBrush}"
-                                CornerRadius="5" Padding="9,3">
-                            <TextBlock x:Name="DownloadTimeoutValueText" FontSize="12"
-                                       Foreground="{DynamicResource Wam.AccentBrush}"/>
-                        </Border>
-                    </Grid>
-                    <Slider x:Name="DownloadTimeoutSlider" Minimum="10" Maximum="300"
-                            TickFrequency="10" SmallChange="10"
-                            IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
-                            Margin="0,6,0,0" ValueChanged="OnDownloadTimeoutValueChanged"
-                            AutomationProperties.Name="下载超时秒数"/>
-                    <TextBlock Text="连接下载服务器和每次读取数据的最长等待时间；超时后任务会停止并可在下载中心重试。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,0"/>
-
-                    <TextBlock Text="GitHub 加速镜像" FontWeight="SemiBold" Margin="0,24,0,0"/>
-                    <TextBlock Text="仅对 github.com、raw.githubusercontent.com 等 GitHub 下载链接生效。留空表示直连；使用第三方镜像会经过该服务器，应用仍会校验安装包。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,0"/>
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="GitHubMirrorTextBox" MinHeight="36" Padding="11,0"
-                                 VerticalContentAlignment="Center"
-                                 AutomationProperties.Name="GitHub 镜像前缀"/>
-                        <Button x:Name="ApplyGitHubMirrorButton" Grid.Column="1" Content="应用"
-                                MinHeight="36" Padding="15,0" Margin="8,0,0,0"
-                                Click="OnApplyGitHubMirror"/>
-                    </Grid>
-                    <ComboBox x:Name="GitHubMirrorPresetCombo" MinHeight="36" Margin="0,8,0,0"
-                              HorizontalContentAlignment="Left"
-                              SelectionChanged="OnGitHubMirrorPresetChanged"
-                              AutomationProperties.Name="GitHub 镜像预设">
-                        <ComboBoxItem Content="不使用（直连 GitHub）" Tag=""/>
-                        <ComboBoxItem Content="gh-proxy.com" Tag="https://gh-proxy.com/"/>
-                        <ComboBoxItem Content="ghfast.top" Tag="https://ghfast.top/"/>
-                        <ComboBoxItem Content="ghproxy.net" Tag="https://ghproxy.net/"/>
-                        <ComboBoxItem Content="ghp.ci" Tag="https://ghp.ci/"/>
-                        <ComboBoxItem Content="gh.llkk.cc" Tag="https://gh.llkk.cc/"/>
-                        <ComboBoxItem Content="mirror.ghproxy.com" Tag="https://mirror.ghproxy.com/"/>
+            <!-- 窗口背景（系统级亚克力 / 云母，按系统能力启用） -->
+            <ui:SettingsCard x:Name="BackdropStyleCard"
+                             Header="窗口背景"
+                             Description="导航栏与标题栏的透明效果，更改立即生效"
+                             Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="View"/>
+                </ui:SettingsCard.HeaderIcon>
+                <StackPanel VerticalAlignment="Center">
+                    <ComboBox x:Name="BackdropStyleCombo"
+                              Width="205"
+                              SelectionChanged="OnBackdropStyleComboSelectionChanged"
+                              AutomationProperties.Name="选择窗口背景风格">
+                        <ComboBoxItem Tag="None" Content="无（不透明）"/>
+                        <ComboBoxItem Tag="Acrylic" Content="亚克力"
+                                      x:Name="AcrylicBackdropItem"
+                                      ToolTip="Windows 10 1803 及以上可用"/>
+                        <ComboBoxItem Tag="Mica" Content="云母"
+                                      x:Name="MicaBackdropItem"
+                                      ToolTip="Windows 11 22H2 及以上可用"/>
+                        <ComboBoxItem Tag="Auto" Content="自动（跟随系统）"/>
                     </ComboBox>
-                    <TextBlock x:Name="GitHubMirrorStatusText" FontSize="12" Margin="0,8,0,0"
-                               TextWrapping="Wrap"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-
-                    <TextBlock Text="下载位置" FontWeight="SemiBold" Margin="0,24,0,0"/>
-                    <TextBlock Text="安装包保存到该文件夹；留空或点“恢复默认”时使用系统默认目录。更改只影响之后开始的下载，正在下载的任务保持原路径。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,0"/>
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="DownloadDirectoryTextBox" MinHeight="36" Padding="11,0"
-                                 VerticalContentAlignment="Center"
-                                 AutomationProperties.Name="下载目录"/>
-                        <Button Grid.Column="1" Content="浏览…" MinHeight="36" Padding="14,0" Margin="8,0,0,0"
-                                Click="OnBrowseDownloadDirectory"
-                                AutomationProperties.Name="浏览下载目录"/>
-                        <Button Grid.Column="2" Content="应用" MinHeight="36" Padding="15,0" Margin="8,0,0,0"
-                                Click="OnApplyDownloadDirectory"
-                                AutomationProperties.Name="应用下载目录"/>
-                    </Grid>
-                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                        <Button x:Name="OpenDownloadDirectoryButton" Content="打开下载目录" Padding="12,5"
-                                Click="OnOpenDownloadDirectory"
-                                AutomationProperties.Name="打开下载目录"/>
-                        <Button x:Name="ResetDownloadDirectoryButton" Content="恢复默认" Padding="12,5"
-                                Margin="8,0,0,0" Click="OnResetDownloadDirectory"
-                                AutomationProperties.Name="恢复默认下载目录"/>
-                    </StackPanel>
-                    <TextBlock x:Name="DownloadDirectoryStatusText" FontSize="12" Margin="0,8,0,0"
-                               TextWrapping="Wrap"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-
-                    <TextBlock x:Name="DownloadSummaryText" FontSize="12" Margin="0,14,0,0"
-                               TextWrapping="Wrap"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
                 </StackPanel>
-            </Border>
+            </ui:SettingsCard>
 
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="网络" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="控制安装包下载使用的代理和 HTTPS 证书校验。设置用于之后开始的下载；正在下载的任务保持启动时的配置。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,16"/>
+            <!-- 主题色：ComboBox 预设选择 + 内联自定义取色浮层 -->
+            <ui:SettingsCard Header="主题色"
+                             Description="应用于主按钮、选中框与进度条，深色模式下自动调整明度"
+                             Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Highlight"/>
+                </ui:SettingsCard.HeaderIcon>
 
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <ComboBox x:Name="AccentColorCombo"
+                              Width="205"
+                              SelectionChanged="OnAccentComboSelectionChanged"
+                              AutomationProperties.Name="选择主题色"/>
+
+                    <ui:DropDownButton x:Name="CustomAccentDropDownButton"
+                                       Content="自定义…"
+                                       Margin="8,0,0,0"
+                                       ToolTip="打开调色盘选择任意颜色"
+                                       AutomationProperties.Name="自定义主题色">
+                        <ui:DropDownButton.Flyout>
+                            <ui:Flyout x:Name="CustomAccentFlyout"
+                                       Placement="BottomEdgeAlignedRight"
+                                       Opened="OnCustomAccentFlyoutOpened"
+                                       Closed="OnCustomAccentFlyoutClosed">
+                                <StackPanel Width="264">
+                                    <StackPanel.Resources>
+                                        <ResourceDictionary>
+                                            <ResourceDictionary.MergedDictionaries>
+                                                <ResourceDictionary Source="pack://application:,,,/ColorPicker;component/Styles/DefaultColorPickerStyle.xaml"/>
+                                            </ResourceDictionary.MergedDictionaries>
+                                        </ResourceDictionary>
+                                    </StackPanel.Resources>
+
+                                    <colorpicker:StandardColorPicker x:Name="InlineAccentColorPicker"
+                                                                     Width="264"
+                                                                     Height="340"
+                                                                     ShowAlpha="False"
+                                                                     ColorChanged="OnInlineColorPickerChanged"/>
+
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+                                        <Button x:Name="CancelCustomAccentButton"
+                                                Content="取消" Padding="12,5" Margin="0,0,8,0"
+                                                Click="OnCancelCustomAccentClick"/>
+                                        <Button x:Name="ApplyCustomAccentButton"
+                                                Content="应用" Padding="14,5"
+                                                Style="{DynamicResource AccentButtonStyle}"
+                                                Click="OnApplyCustomAccentClick"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </ui:Flyout>
+                        </ui:DropDownButton.Flyout>
+                    </ui:DropDownButton>
+
+                    <Button x:Name="ResetAccentButton"
+                            Content="恢复默认"
+                            Margin="6,0,0,0"
+                            Visibility="Collapsed"
+                            Click="OnResetAccentClick"
+                            ToolTip="恢复为默认主题蓝"/>
+                </StackPanel>
+            </ui:SettingsCard>
+
+            <!-- 背景图（折叠低频项，右侧展示状态摘要） -->
+            <ui:SettingsExpander x:Name="BackgroundExpander"
+                                 Header="自定义背景图"
+                                 Description="使用本地图片铺满窗口底色（支持 PNG / JPG / BMP / GIF）"
+                                 IsExpanded="False">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Pictures"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="BackgroundSummaryText"
+                               FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="图片文件">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="BackgroundImageBox" Width="240" IsReadOnly="True"
+                                     VerticalContentAlignment="Center" FontSize="12"
+                                     AutomationProperties.Name="当前背景图路径"/>
+                            <Button Content="浏览…" Margin="8,0,0,0" Click="OnBrowseBackgroundImage"
+                                    AutomationProperties.Name="选择背景图"/>
+                            <Button x:Name="ClearBackgroundButton" Content="清除" Margin="6,0,0,0"
+                                    Click="OnClearBackgroundImage"
+                                    AutomationProperties.Name="恢复纯色背景"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="背景不透明度" Description="调低不透明度可提升卡片文字对比度">
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="BackgroundOpacitySlider" Width="180"
+                                    Minimum="5" Maximum="100" TickFrequency="1" SmallChange="1"
+                                    IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                    ValueChanged="OnBackgroundOpacityChanged"
+                                    AutomationProperties.Name="背景图不透明度"/>
+                            <TextBlock x:Name="BackgroundOpacityText" Width="44" TextAlignment="Right"
+                                       FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- ==================== 2. 服务与软件源 ==================== -->
+            <TextBlock Text="服务与软件源" Style="{StaticResource SettingsGroupHeaderStyle}"/>
+
+            <ui:SettingsCard Header="软件源" Description="可用来源与目录能力由当前服务端动态下发" Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Globe"/>
+                </ui:SettingsCard.HeaderIcon>
+                <StackPanel Orientation="Horizontal">
+                    <ComboBox x:Name="AppSourceCombo" Width="210"
+                              SelectionChanged="OnAppSourceChanged"
+                              AutomationProperties.Name="软件源"/>
+                    <Button x:Name="RefreshSourcesButton" Margin="8,0,0,0"
+                            Click="OnRefreshServerSources"
+                            ToolTip="重新从服务端读取软件源列表"
+                            AutomationProperties.Name="重新读取服务端软件源列表">
+                        <ui:SymbolIcon Symbol="Refresh"/>
+                    </Button>
+                </StackPanel>
+            </ui:SettingsCard>
+            <TextBlock x:Name="AppSourceStatusText" FontSize="12" Margin="4,0,4,10" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+
+            <ui:SettingsExpander Header="服务端地址"
+                                 Description="获取软件目录、详情与下载地址的后端 API 端点"
+                                 IsExpanded="False">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Link"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="BackendSummaryText" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="API 基地址" Description="支持 http/https，切换后会清空当前目录缓存">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="BackendBaseUrlTextBox" Width="250"
+                                     VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="服务端地址"/>
+                            <Button x:Name="ApplyBackendButton" Content="应用"
+                                    Style="{DynamicResource AccentButtonStyle}"
+                                    Margin="8,0,0,0" Click="OnApplyBackendBaseUrl"
+                                    AutomationProperties.Name="应用服务端地址"/>
+                            <Button x:Name="TestBackendButton" Content="测试" Margin="6,0,0,0"
+                                    Click="OnTestBackendBaseUrl"
+                                    AutomationProperties.Name="测试服务端连接"/>
+                            <Button x:Name="ResetBackendButton" Content="默认" Margin="6,0,0,0"
+                                    Click="OnResetBackendBaseUrl"
+                                    AutomationProperties.Name="恢复默认服务端地址"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard>
+                        <ui:SettingsCard.Header>
+                            <TextBlock x:Name="BackendStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                        </ui:SettingsCard.Header>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- ==================== 3. 下载与网络 ==================== -->
+            <TextBlock Text="下载与网络" Style="{StaticResource SettingsGroupHeaderStyle}"/>
+
+            <ui:SettingsCard Header="下载位置" Description="新下载的安装包将保存到此文件夹" Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Folder"/>
+                </ui:SettingsCard.HeaderIcon>
+                <StackPanel Orientation="Horizontal">
+                    <TextBox x:Name="DownloadDirectoryTextBox" Width="230"
+                             VerticalContentAlignment="Center"
+                             AutomationProperties.Name="下载目录"/>
+                    <Button Content="浏览…" Margin="6,0,0,0" Click="OnBrowseDownloadDirectory"
+                            AutomationProperties.Name="浏览下载目录"/>
+                    <Button Content="应用" Margin="6,0,0,0" Click="OnApplyDownloadDirectory"
+                            AutomationProperties.Name="应用下载目录"/>
+                    <Button x:Name="OpenDownloadDirectoryButton" Margin="6,0,0,0"
+                            Click="OnOpenDownloadDirectory" ToolTip="在资源管理器中打开"
+                            AutomationProperties.Name="打开下载目录">
+                        <ui:SymbolIcon Symbol="NewWindow"/>
+                    </Button>
+                    <Button x:Name="ResetDownloadDirectoryButton" Content="默认" Margin="6,0,0,0"
+                            Click="OnResetDownloadDirectory"
+                            AutomationProperties.Name="恢复默认下载目录"/>
+                </StackPanel>
+            </ui:SettingsCard>
+            <TextBlock x:Name="DownloadDirectoryStatusText" FontSize="12" Margin="4,0,4,10" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+
+            <!-- 下载传输参数（折叠摘要） -->
+            <ui:SettingsExpander Header="并发与超时"
+                                 Description="调整单任务分段线程数与网络读取超时时间"
+                                 IsExpanded="False"
+                                 Margin="0,0,0,8">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Download"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="DownloadPerfSummaryText" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="下载线程数" Description="建议 4 线程；服务器不支持分段时自动回退单连接">
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="DownloadConnectionsSlider" Width="180"
+                                    Minimum="1" Maximum="32" TickFrequency="1" SmallChange="1"
+                                    IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                                    VerticalAlignment="Center"
+                                    ValueChanged="OnDownloadConnectionsValueChanged"
+                                    AutomationProperties.Name="下载线程数"/>
+                            <Border Background="{DynamicResource Wam.AccentSoftBrush}"
+                                    CornerRadius="5" Padding="8,3" Margin="10,0,0,0">
+                                <TextBlock x:Name="DownloadConnectionsValueText" FontSize="12"
+                                           Foreground="{DynamicResource Wam.AccentBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="读取超时时间" Description="单次网络请求或读取数据的最长等待秒数">
+                        <StackPanel Orientation="Horizontal">
+                            <Slider x:Name="DownloadTimeoutSlider" Width="180"
+                                    Minimum="10" Maximum="300" TickFrequency="10" SmallChange="10"
+                                    IsSnapToTickEnabled="True" IsMoveToPointEnabled="True"
+                                    VerticalAlignment="Center"
+                                    ValueChanged="OnDownloadTimeoutValueChanged"
+                                    AutomationProperties.Name="下载超时秒数"/>
+                            <Border Background="{DynamicResource Wam.AccentSoftBrush}"
+                                    CornerRadius="5" Padding="8,3" Margin="10,0,0,0">
+                                <TextBlock x:Name="DownloadTimeoutValueText" FontSize="12"
+                                           Foreground="{DynamicResource Wam.AccentBrush}"/>
+                            </Border>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- GitHub 加速镜像（折叠摘要） -->
+            <ui:SettingsExpander Header="GitHub 加速镜像"
+                                 Description="仅为 github.com 下载链接配置反代前缀，安装包仍会执行哈希校验"
+                                 IsExpanded="False"
+                                 Margin="0,0,0,8">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Sync"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="GitHubMirrorSummaryText" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="常用预设">
+                        <ComboBox x:Name="GitHubMirrorPresetCombo" Width="240"
+                                  SelectionChanged="OnGitHubMirrorPresetChanged"
+                                  AutomationProperties.Name="GitHub 镜像预设">
+                            <ComboBoxItem Content="不使用（直连 GitHub）" Tag=""/>
+                            <ComboBoxItem Content="gh-proxy.com" Tag="https://gh-proxy.com/"/>
+                            <ComboBoxItem Content="ghfast.top" Tag="https://ghfast.top/"/>
+                            <ComboBoxItem Content="ghproxy.net" Tag="https://ghproxy.net/"/>
+                            <ComboBoxItem Content="ghp.ci" Tag="https://ghp.ci/"/>
+                            <ComboBoxItem Content="gh.llkk.cc" Tag="https://gh.llkk.cc/"/>
+                            <ComboBoxItem Content="mirror.ghproxy.com" Tag="https://mirror.ghproxy.com/"/>
+                        </ComboBox>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="自定义镜像前缀" Description="留空表示直连，支持 http/https">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="GitHubMirrorTextBox" Width="240"
+                                     VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="GitHub 镜像前缀"/>
+                            <Button x:Name="ApplyGitHubMirrorButton" Content="应用"
+                                    Margin="8,0,0,0" Click="OnApplyGitHubMirror"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard>
+                        <ui:SettingsCard.Header>
+                            <TextBlock x:Name="GitHubMirrorStatusText" FontSize="12" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                        </ui:SettingsCard.Header>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- 网络代理与证书安全（折叠摘要） -->
+            <ui:SettingsExpander Header="网络代理与证书校验"
+                                 Description="配置下载使用的 HTTP/HTTPS 代理服务器及 TLS 校验策略"
+                                 IsExpanded="False">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Permissions"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="ProxySummaryText" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="代理模式">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="SystemProxyOption" Tag="System" GroupName="DownloadProxy"
+                                         Content="跟随系统" Checked="OnProxyModeChecked" Margin="0,0,14,0"
+                                         AutomationProperties.Name="跟随系统代理"/>
+                            <RadioButton x:Name="DirectProxyOption" Tag="Direct" GroupName="DownloadProxy"
+                                         Content="直连" Checked="OnProxyModeChecked" Margin="0,0,14,0"
+                                         AutomationProperties.Name="直连下载"/>
+                            <RadioButton x:Name="CustomProxyOption" Tag="Custom" GroupName="DownloadProxy"
+                                         Content="自定义" Checked="OnProxyModeChecked"
+                                         AutomationProperties.Name="自定义代理"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard x:Name="CustomProxyCard" Header="代理服务器地址"
+                                     Description="示例：http://127.0.0.1:7890">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="CustomProxyTextBox" Width="230"
+                                     VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="自定义代理地址"/>
+                            <Button x:Name="SaveCustomProxyButton" Content="保存"
+                                    Margin="8,0,0,0" Click="OnSaveCustomProxy"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="忽略 HTTPS 证书错误"
+                                     Description="跳过安装包下载的 TLS 证书有效性验证">
+                        <ui:ToggleSwitch x:Name="IgnoreCertificateErrorsSwitch"
+                                         OnContent="开启" OffContent="关闭"
+                                         Toggled="OnIgnoreCertificateErrorsToggled"
+                                         AutomationProperties.Name="忽略证书错误"/>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard>
+                        <ui:SettingsCard.Header>
+                            <StackPanel>
+                                <TextBlock x:Name="ProxyStatusText" FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                                <ui:InfoBar x:Name="CertificateWarningBar"
+                                            Title="安全警告"
+                                            Message="跳过证书校验可能导致下载内容被中间人篡改，仅建议在本地调试时启用。"
+                                            Severity="Error"
+                                            IsClosable="False"
+                                            IsOpen="False"
+                                            Margin="0,8,0,0"/>
+                            </StackPanel>
+                        </ui:SettingsCard.Header>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- ==================== 4. 存储与诊断 ==================== -->
+            <TextBlock Text="存储与诊断" Style="{StaticResource SettingsGroupHeaderStyle}"/>
+
+            <!-- 本地缓存 -->
+            <ui:SettingsCard Header="目录与图标缓存" Margin="0,0,0,8">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Delete"/>
+                </ui:SettingsCard.HeaderIcon>
+                <ui:SettingsCard.Description>
                     <StackPanel>
-                        <RadioButton x:Name="SystemProxyOption" Tag="System" GroupName="DownloadProxy"
-                                     Checked="OnProxyModeChecked" Margin="0,0,0,8"
-                                     AutomationProperties.Name="跟随系统代理">
-                            <TextBlock Text="跟随系统代理" FontWeight="SemiBold"/>
-                        </RadioButton>
-                        <RadioButton x:Name="DirectProxyOption" Tag="Direct" GroupName="DownloadProxy"
-                                     Checked="OnProxyModeChecked" Margin="0,0,0,8"
-                                     AutomationProperties.Name="直连下载">
-                            <TextBlock Text="直连（不使用代理）" FontWeight="SemiBold"/>
-                        </RadioButton>
-                        <RadioButton x:Name="CustomProxyOption" Tag="Custom" GroupName="DownloadProxy"
-                                     Checked="OnProxyModeChecked"
-                                     AutomationProperties.Name="自定义代理">
-                            <TextBlock Text="自定义代理" FontWeight="SemiBold"/>
-                        </RadioButton>
+                        <TextBlock x:Name="CacheStatusText" TextWrapping="Wrap" FontSize="12"
+                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                        <TextBlock x:Name="CacheFilesText" FontSize="12" Margin="0,2,0,0"
+                                   Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
                     </StackPanel>
+                </ui:SettingsCard.Description>
+                <Button x:Name="ClearCacheButton" Content="清理缓存" Click="OnClearCache"/>
+            </ui:SettingsCard>
+            <TextBlock x:Name="CacheActionStatusText" FontSize="12" Margin="4,0,4,8"
+                       Visibility="Collapsed" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+            <TextBlock x:Name="CacheWarningText" FontSize="12" Margin="4,0,4,8"
+                       Visibility="Collapsed" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Wam.DangerBrush}"/>
 
-                    <Grid Margin="0,10,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="CustomProxyTextBox" MinHeight="36" Padding="11,0"
-                                 VerticalContentAlignment="Center"
-                                 AutomationProperties.Name="自定义代理地址"/>
-                        <Button x:Name="SaveCustomProxyButton" Grid.Column="1" Content="保存代理"
-                                MinHeight="36" Padding="15,0" Margin="8,0,0,0"
-                                Click="OnSaveCustomProxy"/>
-                    </Grid>
-                    <TextBlock Text="示例：http://127.0.0.1:7890。仅支持 HTTP/HTTPS 代理，代理认证信息可写在地址中。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,6,0,0"/>
-                    <TextBlock x:Name="ProxyStatusText" FontSize="12" Margin="0,8,0,0" TextWrapping="Wrap"
-                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-
-                    <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}" CornerRadius="8"
-                            Padding="12,10" Margin="0,18,0,0">
-                        <StackPanel>
-                            <CheckBox x:Name="IgnoreCertificateErrorsCheckBox"
-                                      Content="忽略安装包下载的 HTTPS 证书错误"
-                                      Checked="OnIgnoreCertificateErrorsChanged"
-                                      Unchecked="OnIgnoreCertificateErrorsChanged"
-                                      AutomationProperties.Name="忽略证书错误"/>
-                            <TextBlock x:Name="CertificateWarningText" FontSize="12" Margin="0,7,0,0"
-                                       TextWrapping="Wrap"
-                                       Text="危险：跳过证书校验可能让下载内容被篡改。只应在本地调试或明确信任网络环境时启用。"
-                                       Foreground="{DynamicResource Wam.DangerBrush}"/>
+            <!-- 配置文件与运行日志（折叠高级诊断项） -->
+            <ui:SettingsExpander Header="日志与配置文件"
+                                 Description="管理本地 settings.json 与故障排查日志输出级别"
+                                 IsExpanded="False">
+                <ui:SettingsExpander.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Document"/>
+                </ui:SettingsExpander.HeaderIcon>
+                <ui:SettingsExpander.Content>
+                    <TextBlock x:Name="LogSummaryText" FontSize="12"
+                               Foreground="{DynamicResource Wam.TextSecondaryBrush}"
+                               VerticalAlignment="Center"/>
+                </ui:SettingsExpander.Content>
+                <ui:SettingsExpander.Items>
+                    <ui:SettingsCard Header="启用文件日志" Description="关闭后仅向调试器输出，不再写入磁盘">
+                        <ui:ToggleSwitch x:Name="EnableFileLoggingSwitch"
+                                         OnContent="开启" OffContent="关闭"
+                                         Toggled="OnEnableFileLoggingToggled"
+                                         AutomationProperties.Name="启用文件日志"/>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="详细调试日志（Verbose）" Description="记录更细粒度的请求与状态信息">
+                        <ui:ToggleSwitch x:Name="VerboseLoggingSwitch"
+                                         OnContent="开启" OffContent="关闭"
+                                         Toggled="OnVerboseLoggingToggled"
+                                         AutomationProperties.Name="记录详细日志"/>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="日志目录">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="LogPathTextBox" Width="250" IsReadOnly="True" FontSize="12"
+                                     VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="日志文件路径"/>
+                            <Button x:Name="CopyLogPathButton" Content="复制" Margin="6,0,0,0"
+                                    Click="OnCopyLogPath"/>
+                            <Button x:Name="OpenLogFolderButton" Content="打开" Margin="6,0,0,0"
+                                    Click="OnOpenLogFolder"/>
                         </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard Header="配置文件路径">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="SettingsPathTextBox" Width="250" IsReadOnly="True" FontSize="12"
+                                     VerticalContentAlignment="Center"
+                                     AutomationProperties.Name="设置文件路径"/>
+                            <Button Content="复制" Margin="6,0,0,0" Click="OnCopySettingsPath"/>
+                            <Button Content="打开" Margin="6,0,0,0" Click="OnOpenSettingsDirectory"/>
+                        </StackPanel>
+                    </ui:SettingsCard>
+                    <ui:SettingsCard>
+                        <ui:SettingsCard.Header>
+                            <StackPanel>
+                                <TextBlock x:Name="LogStatusText" FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
+                                <TextBlock x:Name="ActionStatusText" FontSize="12" Margin="0,4,0,0"
+                                           Visibility="Collapsed" TextWrapping="Wrap"
+                                           Foreground="{DynamicResource Wam.AccentBrush}"/>
+                            </StackPanel>
+                        </ui:SettingsCard.Header>
+                    </ui:SettingsCard>
+                </ui:SettingsExpander.Items>
+            </ui:SettingsExpander>
+
+            <!-- ==================== 5. 关于 ==================== -->
+            <TextBlock Text="关于" Style="{StaticResource SettingsGroupHeaderStyle}"/>
+
+            <ui:SettingsCard Header="WinAppsManager" Description="Windows 应用商店与安装包管理工具">
+                <ui:SettingsCard.HeaderIcon>
+                    <ui:SymbolIcon Symbol="Help"/>
+                </ui:SettingsCard.HeaderIcon>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}"
+                            CornerRadius="5" Padding="9,4" Margin="0,0,8,0">
+                        <TextBlock x:Name="VersionText" FontSize="12" FontWeight="SemiBold"/>
+                    </Border>
+                    <Border Background="{DynamicResource Wam.AccentSoftBrush}"
+                            CornerRadius="5" Padding="9,4">
+                        <TextBlock x:Name="CatalogCountText" FontSize="12"
+                                   Foreground="{DynamicResource Wam.AccentBrush}"/>
                     </Border>
                 </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="设置存储" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="外观和下载偏好保存在当前 Windows 用户的本地目录中。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,14"/>
-                    <TextBox x:Name="SettingsPathTextBox" IsReadOnly="True" TextWrapping="Wrap"
-                             Padding="11,9" AutomationProperties.Name="设置文件路径"/>
-                    <WrapPanel Margin="0,14,0,0">
-                        <Button Content="复制路径" Click="OnCopySettingsPath" Padding="15,7" Margin="0,0,10,0"/>
-                        <Button Content="打开文件夹" Click="OnOpenSettingsDirectory" Padding="15,7"/>
-                    </WrapPanel>
-                    <TextBlock x:Name="ActionStatusText" Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                               Visibility="Collapsed" Margin="0,12,0,0"/>
-
-                    <Border Height="1" Background="{DynamicResource Wam.CardBorderBrush}" Margin="0,20,0,0"/>
-                    <TextBlock Text="日志" Style="{StaticResource Wam.SectionTitleTextBlockStyle}" Margin="0,18,0,0"/>
-                    <TextBlock Text="日志写到当前用户本地目录，用于排查问题；不记录下载链接和敏感配置。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,14"/>
-                    <TextBox x:Name="LogPathTextBox" IsReadOnly="True" TextWrapping="Wrap"
-                             Padding="11,9" AutomationProperties.Name="日志文件路径"/>
-                    <WrapPanel Margin="0,14,0,0">
-                        <Button x:Name="OpenLogFolderButton" Content="打开日志目录" Click="OnOpenLogFolder"
-                                Padding="15,7" Margin="0,0,10,0"
-                                AutomationProperties.Name="打开日志目录"/>
-                        <Button x:Name="CopyLogPathButton" Content="复制路径" Click="OnCopyLogPath"
-                                Padding="15,7" AutomationProperties.Name="复制日志目录路径"/>
-                    </WrapPanel>
-                    <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}" CornerRadius="8"
-                            Padding="12,10" Margin="0,14,0,0">
-                        <StackPanel>
-                            <CheckBox x:Name="EnableFileLoggingCheckBox" Content="启用文件日志"
-                                      Checked="OnEnableFileLoggingChanged" Unchecked="OnEnableFileLoggingChanged"
-                                      AutomationProperties.Name="启用文件日志"/>
-                            <TextBlock Text="关闭后不再写入日志文件，只在调试器中保留输出；排查问题后建议重新开启。"
-                                       Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                                       Margin="0,6,0,0" TextWrapping="Wrap"/>
-                            <CheckBox x:Name="VerboseLoggingCheckBox" Content="记录详细日志（Verbose）"
-                                      Checked="OnVerboseLoggingChanged" Unchecked="OnVerboseLoggingChanged"
-                                      Margin="0,14,0,0" AutomationProperties.Name="记录详细日志"/>
-                            <TextBlock Text="记录更细的调试信息，日志文件增长更快；仅在排查问题时开启，关闭文件日志时该选项不生效。"
-                                       Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                                       Margin="0,6,0,0" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
-                    <TextBlock x:Name="LogStatusText" Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                               Margin="0,12,0,0" TextWrapping="Wrap"/>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Wam.CardBorderStyle}" Margin="0,0,0,18">
-                <StackPanel>
-                    <TextBlock Text="缓存" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <TextBlock Text="软件资料缓存 5 分钟；网络不可用时可显示 24 小时内的缓存。图标保存在本机，清理后重新获取。"
-                               Style="{StaticResource Wam.SecondaryTextBlockStyle}" Margin="0,7,0,14"/>
-                    <TextBlock x:Name="CacheStatusText" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                    <TextBlock x:Name="CacheFilesText" Style="{StaticResource Wam.SecondaryTextBlockStyle}"/>
-                    <TextBox x:Name="CachePathTextBox" IsReadOnly="True" TextWrapping="Wrap" Padding="11,9" Margin="0,14,0,0"
-                             AutomationProperties.Name="缓存目录"/>
-                    <Button x:Name="ClearCacheButton" Content="清理目录与图标缓存" Click="OnClearCache" Padding="15,8"
-                            HorizontalAlignment="Left" Margin="0,14,0,0"/>
-                    <TextBlock x:Name="CacheActionStatusText" Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                               Visibility="Collapsed" Margin="0,12,0,0"/>
-                    <TextBlock x:Name="CacheWarningText" Style="{StaticResource Wam.SecondaryTextBlockStyle}"
-                               Visibility="Collapsed" Margin="0,12,0,0"/>
-                </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Wam.CardBorderStyle}">
-                <StackPanel>
-                    <TextBlock Text="关于应用" Style="{StaticResource Wam.SectionTitleTextBlockStyle}"/>
-                    <Grid Margin="0,18,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="100"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
-                        <TextBlock Text="应用名称" Foreground="{DynamicResource Wam.TextSecondaryBrush}"/>
-                        <TextBlock Grid.Column="1" Text="WinAppsManager" TextWrapping="Wrap"/>
-                        <TextBlock Grid.Row="1" Text="应用版本" Foreground="{DynamicResource Wam.TextSecondaryBrush}" Margin="0,13,0,0"/>
-                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="VersionText" Margin="0,13,0,0"/>
-                        <TextBlock Grid.Row="2" Text="软件目录" Foreground="{DynamicResource Wam.TextSecondaryBrush}" Margin="0,13,0,0"/>
-                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="CatalogCountText" Margin="0,13,0,0"/>
-                    </Grid>
-                </StackPanel>
-            </Border>
+            </ui:SettingsCard>
         </StackPanel>
     </ScrollViewer>
 </ui:Page>

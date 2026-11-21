@@ -112,6 +112,7 @@
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
                                         <Border Width="22" Height="22" CornerRadius="6"
+                                                Background="{DynamicResource Wam.IconPlateBrush}"
                                                 VerticalAlignment="Center" Margin="0,0,9,0">
                                             <Grid>
                                                 <Border CornerRadius="6" Background="{Binding AvatarBackground}">

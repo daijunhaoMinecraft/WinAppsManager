@@ -7,7 +7,7 @@
     - ReleaseTitle 支持 {tag} / {version} 占位符；ReleaseLatest 控制是否标记为 Latest。
   -->
   <PropertyGroup>
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <ReleaseTagPrefix>v</ReleaseTagPrefix>
     <ReleaseTitle>WinAppsManager {tag}</ReleaseTitle>
     <ReleaseNotesFile>Release.md</ReleaseNotesFile>

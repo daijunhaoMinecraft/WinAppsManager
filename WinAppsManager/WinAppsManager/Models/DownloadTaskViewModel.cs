@@ -30,6 +30,7 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
     private string _signatureStatusText = string.Empty;
     private string _signatureDetailText = string.Empty;
     private bool _isSelected;
+    private bool _canResume;
     private CancellationTokenSource? _cancellation;
 
     public DownloadTaskViewModel(AppItem app)
@@ -123,6 +124,14 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
             task._statusMessage = "下载失败，请重试。";
         }
 
+        // 重启后仍能“继续下载”：磁盘上还留着分片时才这么说。
+        task._canResume = task._phase is InstallerDownloadPhase.Cancelled or InstallerDownloadPhase.Failed
+                          && task.HasResumeState();
+        if (task._canResume && task._phase == InstallerDownloadPhase.Cancelled)
+        {
+            task._statusMessage = "已保留未完成的下载，可点击“继续下载”接着下。";
+        }
+
         return task;
     }
     public DateTimeOffset StartedAt { get; private set; }
@@ -143,6 +152,17 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
 
     /// <summary>Terminal download with a saved installer path; can be selected for file deletion.</summary>
     public bool CanSelectForDeletion => IsCompleted && !string.IsNullOrWhiteSpace(_filePath);
+
+    /// <summary>
+    /// 下载中心每一行都可以勾选：已结束的删除安装包 / 记录，正在下载的会先被停止再删除。
+    /// </summary>
+    public bool CanSelect => true;
+
+    /// <summary>已结束、但磁盘上还留着未完成分片与元数据：可以“继续下载”。</summary>
+    public bool CanResume => _canResume;
+
+    /// <summary>“重新下载 / 继续下载”按钮的文案。</summary>
+    public string RetryButtonText => _canResume ? "继续下载" : "重新下载";
 
     /// <summary>Checkbox state used by the download center's multi-select delete action.</summary>
     public bool IsSelected
@@ -324,7 +344,9 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
             _phase = InstallerDownloadPhase.Failed;
             _bytesPerSecond = 0;
             _remaining = null;
-            _statusMessage = message;
+            // 失败（而不是超时/校验失败）也可能留下可续传的分片。
+            _canResume = HasResumeState();
+            _statusMessage = _canResume ? $"{message} 已保留未完成的下载，可继续下载。" : message;
             foreach (var segment in Segments)
             {
                 segment.FinishIncomplete(InstallerDownloadSegmentState.Failed);
@@ -347,7 +369,9 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
             _phase = InstallerDownloadPhase.Cancelled;
             _bytesPerSecond = 0;
             _remaining = null;
-            _statusMessage = string.Empty;
+            // 下载服务会保留单连接写出的 .part；留着就提示用户可以直接接着下。
+            _canResume = HasResumeState();
+            _statusMessage = _canResume ? "已保留未完成的下载，可点击“继续下载”接着下。" : string.Empty;
             foreach (var segment in Segments)
             {
                 segment.FinishIncomplete(InstallerDownloadSegmentState.Cancelled);
@@ -355,6 +379,10 @@ public sealed class DownloadTaskViewModel : INotifyPropertyChanged
         }
         NotifyAll();
     }
+
+    /// <summary>磁盘上是否留有待续传的分片（<c>{文件名}.part</c> + 元数据）。</summary>
+    private bool HasResumeState()
+        => InstallerDownloadService.HasResumeState(_fileName, AppSettingsService.ResolvedDownloadDirectory);
 
     internal void RequestCancel()
     {

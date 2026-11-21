@@ -29,6 +29,13 @@
             <SolidColorBrush x:Key="Wam.SuccessBrush" Color="#1A7F37"/>
             <SolidColorBrush x:Key="Wam.DangerBrush" Color="#C42B1C"/>
             <SolidColorBrush x:Key="Wam.ProgressTrackBrush" Color="#C9D3E0"/>
+            <!-- 应用图标底板：纯白 / 透明的图标在浅色背景上几乎看不见，统一垫一层淡灰底。 -->
+            <SolidColorBrush x:Key="Wam.IconPlateBrush" Color="#E3E8F0"/>
+            <!-- Windows 10 系统级亚克力（Acrylic10）的着色：由 AppSettingsService 按主题改写。
+                 iNKORE 的实现会把这里的 alpha 再乘 0.8，因此这里用接近不透明的底色。 -->
+            <Color x:Key="Wam.Acrylic10TintColor">#F2F5F7FA</Color>
+            <!-- 拖动/缩放期间临时替换亚克力的窗口底色：取亚克力在深色/浅色背景上的中间值，减小切换时的跳动。 -->
+            <SolidColorBrush x:Key="Wam.MoveBackgroundBrush" Color="#DCE0E1"/>
 
             <Style x:Key="Wam.PageTitleTextBlockStyle" TargetType="TextBlock">
                 <Setter Property="FontSize" Value="28"/>

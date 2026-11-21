@@ -55,12 +55,12 @@
                 <Button x:Name="CancelAllButton" Content="全部取消" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="CancelAllButton_OnClick"
                         AutomationProperties.Name="取消全部下载"/>
-                <Button x:Name="SelectAllInstallersButton" Content="全选安装包" Height="36" Padding="13,0" Margin="0,0,8,0"
+                <Button x:Name="SelectAllInstallersButton" Content="全选" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="SelectAllInstallersButton_OnClick"
-                        AutomationProperties.Name="全选可删除的安装包"/>
-                <Button x:Name="DeleteInstallersButton" Content="删除选中安装包" Height="36" Padding="13,0" Margin="0,0,8,0"
+                        AutomationProperties.Name="全选下载任务"/>
+                <Button x:Name="DeleteInstallersButton" Content="删除选中" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" IsEnabled="False" Click="DeleteInstallersButton_OnClick"
-                        AutomationProperties.Name="删除选中的安装包"/>
+                        AutomationProperties.Name="删除选中的下载任务"/>
                 <Button x:Name="ClearFinishedButton" Content="清除已结束" Height="36" Padding="13,0" Margin="0,0,8,0"
                         Visibility="Collapsed" Click="ClearFinishedButton_OnClick"
                         AutomationProperties.Name="清除已结束的下载"/>
@@ -89,11 +89,10 @@
                                         <CheckBox Grid.Column="0"
                                                   MinWidth="0" Focusable="False"
                                                   IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                                  Visibility="{Binding CanSelectForDeletion, Converter={StaticResource BoolToVisibility}}"
                                                   Checked="InstallerSelection_OnChanged"
                                                   Unchecked="InstallerSelection_OnChanged"
                                                   VerticalAlignment="Top" Margin="0,8,10,0"
-                                                  AutomationProperties.Name="选择安装包"/>
+                                                  AutomationProperties.Name="选择该下载任务"/>
 
                                         <Border Grid.Column="1" Width="44" Height="44" CornerRadius="10"
                                                 VerticalAlignment="Top" Margin="0,0,14,0">
@@ -348,7 +347,7 @@
                                         <Button Content="打开下载文件夹" Padding="12,6" Margin="0,0,8,4"
                                                 Click="OpenDownloadFolderButton_OnClick"
                                                 Visibility="{Binding CanOpenFolder, Converter={StaticResource BoolToVisibility}}"/>
-                                        <Button Content="重新下载" Padding="12,6" Margin="0,0,8,4"
+                                        <Button Content="{Binding RetryButtonText}" Padding="12,6" Margin="0,0,8,4"
                                                 Click="RetryTaskButton_OnClick"
                                                 Visibility="{Binding CanRetry, Converter={StaticResource BoolToVisibility}}"/>
                                         <Button Content="移除记录" Padding="12,6" Margin="0,0,0,4"

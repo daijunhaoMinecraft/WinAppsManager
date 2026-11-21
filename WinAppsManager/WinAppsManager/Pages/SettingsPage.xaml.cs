@@ -7,9 +7,11 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
-using iNKORE.UI.WPF.Modern;
+using System.Windows.Data;
+using System.Windows.Threading;
 using WinAppsManager.Models;
 using WinAppsManager.Services;
+using Media = System.Windows.Media;
 using Page = iNKORE.UI.WPF.Modern.Controls.Page;
 
 namespace WinAppsManager.Pages;
@@ -19,30 +21,53 @@ public partial class SettingsPage : Page
     private bool _isSynchronizing = true;
     private bool _isSwitchingSource;
     private bool _isPageActive;
-
-    /// <summary>缓存统计的请求代号：只应用最后一次请求的结果，避免连续刷新时旧结果覆盖新结果。</summary>
     private int _cacheStatisticsGeneration;
 
-    /// <summary>服务端返回的软件源列表（<c>GET /api/v1/sources</c>）；客户端不维护本地来源表。</summary>
     private IReadOnlyList<SourceInfo> _serverSources = Array.Empty<SourceInfo>();
     private bool _serverSourcesLoaded;
+
+    // 调色盘 Flyout 实时预览与取消回滚状态
+    private string _accentBeforeFlyout = string.Empty;
+    private string _pendingCustomAccentHex = string.Empty;
+    private bool _isUpdatingColorPicker;
+    
+    // 主题色 ComboBox 动态自定义项引用
+    private ComboBoxItem? _customAccentComboItem;
+    private Border? _customAccentComboSwatch;
+    private TextBlock? _customAccentComboHexText;
+
+    private readonly DispatcherTimer _backgroundOpacityTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(300)
+    };
 
     public SettingsPage()
     {
         InitializeComponent();
+        PopulateAccentComboItems();
+
+        _backgroundOpacityTimer.Tick += (_, _) =>
+        {
+            _backgroundOpacityTimer.Stop();
+            ApplyBackgroundOpacity();
+        };
+
         DownloadConnectionsSlider.Minimum = InstallerDownloadOptions.MinimumConnections;
         DownloadConnectionsSlider.Maximum = InstallerDownloadOptions.MaximumConnections;
         DownloadConnectionsSlider.TickFrequency = 1;
         DownloadConnectionsSlider.SmallChange = 1;
+
         DownloadTimeoutSlider.Minimum = InstallerDownloadOptions.MinimumTimeoutSeconds;
         DownloadTimeoutSlider.Maximum = InstallerDownloadOptions.MaximumTimeoutSeconds;
         DownloadTimeoutSlider.TickFrequency = InstallerDownloadOptions.TimeoutStepSeconds;
         DownloadTimeoutSlider.SmallChange = InstallerDownloadOptions.TimeoutStepSeconds;
+
         AppSettingsService.Initialize();
         SettingsPathTextBox.Text = AppSettingsService.SettingsFilePath;
-        CachePathTextBox.Text = AppCatalogService.CacheDirectory;
+
         var version = Assembly.GetExecutingAssembly().GetName().Version;
-        VersionText.Text = version is null ? "未知" : $"v{version.Major}.{version.Minor}.{version.Build}";
+        VersionText.Text = version is null ? "未知版本" : $"v{version.Major}.{version.Minor}.{version.Build}";
+
         ApplySourceComboItems(null);
         RefreshSettings();
         RefreshCacheStatus();
@@ -56,6 +81,7 @@ public partial class SettingsPage : Page
         AppSettingsService.SettingsChanged += OnSettingsChanged;
         AppCatalogService.CatalogChanged += OnCatalogChanged;
         AppCatalogService.CacheChanged += OnCacheChanged;
+
         RefreshCatalogCount();
         RefreshSettings();
         RefreshCacheStatus();
@@ -72,6 +98,10 @@ public partial class SettingsPage : Page
         AppCatalogService.CacheChanged -= OnCacheChanged;
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // 缓存状态
+    // ---------------------------------------------------------------------------------------------
+
     private void OnCacheChanged(object? sender, EventArgs args)
     {
         if (!Dispatcher.CheckAccess())
@@ -86,15 +116,11 @@ public partial class SettingsPage : Page
     {
         CacheStatusText.Text = AppCatalogService.CacheDescription;
         var state = AppCatalogService.CacheState;
-        CacheWarningText.Text = string.Join(" ", new[] { state.NetworkError, state.Warning }.Where(text => !string.IsNullOrWhiteSpace(text)));
+        CacheWarningText.Text = string.Join(" ", new[] { state.NetworkError, state.Warning }.Where(t => !string.IsNullOrWhiteSpace(t)));
         CacheWarningText.Visibility = CacheWarningText.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         _ = RefreshCacheStatisticsAsync();
     }
 
-    /// <summary>
-    /// 缓存统计要逐个枚举并读取缓存目录里的文件属性（图标缓存可达数千个文件）。
-    /// 这里放到线程池执行：在 UI 线程上同步统计会阻塞上百毫秒，页面切换动画因此卡在某一帧。
-    /// </summary>
     private async Task RefreshCacheStatisticsAsync()
     {
         int generation = ++_cacheStatisticsGeneration;
@@ -106,7 +132,7 @@ public partial class SettingsPage : Page
                 return;
             }
 
-            CacheFilesText.Text = $"目录文件 {statistics.CatalogFiles} 个 · 图标 {statistics.IconFiles} 个 · 占用 {statistics.Bytes / 1024.0:0.0} KB";
+            CacheFilesText.Text = $"目录 {statistics.CatalogFiles} 项 · 图标 {statistics.IconFiles} 项 · 共 {statistics.Bytes / 1024.0:0.0} KB";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -124,14 +150,19 @@ public partial class SettingsPage : Page
         {
             var result = await AppCatalogService.ClearCacheAsync();
             CacheActionStatusText.Text = result.Errors.Count == 0
-                ? "目录、图标与服务版本缓存已清理。重新打开软件列表即可获取新资料。"
+                ? "目录、图标与服务版本缓存已清理。"
                 : string.Join(" ", result.Errors);
             RefreshCacheStatus();
             RefreshCatalogCount();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or OperationCanceledException)
-        { CacheActionStatusText.Text = "缓存暂时无法完全清理，请稍后重试。"; }
-        finally { ClearCacheButton.IsEnabled = true; }
+        {
+            CacheActionStatusText.Text = "缓存暂时无法完全清理，请稍后重试。";
+        }
+        finally
+        {
+            ClearCacheButton.IsEnabled = true;
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -147,14 +178,13 @@ public partial class SettingsPage : Page
             BackendBaseUrlTextBox.Text = current;
         }
 
+        BackendSummaryText.Text = isDefault ? "默认在线服务" : current;
         SetStatusText(BackendStatusText,
             (isDefault ? "当前使用默认服务端：" : "当前使用自定义服务端：") + current);
     }
 
     private async void OnApplyBackendBaseUrl(object sender, RoutedEventArgs args)
-    {
-        await ApplyBackendBaseUrlAsync(BackendBaseUrlTextBox.Text);
-    }
+        => await ApplyBackendBaseUrlAsync(BackendBaseUrlTextBox.Text);
 
     private async Task ApplyBackendBaseUrlAsync(string url)
     {
@@ -170,7 +200,7 @@ public partial class SettingsPage : Page
             RefreshCatalogCount();
             await LoadServerSourcesAsync();
             SetStatusText(BackendStatusText,
-                $"服务端地址已更新：{AppCatalogService.BackendBaseUrl} 软件目录已清空，重新打开“软件列表”即可从新服务端加载。");
+                $"服务端已切换至 {AppCatalogService.BackendBaseUrl}，打开“软件列表”即可重新加载。");
         }
         catch (ArgumentException error)
         {
@@ -213,6 +243,10 @@ public partial class SettingsPage : Page
         await ApplyBackendBaseUrlAsync(AppSettingsService.DefaultBackendBaseUrl);
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // 软件源
+    // ---------------------------------------------------------------------------------------------
+
     private void OnCatalogChanged(object? sender, EventArgs args)
     {
         if (!Dispatcher.CheckAccess())
@@ -220,20 +254,16 @@ public partial class SettingsPage : Page
             Dispatcher.BeginInvoke(new Action(RefreshCatalogCount));
             return;
         }
-
         RefreshCatalogCount();
     }
 
     private void RefreshCatalogCount()
     {
         CatalogCountText.Text = AppCatalogService.HasLoaded
-            ? $"已加载 {AppCatalogService.Apps.Count} 款软件" : "目录尚未加载";
+            ? $"已加载 {AppCatalogService.Apps.Count} 款软件"
+            : "目录未加载";
     }
 
-    /// <summary>
-    /// 按服务端返回的源重建下拉框：名称、默认源、可用状态全部来自 <c>/api/v1/sources</c>，
-    /// 客户端不硬编码任何来源 ID/名称；服务端新增来源会自动出现在列表里。
-    /// </summary>
     private void ApplySourceComboItems(IReadOnlyList<SourceInfo>? sources)
     {
         _isSynchronizing = true;
@@ -245,16 +275,13 @@ public partial class SettingsPage : Page
                 foreach (var source in sources)
                 {
                     string id = source.Id?.Trim() ?? string.Empty;
-                    if (id.Length == 0)
-                    {
-                        continue;
-                    }
+                    if (id.Length == 0) continue;
 
                     string name = string.IsNullOrWhiteSpace(source.Name) ? id : source.Name!.Trim();
                     var item = new ComboBoxItem
                     {
                         Content = source.Enabled
-                            ? source.IsDefault ? $"{name}（默认）" : name
+                            ? (source.IsDefault ? $"{name}（默认）" : name)
                             : $"{name}（不可用）",
                         Tag = id,
                         IsEnabled = source.Enabled
@@ -263,20 +290,18 @@ public partial class SettingsPage : Page
                     {
                         item.ToolTip = source.Description.Trim();
                     }
-
                     AppSourceCombo.Items.Add(item);
                 }
             }
 
             if (AppSourceCombo.Items.Count == 0)
             {
-                // 服务端不可用：只显示当前已保存/已解析的来源 ID，不伪造本地来源列表。
                 string currentId = AppCatalogService.CurrentSourceId;
                 if (currentId.Length > 0)
                 {
                     AppSourceCombo.Items.Add(new ComboBoxItem
                     {
-                        Content = $"{AppCatalogService.SourceDisplayName}（服务端不可用）",
+                        Content = $"{AppCatalogService.SourceDisplayName}（离线）",
                         Tag = currentId,
                         IsEnabled = false
                     });
@@ -308,7 +333,6 @@ public partial class SettingsPage : Page
                 return;
             }
         }
-
         AppSourceCombo.SelectedIndex = -1;
     }
 
@@ -320,10 +344,7 @@ public partial class SettingsPage : Page
         }
 
         string sourceId = item.Tag as string ?? string.Empty;
-        if (sourceId.Length == 0)
-        {
-            return;
-        }
+        if (sourceId.Length == 0) return;
 
         if (string.Equals(sourceId, AppCatalogService.CurrentSourceId, StringComparison.OrdinalIgnoreCase))
         {
@@ -334,15 +355,14 @@ public partial class SettingsPage : Page
         await SwitchAppSourceAsync(sourceId);
     }
 
-    /// <summary>切换软件源：保存设置、清空并重建按来源隔离的目录缓存；失败时回退到原软件源。</summary>
     private async Task SwitchAppSourceAsync(string sourceId)
     {
         string previous = AppCatalogService.CurrentSourceId;
         string name = SourceNameOf(sourceId);
         _isSwitchingSource = true;
         AppSourceCombo.IsEnabled = false;
-        AppLogService.Info($"用户请求切换软件源：{previous} → {sourceId}（{name}）。");
-        SetStatusText(AppSourceStatusText, $"正在切换到{name}并重新加载软件目录…");
+        SetStatusText(AppSourceStatusText, $"正在切换到 {name} 并加载目录…");
+
         try
         {
             await AppCatalogService.SwitchSourceAsync(sourceId);
@@ -353,32 +373,19 @@ public partial class SettingsPage : Page
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            // 切换失败时不能改变当前软件源：恢复设置并让下拉框重新显示原来源。
-            try
-            {
-                AppSettingsService.SetSourceId(previous);
-            }
+            try { AppSettingsService.SetSourceId(previous); }
             catch (Exception restoreError) when (restoreError is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 Debug.WriteLine(restoreError);
             }
 
-            string previousName = AppCatalogService.SourceDisplayName;
-            AppLogService.Error(
-                $"切换软件源失败：{previous} → {sourceId}（{name}），已保留{previousName}。" +
-                $"{error.GetType().Name}：{error.Message}",
-                error);
             SetStatusText(AppSourceStatusText,
-                $"切换到{name}失败：{error.Message} 已保留{previousName}。", isError: true);
+                $"切换到 {name} 失败：{error.Message}（已保留 {AppCatalogService.SourceDisplayName}）",
+                isError: true);
+
             _isSynchronizing = true;
-            try
-            {
-                SelectAppSource(AppCatalogService.CurrentSourceId);
-            }
-            finally
-            {
-                _isSynchronizing = false;
-            }
+            try { SelectAppSource(AppCatalogService.CurrentSourceId); }
+            finally { _isSynchronizing = false; }
 
             RefreshCatalogCount();
         }
@@ -389,30 +396,19 @@ public partial class SettingsPage : Page
         }
     }
 
-    /// <summary>来源显示名（来自服务端列表）；列表里没有时回退为来源 ID。</summary>
     private string SourceNameOf(string sourceId)
     {
-        var info = _serverSources.FirstOrDefault(source =>
-            string.Equals(source.Id, sourceId, StringComparison.OrdinalIgnoreCase));
+        var info = _serverSources.FirstOrDefault(s => string.Equals(s.Id, sourceId, StringComparison.OrdinalIgnoreCase));
         return string.IsNullOrWhiteSpace(info?.Name) ? sourceId : info!.Name!.Trim();
     }
 
     private void RefreshAppSourceStatus()
     {
-        if (_isSwitchingSource)
-        {
-            return;
-        }
+        if (_isSwitchingSource) return;
 
         _isSynchronizing = true;
-        try
-        {
-            SelectAppSource(AppCatalogService.CurrentSourceId);
-        }
-        finally
-        {
-            _isSynchronizing = false;
-        }
+        try { SelectAppSource(AppCatalogService.CurrentSourceId); }
+        finally { _isSynchronizing = false; }
 
         SetStatusText(AppSourceStatusText, BuildAppSourceStatusText());
     }
@@ -423,43 +419,26 @@ public partial class SettingsPage : Page
         if (currentId.Length == 0)
         {
             return _serverSourcesLoaded
-                ? "服务端没有可用的软件源，请稍后点击“重新读取来源”。"
-                : "暂时无法从服务端获取软件源列表；可用来源由服务端 /api/v1/sources 决定。";
-        }
-
-        string name = AppCatalogService.SourceDisplayName;
-        string loaded = AppCatalogService.HasLoaded
-            ? $"已加载 {AppCatalogService.Apps.Count} 款软件。"
-            : "打开“软件列表”后会加载该源的软件目录。";
-        string text = $"当前软件源：{name}（{currentId}）。{loaded}";
-
-        var currentInfo = _serverSources.FirstOrDefault(item =>
-            string.Equals(item.Id, currentId, StringComparison.OrdinalIgnoreCase));
-        if (currentInfo is { AppCount: > 0 })
-        {
-            text += $"（服务端报告 {currentInfo.AppCount} 款）";
+                ? "服务端暂无可用软件源，请稍后刷新。"
+                : "暂时无法连接服务端获取软件源列表。";
         }
 
         string capabilities = DescribeCapabilities(AppCatalogService.CurrentCapabilities);
-        if (capabilities.Length > 0)
-        {
-            text += $" 支持：{capabilities}。";
-        }
+        string capSuffix = capabilities.Length > 0 ? $" · 支持：{capabilities}" : string.Empty;
 
-        if (!_serverSourcesLoaded)
-        {
-            text += " 暂时无法从服务端获取软件源列表，已保留当前来源。";
-        }
+        var currentInfo = _serverSources.FirstOrDefault(item =>
+            string.Equals(item.Id, currentId, StringComparison.OrdinalIgnoreCase));
+        string countSuffix = currentInfo is { AppCount: > 0 } ? $"（共 {currentInfo.AppCount} 款）" : string.Empty;
 
+        string text = $"当前源：{AppCatalogService.SourceDisplayName}{countSuffix}{capSuffix}";
+        if (!_serverSourcesLoaded) text += "（离线模式）";
         if (!string.IsNullOrWhiteSpace(AppCatalogService.SourceFallbackNote))
         {
-            text += " " + AppCatalogService.SourceFallbackNote;
+            text += $" · {AppCatalogService.SourceFallbackNote}";
         }
-
         return text;
     }
 
-    /// <summary>把来源能力翻译成简短中文，供设置页状态行展示（不按来源 ID 判断）。</summary>
     private static string DescribeCapabilities(SourceCapabilities capabilities)
     {
         var names = new List<string>();
@@ -469,13 +448,10 @@ public partial class SettingsPage : Page
         if (capabilities.Details) names.Add("详情");
         if (capabilities.Download) names.Add("下载");
         if (capabilities.Screenshots) names.Add("截图");
-        if (capabilities.Cover) names.Add("封面");
         if (capabilities.Video) names.Add("视频");
-        if (capabilities.Refresh) names.Add("刷新");
-        return string.Join("、", names);
+        return string.Join(" / ", names);
     }
 
-    /// <summary>从当前服务端加载软件源列表；失败时保留当前来源并提示，不影响已保存的设置。</summary>
     private async Task LoadServerSourcesAsync(bool forceRefresh = false)
     {
         RefreshSourcesButton.IsEnabled = false;
@@ -494,7 +470,6 @@ public partial class SettingsPage : Page
             _serverSourcesLoaded = false;
             ApplySourceComboItems(null);
             RefreshAppSourceStatus();
-            AppLogService.Warn($"获取服务端软件源列表失败：{error.GetType().Name}：{error.Message}");
         }
         finally
         {
@@ -502,12 +477,15 @@ public partial class SettingsPage : Page
         }
     }
 
-    private async void OnRefreshServerSources(object sender, RoutedEventArgs args) =>
-        await LoadServerSourcesAsync(forceRefresh: true);
+    private async void OnRefreshServerSources(object sender, RoutedEventArgs args)
+        => await LoadServerSourcesAsync(forceRefresh: true);
+
+    // ---------------------------------------------------------------------------------------------
+    // 全局设置状态同步
+    // ---------------------------------------------------------------------------------------------
 
     private void OnSettingsChanged(object? sender, EventArgs args)
     {
-        // AppSettingsService 可能在后台线程保存设置（例如软件源切换），WPF 控件只能在 UI 线程刷新。
         if (!Dispatcher.CheckAccess())
         {
             _ = Dispatcher.BeginInvoke(new Action(() => OnSettingsChanged(sender, args)));
@@ -520,10 +498,7 @@ public partial class SettingsPage : Page
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
-            AppLogService.Error(
-                $"刷新设置界面失败（线程 {Environment.CurrentManagedThreadId}）：" +
-                $"{error.GetType().Name}：{error.Message}",
-                error);
+            AppLogService.Error($"刷新设置界面失败：{error.Message}", error);
         }
     }
 
@@ -533,30 +508,83 @@ public partial class SettingsPage : Page
         _isSynchronizing = true;
         try
         {
-            SystemThemeOption.IsChecked = current.Theme == ThemePreference.System;
-            LightThemeOption.IsChecked = current.Theme == ThemePreference.Light;
-            DarkThemeOption.IsChecked = current.Theme == ThemePreference.Dark;
+            // 主题模式
+            string themeTag = current.Theme.ToString();
+            foreach (var entry in ThemeModeCombo.Items)
+            {
+                if (entry is ComboBoxItem item && string.Equals(item.Tag as string, themeTag, StringComparison.Ordinal))
+                {
+                    ThemeModeCombo.SelectedItem = item;
+                    break;
+                }
+            }
+            // 主题色 ComboBox
+            UpdateAccentSelection();
 
+            // 窗口背景样式（无 / 亚克力 / 云母 / 自动）：系统不支持的样式不显示为选中，改为显示实际生效的样式。
+            AcrylicBackdropItem.IsEnabled = BackdropSupport.IsAcrylicSupported;
+            MicaBackdropItem.IsEnabled = BackdropSupport.IsMicaSupported;
+            BackdropStyle backdropSelection = current.BackdropStyle switch
+            {
+                BackdropStyle.Acrylic when !BackdropSupport.IsAcrylicSupported =>
+                    BackdropSupport.Resolve(BackdropStyle.Acrylic),
+                BackdropStyle.Mica when !BackdropSupport.IsMicaSupported =>
+                    BackdropSupport.Resolve(BackdropStyle.Mica),
+                _ => current.BackdropStyle
+            };
+            string backdropTag = backdropSelection.ToString();
+            foreach (var entry in BackdropStyleCombo.Items)
+            {
+                if (entry is ComboBoxItem item && string.Equals(item.Tag as string, backdropTag, StringComparison.Ordinal))
+                {
+                    BackdropStyleCombo.SelectedItem = item;
+                    break;
+                }
+            }
+
+            // 背景图
+            bool hasBg = current.BackgroundImagePath.Length > 0;
+            BackgroundImageBox.Text = hasBg ? Path.GetFileName(current.BackgroundImagePath) : "纯色默认背景";
+            BackgroundImageBox.ToolTip = hasBg ? current.BackgroundImagePath : "点击“浏览…”选择本地图片";
+            ClearBackgroundButton.IsEnabled = hasBg;
+            BackgroundOpacitySlider.IsEnabled = hasBg;
+            int opacityPercent = (int)Math.Round(current.BackgroundImageOpacity * 100);
+            BackgroundOpacitySlider.Value = opacityPercent;
+            BackgroundOpacityText.Text = $"{opacityPercent}%";
+            BackgroundSummaryText.Text = hasBg
+                ? $"{Path.GetFileName(current.BackgroundImagePath)}（{opacityPercent}% 不透明）"
+                : "纯色背景";
+
+            // 下载性能
             DownloadConnectionsSlider.Value = current.DownloadConnections;
-            DownloadConnectionsValueText.Text = $"{current.DownloadConnections} 个线程";
+            DownloadConnectionsValueText.Text = $"{current.DownloadConnections} 线程";
             DownloadTimeoutSlider.Value = current.DownloadTimeoutSeconds;
             DownloadTimeoutValueText.Text = $"{current.DownloadTimeoutSeconds} 秒";
+            DownloadPerfSummaryText.Text = $"{current.DownloadConnections} 线程 · {current.DownloadTimeoutSeconds} 秒超时";
 
+            // GitHub 镜像
             GitHubMirrorTextBox.Text = current.GitHubMirror;
             SelectMirrorPreset(current.GitHubMirror);
+            GitHubMirrorSummaryText.Text = string.IsNullOrWhiteSpace(current.GitHubMirror)
+                ? "直连 GitHub"
+                : current.GitHubMirror.TrimEnd('/');
 
+            // 代理与安全
             SystemProxyOption.IsChecked = current.ProxyMode == ProxyMode.System;
             DirectProxyOption.IsChecked = current.ProxyMode == ProxyMode.Direct;
             CustomProxyOption.IsChecked = current.ProxyMode == ProxyMode.Custom;
             CustomProxyTextBox.Text = current.CustomProxyUrl;
-            IgnoreCertificateErrorsCheckBox.IsChecked = current.IgnoreCertificateErrors;
+            IgnoreCertificateErrorsSwitch.IsOn = current.IgnoreCertificateErrors;
+            CertificateWarningBar.IsOpen = current.IgnoreCertificateErrors;
+
+            // 下载目录
             DownloadDirectoryTextBox.Text = AppSettingsService.ResolvedDownloadDirectory;
-            EnableFileLoggingCheckBox.IsChecked = current.EnableFileLogging;
-            VerboseLoggingCheckBox.IsChecked = current.VerboseLogging;
-            // 文件日志关闭时详细级别没有写入目标，禁用开关避免误解；值仍保留在设置里。
-            VerboseLoggingCheckBox.IsEnabled = current.EnableFileLogging;
-            // 动效恒定播放，没有开关；这里只说明它会做什么。
-            AnimationHintText.Text = "页面切换、列表加载和弹窗都带淡入过渡，界面动效始终开启。";
+
+            // 日志
+            EnableFileLoggingSwitch.IsOn = current.EnableFileLogging;
+            VerboseLoggingSwitch.IsOn = current.VerboseLogging;
+            VerboseLoggingSwitch.IsEnabled = current.EnableFileLogging;
+
             SelectAppSource(AppCatalogService.CurrentSourceId);
         }
         finally
@@ -568,26 +596,20 @@ public partial class SettingsPage : Page
         UpdateDownloadStatuses();
         RefreshBackendStatus();
 
-        var actualTheme = ThemeManager.Current.ActualApplicationTheme == ApplicationTheme.Dark ? "深色" : "浅色";
-        ThemeStatusText.Text = current.Theme == ThemePreference.System
-            ? $"正在跟随 Windows 使用{actualTheme}模式，系统外观变化时会自动切换。"
-            : $"当前使用{actualTheme}模式，下次启动会恢复你的主题偏好。";
-
-        SettingsErrorText.Text = AppSettingsService.LastError ?? string.Empty;
-        SettingsErrorPanel.Visibility = string.IsNullOrWhiteSpace(AppSettingsService.LastError)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        bool hasError = !string.IsNullOrWhiteSpace(AppSettingsService.LastError);
+        SettingsErrorBar.Message = AppSettingsService.LastError ?? string.Empty;
+        SettingsErrorBar.IsOpen = hasError;
     }
 
     private void SelectMirrorPreset(string mirror)
     {
         int selectedIndex = -1;
-        for (var index = 0; index < GitHubMirrorPresetCombo.Items.Count; index++)
+        for (int i = 0; i < GitHubMirrorPresetCombo.Items.Count; i++)
         {
-            if (GitHubMirrorPresetCombo.Items[index] is ComboBoxItem item
+            if (GitHubMirrorPresetCombo.Items[i] is ComboBoxItem item
                 && string.Equals(item.Tag as string, mirror, StringComparison.Ordinal))
             {
-                selectedIndex = index;
+                selectedIndex = i;
                 break;
             }
         }
@@ -597,39 +619,34 @@ public partial class SettingsPage : Page
     private void UpdateDownloadStatuses()
     {
         var current = AppSettingsService.Current;
-        DownloadSummaryText.Text = $"当前设置：{current.DownloadConnections} 个线程，{current.DownloadTimeoutSeconds} 秒超时。更改会用于之后开始的下载。";
         UpdateDownloadDirectoryStatus();
 
-        if (string.IsNullOrWhiteSpace(current.GitHubMirror))
-        {
-            SetStatusText(GitHubMirrorStatusText, "当前直连 GitHub，不使用第三方镜像。");
-        }
-        else
-        {
-            SetStatusText(GitHubMirrorStatusText,
-                $"GitHub 链接将通过 {current.GitHubMirror} 下载；安装包仍会执行官方哈希和 PE 校验。");
-        }
+        SetStatusText(GitHubMirrorStatusText,
+            string.IsNullOrWhiteSpace(current.GitHubMirror)
+                ? "当前直连 GitHub，不使用第三方镜像。"
+                : $"GitHub 链接将通过 {current.GitHubMirror} 加速下载。");
 
-        CustomProxyTextBox.IsEnabled = current.ProxyMode == ProxyMode.Custom;
-        SaveCustomProxyButton.IsEnabled = current.ProxyMode == ProxyMode.Custom;
+        bool isCustomProxy = current.ProxyMode == ProxyMode.Custom;
+        CustomProxyCard.IsEnabled = isCustomProxy;
+
         if (current.ProxyMode == ProxyMode.System)
         {
+            ProxySummaryText.Text = "跟随系统代理";
             SetStatusText(ProxyStatusText, "当前跟随 Windows 系统代理设置。");
         }
         else if (current.ProxyMode == ProxyMode.Direct)
         {
-            SetStatusText(ProxyStatusText, "当前直连，不使用系统或自定义代理。");
+            ProxySummaryText.Text = "直连（无代理）";
+            SetStatusText(ProxyStatusText, "当前直连下载，不使用任何代理。");
         }
-        else if (string.IsNullOrWhiteSpace(current.CustomProxyUrl))
+        else if (string.IsNullOrWhiteSpace(current.CustomProxyUrl) || !AppSettingsService.IsValidHttpUrl(current.CustomProxyUrl))
         {
-            SetStatusText(ProxyStatusText, "尚未填写自定义代理地址；下载会退回系统代理。", isError: true);
-        }
-        else if (!AppSettingsService.IsValidHttpUrl(current.CustomProxyUrl))
-        {
-            SetStatusText(ProxyStatusText, "自定义代理地址无效；下载会退回系统代理。", isError: true);
+            ProxySummaryText.Text = "自定义代理（未生效）";
+            SetStatusText(ProxyStatusText, "自定义代理地址为空或无效，下载将临时回退到系统代理。", isError: true);
         }
         else
         {
+            ProxySummaryText.Text = current.CustomProxyUrl;
             SetStatusText(ProxyStatusText, $"当前使用自定义代理：{current.CustomProxyUrl}");
         }
     }
@@ -638,18 +655,323 @@ public partial class SettingsPage : Page
     {
         target.Text = text;
         string brushKey = isError ? "Wam.DangerBrush" : "Wam.TextSecondaryBrush";
-        if (TryFindResource(brushKey) is System.Windows.Media.Brush brush)
+        if (TryFindResource(brushKey) is Media.Brush brush)
         {
             target.Foreground = brush;
         }
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // 主题与 ComboBox 调色盘（支持深浅色自适应）
+    // ---------------------------------------------------------------------------------------------
+
+    private void OnThemeComboSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_isSynchronizing || ThemeModeCombo.SelectedItem is not ComboBoxItem item
+                             || !Enum.TryParse<ThemePreference>(item.Tag?.ToString(), out var theme)
+                             || theme == AppSettingsService.Current.Theme)
+        {
+            return;
+        }
+
+        AppSettingsService.SetTheme(theme);
+        RefreshSettings();
+    }
+
+    private void OnBackdropStyleComboSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_isSynchronizing || BackdropStyleCombo.SelectedItem is not ComboBoxItem item
+                             || !Enum.TryParse<BackdropStyle>(item.Tag?.ToString(), out var style)
+                             || style == AppSettingsService.Current.BackdropStyle)
+        {
+            return;
+        }
+
+        AppSettingsService.SetBackdropStyle(style);
+        RefreshSettings();
+    }
+    
+    /// <summary>填充主题色 ComboBox（色块 + 颜色名称 + HEX，动态资源绑定适配深浅色）。</summary>
+    private void PopulateAccentComboItems()
+    {
+        AccentColorCombo.Items.Clear();
+
+        for (int i = 0; i < AppSettingsService.AccentPresets.Length; i++)
+        {
+            var (hex, label) = AppSettingsService.AccentPresets[i];
+            var color = (Media.Color)Media.ColorConverter.ConvertFromString(hex)!;
+            string displayName = i == 0 ? $"{label}（默认）" : label;
+
+            AccentColorCombo.Items.Add(new ComboBoxItem
+            {
+                Tag = hex,
+                Content = CreateAccentComboItemContent(color, displayName, hex, out _, out _)
+            });
+        }
+
+        // 末尾保留一个按需显示的“自定义颜色”条目
+        _customAccentComboItem = new ComboBoxItem
+        {
+            Visibility = Visibility.Collapsed,
+            Content = CreateAccentComboItemContent(
+                Media.Colors.DodgerBlue,
+                "自定义",
+                "#2563EB",
+                out _customAccentComboSwatch,
+                out _customAccentComboHexText)
+        };
+        AccentColorCombo.Items.Add(_customAccentComboItem);
+    }
+
+    private static StackPanel CreateAccentComboItemContent(
+        Media.Color color,
+        string name,
+        string hex,
+        out Border swatchBorder,
+        out TextBlock hexTextBlock)
+    {
+        swatchBorder = new Border
+        {
+            Width = 14,
+            Height = 14,
+            CornerRadius = new CornerRadius(4),
+            Background = new Media.SolidColorBrush(color),
+            BorderThickness = new Thickness(1),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        swatchBorder.SetResourceReference(Border.BorderBrushProperty, "Wam.CardBorderBrush");
+
+        var nameTextBlock = new TextBlock
+        {
+            Text = name,
+            FontSize = 13,
+            Margin = new Thickness(8, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        nameTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "Wam.TextPrimaryBrush");
+
+        hexTextBlock = new TextBlock
+        {
+            Text = hex.ToUpperInvariant(),
+            FontFamily = new Media.FontFamily("Consolas"),
+            FontSize = 11.5,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        hexTextBlock.SetResourceReference(TextBlock.ForegroundProperty, "Wam.TextSecondaryBrush");
+
+        var panel = new StackPanel { Orientation = Orientation.Horizontal };
+        panel.Children.Add(swatchBorder);
+        panel.Children.Add(nameTextBlock);
+        panel.Children.Add(hexTextBlock);
+        return panel;
+    }
+
+    private void OnAccentComboSelectionChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_isSynchronizing || AccentColorCombo.SelectedItem is not ComboBoxItem item)
+        {
+            return;
+        }
+
+        string hex = item.Tag as string ?? string.Empty;
+        if (string.IsNullOrEmpty(hex)) return;
+
+        AppSettingsService.SetAccentColor(hex);
+        RefreshSettings();
+    }
+
+    private void OnResetAccentClick(object sender, RoutedEventArgs args)
+    {
+        AppSettingsService.SetAccentColor(string.Empty);
+        RefreshSettings();
+    }
+
+    /// <summary>同步 ComboBox 选中项及“恢复默认”按钮可见性。</summary>
+    private void UpdateAccentSelection()
+    {
+        string defaultHex = AppSettingsService.AccentPresets[0].Hex;
+        string activeHex = AppSettingsService.Current.AccentColor.Length > 0
+            ? AppSettingsService.Current.AccentColor
+            : defaultHex;
+
+        bool isDefault = string.Equals(activeHex, defaultHex, StringComparison.OrdinalIgnoreCase);
+        ResetAccentButton.Visibility = isDefault ? Visibility.Collapsed : Visibility.Visible;
+
+        bool prevSync = _isSynchronizing;
+        _isSynchronizing = true;
+        try
+        {
+            ComboBoxItem? matchedPreset = null;
+            foreach (var entry in AccentColorCombo.Items)
+            {
+                if (entry is ComboBoxItem item
+                    && item != _customAccentComboItem
+                    && item.Tag is string hex
+                    && string.Equals(hex, activeHex, StringComparison.OrdinalIgnoreCase))
+                {
+                    matchedPreset = item;
+                    break;
+                }
+            }
+
+            if (matchedPreset is not null)
+            {
+                if (_customAccentComboItem is not null)
+                {
+                    _customAccentComboItem.Visibility = Visibility.Collapsed;
+                }
+                AccentColorCombo.SelectedItem = matchedPreset;
+            }
+            else if (_customAccentComboItem is not null)
+            {
+                _customAccentComboItem.Tag = activeHex.ToUpperInvariant();
+                _customAccentComboItem.Visibility = Visibility.Visible;
+                if (_customAccentComboSwatch is not null)
+                {
+                    _customAccentComboSwatch.Background = new Media.SolidColorBrush(
+                        (Media.Color)Media.ColorConverter.ConvertFromString(activeHex)!);
+                }
+                if (_customAccentComboHexText is not null)
+                {
+                    _customAccentComboHexText.Text = activeHex.ToUpperInvariant();
+                }
+                AccentColorCombo.SelectedItem = _customAccentComboItem;
+            }
+        }
+        finally
+        {
+            _isSynchronizing = prevSync;
+        }
+    }
+
+    // ---- 内联调色盘浮层交互（支持实时预览与取消回滚） ----
+
+    private void OnCustomAccentFlyoutOpened(object sender, object args)
+    {
+        string activeHex = AppSettingsService.Current.AccentColor.Length > 0
+            ? AppSettingsService.Current.AccentColor
+            : AppSettingsService.AccentPresets[0].Hex;
+
+        _pendingCustomAccentHex = activeHex;
+        var color = (Media.Color)Media.ColorConverter.ConvertFromString(activeHex)!;
+
+        _isUpdatingColorPicker = true;
+        try
+        {
+            InlineAccentColorPicker.SelectedColor = color;
+            UpdateFlyoutApplyButtonPreview(color);
+        }
+        finally
+        {
+            _isUpdatingColorPicker = false;
+        }
+    }
+
+    private void OnInlineColorPickerChanged(object sender, RoutedEventArgs args)
+    {
+        if (_isUpdatingColorPicker) return;
+
+        var color = InlineAccentColorPicker.SelectedColor;
+        _pendingCustomAccentHex = $"#{color.R:X2}{color.G:X2}{color.B:X2}";
+        UpdateFlyoutApplyButtonPreview(color);
+    }
+
+    private void UpdateFlyoutApplyButtonPreview(Media.Color color)
+    {
+        bool isLight = (((0.299 * color.R) + (0.587 * color.G) + (0.114 * color.B)) / 255.0) > 0.62;
+        ApplyCustomAccentButton.Background = new Media.SolidColorBrush(color);
+        ApplyCustomAccentButton.Foreground = isLight ? Media.Brushes.Black : Media.Brushes.White;
+    }
+
+    private void OnApplyCustomAccentClick(object sender, RoutedEventArgs args)
+    {
+        if (!string.IsNullOrEmpty(_pendingCustomAccentHex))
+        {
+            AppSettingsService.SetAccentColor(_pendingCustomAccentHex);
+        }
+        CustomAccentFlyout.Hide();
+        RefreshSettings();
+    }
+
+    private void OnCancelCustomAccentClick(object sender, RoutedEventArgs args)
+    {
+        CustomAccentFlyout.Hide();
+    }
+
+    private void OnCustomAccentFlyoutClosed(object sender, object args)
+    {
+        ApplyCustomAccentButton.ClearValue(BackgroundProperty);
+        ApplyCustomAccentButton.ClearValue(ForegroundProperty);
+    }
+    
+    // ---------------------------------------------------------------------------------------------
+    // 背景图
+    // ---------------------------------------------------------------------------------------------
+
+    private void OnBrowseBackgroundImage(object sender, RoutedEventArgs args)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "选择背景图",
+            Filter = "图片 (*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff)|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff|所有文件 (*.*)|*.*",
+            CheckFileExists = true
+        };
+
+        if (dialog.ShowDialog(Window.GetWindow(this)) == true)
+        {
+            ApplyBackgroundImage(dialog.FileName);
+        }
+    }
+
+    private void OnClearBackgroundImage(object sender, RoutedEventArgs args) => ApplyBackgroundImage(null);
+
+    private void ApplyBackgroundImage(string? path)
+    {
+        try
+        {
+            AppSettingsService.SetBackgroundImage(path);
+        }
+        catch (ArgumentException error)
+        {
+            ShowActionStatus(error.Message);
+        }
+        RefreshSettings();
+    }
+
+    private void OnBackgroundOpacityChanged(object sender, RoutedPropertyChangedEventArgs<double> args)
+    {
+        if (BackgroundOpacityText is null) return;
+
+        BackgroundOpacityText.Text = $"{Math.Round(args.NewValue)}%";
+        if (_isSynchronizing || AppSettingsService.Current.BackgroundImagePath.Length == 0) return;
+
+        _backgroundOpacityTimer.Stop();
+        _backgroundOpacityTimer.Start();
+    }
+
+    private void ApplyBackgroundOpacity()
+    {
+        try
+        {
+            AppSettingsService.SetBackgroundImageOpacity(BackgroundOpacitySlider.Value / 100.0);
+            RefreshSettings();
+        }
+        catch (ArgumentOutOfRangeException error)
+        {
+            AppLogService.Warn($"保存背景图不透明度失败：{error.Message}");
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 下载与网络
+    // ---------------------------------------------------------------------------------------------
 
     private void UpdateDownloadDirectoryStatus()
     {
         string directory = AppSettingsService.ResolvedDownloadDirectory;
         bool isDefault = string.IsNullOrWhiteSpace(AppSettingsService.Current.DownloadDirectory);
         SetStatusText(DownloadDirectoryStatusText,
-            isDefault ? $"使用默认下载目录：{directory}" : $"当前下载目录：{directory}（更改只影响之后开始的任务）");
+            isDefault ? $"默认目录：{directory}" : $"自定义目录：{directory}");
     }
 
     private void OnBrowseDownloadDirectory(object sender, RoutedEventArgs args)
@@ -657,12 +979,7 @@ public partial class SettingsPage : Page
         try
         {
             string? selected = FolderPickerService.PickFolder(AppSettingsService.ResolvedDownloadDirectory, "选择安装包保存位置");
-            if (selected is null)
-            {
-                return;
-            }
-
-            ApplyDownloadDirectory(selected);
+            if (selected is not null) ApplyDownloadDirectory(selected);
         }
         catch (Exception error) when (error is InvalidOperationException or COMException or IOException or UnauthorizedAccessException)
         {
@@ -670,11 +987,11 @@ public partial class SettingsPage : Page
         }
     }
 
-    private void OnApplyDownloadDirectory(object sender, RoutedEventArgs args) =>
-        ApplyDownloadDirectory(DownloadDirectoryTextBox.Text);
+    private void OnApplyDownloadDirectory(object sender, RoutedEventArgs args)
+        => ApplyDownloadDirectory(DownloadDirectoryTextBox.Text);
 
-    private void OnResetDownloadDirectory(object sender, RoutedEventArgs args) =>
-        ApplyDownloadDirectory(string.Empty);
+    private void OnResetDownloadDirectory(object sender, RoutedEventArgs args)
+        => ApplyDownloadDirectory(string.Empty);
 
     private void OnOpenDownloadDirectory(object sender, RoutedEventArgs args)
     {
@@ -683,7 +1000,6 @@ public partial class SettingsPage : Page
             string directory = AppSettingsService.ResolvedDownloadDirectory;
             Directory.CreateDirectory(directory);
             Process.Start(new ProcessStartInfo(directory) { UseShellExecute = true });
-            ShowActionStatus($"已打开下载目录：{directory}");
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or Win32Exception)
         {
@@ -697,9 +1013,6 @@ public partial class SettingsPage : Page
         {
             AppSettingsService.SetDownloadDirectory(directory);
             RefreshSettings();
-            ShowActionStatus(string.IsNullOrWhiteSpace(AppSettingsService.Current.DownloadDirectory)
-                ? "已恢复默认下载目录。"
-                : $"下载目录已更新：{AppSettingsService.ResolvedDownloadDirectory}");
         }
         catch (ArgumentException error)
         {
@@ -707,55 +1020,36 @@ public partial class SettingsPage : Page
         }
     }
 
-    private void OnThemeChecked(object sender, RoutedEventArgs args)
-    {
-        if (_isSynchronizing || sender is not RadioButton option
-            || !Enum.TryParse<ThemePreference>(option.Tag?.ToString(), out var theme))
-        {
-            return;
-        }
-
-        AppSettingsService.SetTheme(theme);
-        RefreshSettings();
-    }
-
     private void OnDownloadConnectionsValueChanged(object sender, RoutedPropertyChangedEventArgs<double> args)
     {
+        if (DownloadConnectionsValueText is null) return;
+
         int value = (int)Math.Round(args.NewValue);
-        DownloadConnectionsValueText.Text = $"{value} 个线程";
-        if (_isSynchronizing || value == AppSettingsService.Current.DownloadConnections)
-        {
-            return;
-        }
+        DownloadConnectionsValueText.Text = $"{value} 线程";
+        if (_isSynchronizing || value == AppSettingsService.Current.DownloadConnections) return;
 
         AppSettingsService.SetDownloadConnections(value);
-        UpdateDownloadStatuses();
+        DownloadPerfSummaryText.Text = $"{value} 线程 · {AppSettingsService.Current.DownloadTimeoutSeconds} 秒超时";
     }
 
     private void OnDownloadTimeoutValueChanged(object sender, RoutedPropertyChangedEventArgs<double> args)
     {
+        if (DownloadTimeoutValueText is null) return;
+
         int value = (int)Math.Round(args.NewValue);
         DownloadTimeoutValueText.Text = $"{value} 秒";
-        if (_isSynchronizing || value == AppSettingsService.Current.DownloadTimeoutSeconds)
-        {
-            return;
-        }
+        if (_isSynchronizing || value == AppSettingsService.Current.DownloadTimeoutSeconds) return;
 
         AppSettingsService.SetDownloadTimeoutSeconds(value);
-        UpdateDownloadStatuses();
+        DownloadPerfSummaryText.Text = $"{AppSettingsService.Current.DownloadConnections} 线程 · {value} 秒超时";
     }
 
     private void OnApplyGitHubMirror(object sender, RoutedEventArgs args)
-    {
-        ApplyGitHubMirror(GitHubMirrorTextBox.Text);
-    }
+        => ApplyGitHubMirror(GitHubMirrorTextBox.Text);
 
     private void OnGitHubMirrorPresetChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (_isSynchronizing || GitHubMirrorPresetCombo.SelectedItem is not ComboBoxItem item)
-        {
-            return;
-        }
+        if (_isSynchronizing || GitHubMirrorPresetCombo.SelectedItem is not ComboBoxItem item) return;
 
         string mirror = item.Tag as string ?? string.Empty;
         GitHubMirrorTextBox.Text = mirror;
@@ -801,106 +1095,63 @@ public partial class SettingsPage : Page
         }
     }
 
-    private void OnIgnoreCertificateErrorsChanged(object sender, RoutedEventArgs args)
+    private void OnIgnoreCertificateErrorsToggled(object sender, RoutedEventArgs args)
     {
-        if (_isSynchronizing)
-        {
-            return;
-        }
+        if (_isSynchronizing) return;
 
-        bool ignore = IgnoreCertificateErrorsCheckBox.IsChecked == true;
-        if (ignore == AppSettingsService.Current.IgnoreCertificateErrors)
-        {
-            return;
-        }
+        bool ignore = IgnoreCertificateErrorsSwitch.IsOn;
+        if (ignore == AppSettingsService.Current.IgnoreCertificateErrors) return;
 
         AppSettingsService.SetIgnoreCertificateErrors(ignore);
         RefreshSettings();
     }
 
-    /// <summary>“启用文件日志”：保存后立即应用到 AppLogService，并刷新日志状态文字。</summary>
-    private void OnEnableFileLoggingChanged(object sender, RoutedEventArgs args)
-    {
-        if (_isSynchronizing)
-        {
-            return;
-        }
+    // ---------------------------------------------------------------------------------------------
+    // 日志与配置存储
+    // ---------------------------------------------------------------------------------------------
 
-        bool enabled = EnableFileLoggingCheckBox.IsChecked == true;
-        if (enabled == AppSettingsService.Current.EnableFileLogging)
-        {
-            return;
-        }
+    private void OnEnableFileLoggingToggled(object sender, RoutedEventArgs args)
+    {
+        if (_isSynchronizing) return;
+
+        bool enabled = EnableFileLoggingSwitch.IsOn;
+        if (enabled == AppSettingsService.Current.EnableFileLogging) return;
 
         AppSettingsService.SetEnableFileLogging(enabled);
         RefreshSettings();
     }
 
-    /// <summary>“记录详细日志”：保存后立即把 AppLogService.MinimumLevel 切到 Verbose 或 Info。</summary>
-    private void OnVerboseLoggingChanged(object sender, RoutedEventArgs args)
+    private void OnVerboseLoggingToggled(object sender, RoutedEventArgs args)
     {
-        if (_isSynchronizing)
-        {
-            return;
-        }
+        if (_isSynchronizing) return;
 
-        bool verbose = VerboseLoggingCheckBox.IsChecked == true;
-        if (verbose == AppSettingsService.Current.VerboseLogging)
-        {
-            return;
-        }
+        bool verbose = VerboseLoggingSwitch.IsOn;
+        if (verbose == AppSettingsService.Current.VerboseLogging) return;
 
         AppSettingsService.SetVerboseLogging(verbose);
         RefreshSettings();
     }
 
-
-    private void OnCopySettingsPath(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            Clipboard.SetText(AppSettingsService.SettingsFilePath);
-            ShowActionStatus("设置文件路径已复制。");
-        }
-        catch (ExternalException exception)
-        {
-            ShowActionStatus($"暂时无法使用剪贴板，请直接选中路径复制。{exception.Message}");
-        }
-    }
-
-    private void OnRetrySaveSettings(object sender, RoutedEventArgs args)
-    {
-        AppSettingsService.SetTheme(AppSettingsService.Current.Theme);
-        RefreshSettings();
-    }
-
-    private void OnOpenSettingsDirectory(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            Directory.CreateDirectory(AppSettingsService.SettingsDirectory);
-            Process.Start(new ProcessStartInfo(AppSettingsService.SettingsDirectory) { UseShellExecute = true });
-            ShowActionStatus("已打开设置文件夹。");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException)
-        {
-            ShowActionStatus($"无法打开设置文件夹，请使用上方路径手动访问。{exception.Message}");
-        }
-    }
-
-    /// <summary>刷新日志文件路径、数量/大小与当前日志设置；日志由 AppLogService 维护，与设置内容无关。</summary>
     private void RefreshLogStatus()
     {
         LogPathTextBox.Text = AppLogService.CurrentLogFilePath;
         var statistics = AppLogService.GetLogStatistics();
-        string filesText = statistics.Files == 0
-            ? "当前还没有日志文件。"
-            : $"当前 {statistics.Files} 个日志文件，共 {FormatLogSize(statistics.TotalBytes)}。";
-        string stateText = !AppLogService.Enabled
-            ? "文件日志已关闭，只输出到调试器；不会生成新的日志文件。"
+
+        LogSummaryText.Text = !AppLogService.Enabled
+            ? "文件日志已关闭"
             : AppLogService.MinimumLevel == AppLogLevel.Verbose
-                ? "文件日志已启用，记录详细日志（Verbose）。"
+                ? $"详细日志（{statistics.Files} 个文件）"
+                : $"标准日志（{statistics.Files} 个文件）";
+
+        string filesText = statistics.Files == 0
+            ? "暂无日志文件。"
+            : $"共 {statistics.Files} 个日志文件（{FormatLogSize(statistics.TotalBytes)}）。";
+        string stateText = !AppLogService.Enabled
+            ? "文件日志已关闭，仅向调试器输出。"
+            : AppLogService.MinimumLevel == AppLogLevel.Verbose
+                ? "已启用详细日志（Verbose）。"
                 : "文件日志已启用。";
+
         SetStatusText(LogStatusText, $"{filesText}{stateText}");
     }
 
@@ -919,7 +1170,7 @@ public partial class SettingsPage : Page
         }
         else
         {
-            SetStatusText(LogStatusText, "无法打开日志目录，请使用上方路径手动访问。", isError: true);
+            SetStatusText(LogStatusText, "无法打开日志目录，请复制路径手动访问。", isError: true);
         }
     }
 
@@ -928,12 +1179,45 @@ public partial class SettingsPage : Page
         try
         {
             Clipboard.SetText(AppLogService.LogDirectory);
-            SetStatusText(LogStatusText, "日志目录路径已复制。");
+            ShowActionStatus("日志目录路径已复制。");
         }
         catch (ExternalException exception)
         {
-            SetStatusText(LogStatusText, $"暂时无法使用剪贴板，请直接选中路径复制。{exception.Message}", isError: true);
+            ShowActionStatus($"复制失败：{exception.Message}");
         }
+    }
+
+    private void OnCopySettingsPath(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            Clipboard.SetText(AppSettingsService.SettingsFilePath);
+            ShowActionStatus("配置文件路径已复制。");
+        }
+        catch (ExternalException exception)
+        {
+            ShowActionStatus($"复制失败：{exception.Message}");
+        }
+    }
+
+    private void OnOpenSettingsDirectory(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppSettingsService.SettingsDirectory);
+            Process.Start(new ProcessStartInfo(AppSettingsService.SettingsDirectory) { UseShellExecute = true });
+            ShowActionStatus("已打开配置文件夹。");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or Win32Exception or InvalidOperationException)
+        {
+            ShowActionStatus($"无法打开文件夹：{exception.Message}");
+        }
+    }
+
+    private void OnRetrySaveSettings(object sender, RoutedEventArgs args)
+    {
+        AppSettingsService.SetTheme(AppSettingsService.Current.Theme);
+        RefreshSettings();
     }
 
     private void ShowActionStatus(string message)

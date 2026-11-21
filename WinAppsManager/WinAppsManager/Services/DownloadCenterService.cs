@@ -114,6 +114,8 @@ public static class DownloadCenterService
         }
         if (removed)
         {
+            // 记录没了，未完成分片也没有意义，一并删掉免得占空间。
+            InstallerDownloadService.DeleteResumeFiles(task.FileName, AppSettingsService.ResolvedDownloadDirectory);
             SaveHistory();
             RaiseStatusChanged();
         }
@@ -139,6 +141,11 @@ public static class DownloadCenterService
         }
         if (finished.Length > 0)
         {
+            foreach (var task in finished)
+            {
+                InstallerDownloadService.DeleteResumeFiles(task.FileName, AppSettingsService.ResolvedDownloadDirectory);
+            }
+
             SaveHistory();
             RaiseStatusChanged();
         }
@@ -181,6 +188,9 @@ public static class DownloadCenterService
                     continue;
                 }
             }
+
+            // 未完成的续传分片同样删掉：记录都移除了，留着只会占磁盘。
+            InstallerDownloadService.DeleteResumeFiles(task.FileName, AppSettingsService.ResolvedDownloadDirectory);
 
             lock (Gate)
             {

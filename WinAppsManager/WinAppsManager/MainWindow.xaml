@@ -7,63 +7,92 @@
         xmlns:ui="http://schemas.inkore.net/lib/ui/wpf/modern"
         xmlns:ikw="http://schemas.inkore.net/lib/ui/wpf"
         ui:WindowHelper.UseModernWindowStyle="True"
-        ui:WindowHelper.SystemBackdropType="Mica"
+        ui:WindowHelper.Acrylic10Color="{DynamicResource Wam.Acrylic10TintColor}"
         ui:TitleBar.Height="36"
+        ui:TitleBar.ExtendViewIntoTitleBar="True"
         mc:Ignorable="d"
         Title="WinAppsManager" Height="760" Width="1080"
         MinHeight="560" MinWidth="800"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource Wam.PageBackgroundBrush}"
         PreviewKeyDown="MainWindow_OnPreviewKeyDown">
-    <ui:NavigationView x:Name="NavView"
-                       PaneTitle="WinAppsManager"
-                       IsSettingsVisible="False"
-                       PaneDisplayMode="Left"
-                       IsPaneOpen="True"
-                       OpenPaneLength="220"
-                       ItemInvoked="NavigationView_OnItemInvoked"
-                       SelectionChanged="NavigationView_OnSelectionChanged">
-        <ui:NavigationView.MenuItems>
-            <ui:NavigationViewItem x:Name="SoftwareNavigationItem" Content="软件列表" Tag="1" IsExpanded="True">
-                <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Apps_20_Regular}"/>
-                </ui:NavigationViewItem.Icon>
-            </ui:NavigationViewItem>
-            <ui:NavigationViewItem x:Name="DownloadsNavigationItem" Content="下载中心" Tag="3">
-                <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowDownload_24_Regular}"/>
-                </ui:NavigationViewItem.Icon>
-            </ui:NavigationViewItem>
-            <ui:NavigationViewItem x:Name="UninstallNavigationItem" Content="卸载软件" Tag="4" IsExpanded="True">
-                <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"/>
-                </ui:NavigationViewItem.Icon>
-            </ui:NavigationViewItem>
-            <ui:NavigationViewItem x:Name="SettingsNavigationItem" Content="设置" Tag="2">
-                <ui:NavigationViewItem.Icon>
-                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Settings_20_Regular}"/>
-                </ui:NavigationViewItem.Icon>
-            </ui:NavigationViewItem>
-        </ui:NavigationView.MenuItems>
-        <!-- 页面容器分三层：
-             1) 最外层 Grid 负责裁剪，页面过渡时的位图位移不会画到左侧导航栏上；
-             2) PageHost 承载真实页面，过渡时它自己淡入/滑入（位图缓存保证帧率）；
-             3) OutgoingSnapshot 是旧页面的位图：旧页面已离开视觉树，只能靠快照滑出/淡出。
-             若把裁剪和 RenderTransform 放在同一个元素上，WPF 会按未变换的布局边界裁剪再整体平移，
-             滑入的内容会画到导航栏上方，因此必须分层。 -->
-        <Grid Background="{DynamicResource Wam.PageBackgroundBrush}" ClipToBounds="True">
-            <Grid x:Name="PageHost">
-                <Frame x:Name="FrameView" NavigationUIVisibility="Hidden"/>
-            </Grid>
+    <!-- TitleBar.ExtendViewIntoTitleBar 让内容铺满整个窗口（窗口模板的标题栏按钮仍绘制在最上层），
+         这样标题栏那块也能被下面的壁纸 / 亚克力面板统一覆盖；NavigationView 由代码下移一个标题栏高度。 -->
+    <Grid>
+        <!-- 1. 底层背景源：无壁纸时为 Transparent（透出系统 Mica / 亚克力）；有壁纸时绘制壁纸 -->
+        <Grid x:Name="BackdropSourceGrid"
+              Background="{DynamicResource Wam.WindowWallpaperBrush}"
+              IsHitTestVisible="False"/>
 
-            <!-- 位图缩放质量用 LowQuality（双线性）：过渡中位图一直在移动并淡出，
-                 高分辨率 Fant 滤波的每帧开销明显更高，观感却没有区别。 -->
-            <Image x:Name="OutgoingSnapshot"
-                   Visibility="Collapsed"
-                   IsHitTestVisible="False"
-                   Stretch="Fill"
-                   RenderOptions.BitmapScalingMode="LowQuality"
-                   Panel.ZIndex="10"/>
-        </Grid>
-    </ui:NavigationView>
+        <!-- 2. 应用内亚克力面板（仅在启用自定义壁纸时显示，对 BackdropSourceGrid 做实时高斯模糊）：
+                左侧导航栏、标题栏透出这块面板，内容区被不透明的页面容器盖住。 -->
+        <ui:AcrylicPanel x:Name="PaneAcrylicPanel"
+                         Target="{Binding ElementName=BackdropSourceGrid}"
+                         TintColor="{DynamicResource Wam.PaneTintColor}"
+                         TintOpacity="0.75"
+                         Amount="80"
+                         Visibility="{DynamicResource Wam.PaneAcrylicVisibility}"
+                         IsHitTestVisible="False"/>
+        <ui:NavigationView x:Name="NavView"
+                           PaneTitle="WinAppsManager"
+                           IsSettingsVisible="False"
+                           PaneDisplayMode="Left"
+                           IsPaneOpen="True"
+                           OpenPaneLength="220"
+                           Background="Transparent"
+                           ItemInvoked="NavigationView_OnItemInvoked"
+                           SelectionChanged="NavigationView_OnSelectionChanged">
+            <ui:NavigationView.Resources>
+                <SolidColorBrush x:Key="NavigationViewDefaultPaneBackground" Color="Transparent"/>
+                <SolidColorBrush x:Key="NavigationViewExpandedPaneBackground" Color="Transparent"/>
+            </ui:NavigationView.Resources>
+            
+            <ui:NavigationView.MenuItems>
+                <ui:NavigationViewItem x:Name="SoftwareNavigationItem" Content="软件列表" Tag="1" IsExpanded="True">
+                    <ui:NavigationViewItem.Icon>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Apps_20_Regular}"/>
+                    </ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="DownloadsNavigationItem" Content="下载中心" Tag="3">
+                    <ui:NavigationViewItem.Icon>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowDownload_24_Regular}"/>
+                    </ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="UninstallNavigationItem" Content="卸载软件" Tag="4" IsExpanded="True">
+                    <ui:NavigationViewItem.Icon>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"/>
+                    </ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="StartupNavigationItem" Content="自启动项" Tag="5">
+                    <ui:NavigationViewItem.Icon>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Rocket_20_Regular}"/>
+                    </ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
+                <ui:NavigationViewItem x:Name="SettingsNavigationItem" Content="设置" Tag="2">
+                    <ui:NavigationViewItem.Icon>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Settings_20_Regular}"/>
+                    </ui:NavigationViewItem.Icon>
+                </ui:NavigationViewItem>
+            </ui:NavigationView.MenuItems>
+
+            <Border Background="{DynamicResource Wam.PageBackgroundBrush}"
+                    BorderBrush="{DynamicResource Wam.CardBorderBrush}"
+                    BorderThickness="1,1,0,0"
+                    CornerRadius="8,0,0,0"
+                    ClipToBounds="True">
+                <Grid>
+                    <Grid x:Name="PageHost">
+                        <Frame x:Name="FrameView" NavigationUIVisibility="Hidden"/>
+                    </Grid>
+
+                    <Image x:Name="OutgoingSnapshot"
+                           Visibility="Collapsed"
+                           IsHitTestVisible="False"
+                           Stretch="Fill"
+                           RenderOptions.BitmapScalingMode="LowQuality"
+                           Panel.ZIndex="10"/>
+                </Grid>
+            </Border>
+        </ui:NavigationView>
+    </Grid>
 </Window>

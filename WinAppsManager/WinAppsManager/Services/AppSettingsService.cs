@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using iNKORE.UI.WPF.Modern;
 using WinAppsManager.Models;
 
@@ -49,6 +50,9 @@ public static class AppSettingsService
     public static string ResolvedDownloadDirectory => string.IsNullOrWhiteSpace(Current.DownloadDirectory)
         ? DefaultDownloadDirectory
         : Current.DownloadDirectory;
+    
+    private static (string Path, double Opacity, bool Dark, Brush Brush)? _cachedBackgroundBrush;
+    private static (Color Accent, bool Dark)? _lastAppliedAccent;
 
     public static void Initialize(string? settingsDirectory = null)
     {
@@ -96,6 +100,68 @@ public static class AppSettingsService
 
         Initialize();
         Current.Theme = theme;
+        ApplyTheme();
+        var saved = SaveSettings();
+        SettingsChanged?.Invoke(null, EventArgs.Empty);
+        return saved;
+    }
+
+    /// <summary>
+    /// 保存窗口系统背景样式（自动 / 无 / 亚克力 / 云母）。样式是否真正生效由
+    /// <see cref="BackdropSupport"/> 按系统能力判断；不支持的样式会回退到可用样式。
+    /// </summary>
+    public static bool SetBackdropStyle(BackdropStyle style)
+    {
+        if (!Enum.IsDefined(style))
+        {
+            throw new ArgumentOutOfRangeException(nameof(style));
+        }
+
+        Initialize();
+        Current.BackdropStyle = style;
+        var saved = SaveSettings();
+        SettingsChanged?.Invoke(null, EventArgs.Empty);
+        return saved;
+    }
+
+    /// <summary>
+    /// 保存主题强调色；传空字符串表示恢复内置的默认蓝色。无效颜色抛出 <see cref="ArgumentException"/>。
+    /// 只重算主题资源，不切换浅色 / 深色模式。
+    /// </summary>
+    public static bool SetAccentColor(string? color)
+    {
+        Initialize();
+        Current.AccentColor = NormalizeAccentColor(color);
+        ApplyTheme();
+        var saved = SaveSettings();
+        SettingsChanged?.Invoke(null, EventArgs.Empty);
+        return saved;
+    }
+
+    /// <summary>
+    /// 保存页面背景图；传空字符串表示恢复纯色背景。
+    /// 文件不存在或格式不支持时抛出 <see cref="ArgumentException"/>，设置不会被改动。
+    /// </summary>
+    public static bool SetBackgroundImage(string? path)
+    {
+        Initialize();
+        Current.BackgroundImagePath = NormalizeBackgroundImage(path);
+        ApplyTheme();
+        var saved = SaveSettings();
+        SettingsChanged?.Invoke(null, EventArgs.Empty);
+        return saved;
+    }
+
+    /// <summary>保存背景图不透明度（0.05–1）；超出范围抛出 <see cref="ArgumentOutOfRangeException"/>。</summary>
+    public static bool SetBackgroundImageOpacity(double opacity)
+    {
+        if (opacity is < AppSettings.MinimumBackgroundImageOpacity or > AppSettings.MaximumBackgroundImageOpacity)
+        {
+            throw new ArgumentOutOfRangeException(nameof(opacity));
+        }
+
+        Initialize();
+        Current.BackgroundImageOpacity = Math.Round(opacity, 2);
         ApplyTheme();
         var saved = SaveSettings();
         SettingsChanged?.Invoke(null, EventArgs.Empty);
@@ -468,6 +534,126 @@ public static class AppSettingsService
         }
     }
 
+    /// <summary>“外观”页可选的主题色（第一个是默认蓝色）。</summary>
+    public static readonly (string Hex, string Label)[] AccentPresets =
+    [
+        ("#2563EB", "蓝"),
+        ("#0F7B6C", "青绿"),
+        ("#107C10", "绿"),
+        ("#7A3EB1", "紫"),
+        ("#C239B3", "洋红"),
+        ("#C42B1C", "红"),
+        ("#CA5010", "橙"),
+        ("#986F0B", "金"),
+        ("#4A5568", "灰")
+    ];
+
+    /// <summary>背景图允许的扩展名；WPF 的位图解码器覆盖这几种，其余格式直接拒绝。</summary>
+    private static readonly string[] SupportedBackgroundImageExtensions =
+        [".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"];
+
+    /// <summary>规整主题强调色：空 = 默认色；接受 <c>#RRGGBB</c> 或 <c>RRGGBB</c>，其他值抛出 <see cref="ArgumentException"/>。</summary>
+    public static string NormalizeAccentColor(string? color)
+    {
+        string text = (color ?? string.Empty).Trim();
+        if (text.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (!TryParseColor(text, out Color parsed))
+        {
+            throw new ArgumentException($"主题色“{color}”不是有效的颜色值，请使用 #RRGGBB。", nameof(color));
+        }
+
+        return $"#{parsed.R:X2}{parsed.G:X2}{parsed.B:X2}";
+    }
+
+    private static bool TryNormalizeAccentColor(string? color, out string normalized)
+    {
+        try
+        {
+            normalized = NormalizeAccentColor(color);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            normalized = string.Empty;
+            return false;
+        }
+    }
+
+    private static bool TryParseColor(string text, out Color color)
+    {
+        color = Colors.Transparent;
+        string value = text.Trim().Trim('"');
+        if (value.StartsWith('#'))
+        {
+            value = value[1..];
+        }
+
+        if (value.Length != 6 || !value.All(Uri.IsHexDigit))
+        {
+            return false;
+        }
+
+        color = Color.FromRgb(
+            Convert.ToByte(value[..2], 16),
+            Convert.ToByte(value.Substring(2, 2), 16),
+            Convert.ToByte(value.Substring(4, 2), 16));
+        return true;
+    }
+
+    /// <summary>规整背景图路径：空 = 无背景图；文件不存在或格式不支持时抛出 <see cref="ArgumentException"/>。</summary>
+    public static string NormalizeBackgroundImage(string? path)
+    {
+        string text = (path ?? string.Empty).Trim().Trim('"');
+        if (text.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        string expanded;
+        try
+        {
+            expanded = Path.GetFullPath(Environment.ExpandEnvironmentVariables(text));
+        }
+        catch (Exception exception) when (exception is ArgumentException or NotSupportedException
+                                              or PathTooLongException or System.Security.SecurityException)
+        {
+            throw new ArgumentException($"背景图路径无效：{text}", nameof(path));
+        }
+
+        if (!File.Exists(expanded))
+        {
+            throw new ArgumentException($"找不到背景图文件：{expanded}", nameof(path));
+        }
+
+        string extension = Path.GetExtension(expanded).ToLowerInvariant();
+        if (!SupportedBackgroundImageExtensions.Contains(extension))
+        {
+            throw new ArgumentException(
+                $"背景图只支持 {string.Join("、", SupportedBackgroundImageExtensions)} 格式。",
+                nameof(path));
+        }
+
+        return expanded;
+    }
+
+    private static bool TryNormalizeBackgroundImage(string? path, out string normalized)
+    {
+        try
+        {
+            normalized = NormalizeBackgroundImage(path);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            normalized = string.Empty;
+            return false;
+        }
+    }
+
     private static void LoadSettings()
     {
         LastError = null;
@@ -685,6 +871,63 @@ public static class AppSettingsService
                 }
             }
 
+            // 外观（强调色 / 背景图 / 不透明度）是后加字段：缺字段按默认值走，非法值只回退该字段。
+            if (settings.AccentColor.ValueKind != JsonValueKind.Undefined
+                && TryReadString(settings.AccentColor, out var accentText))
+            {
+                if (TryNormalizeAccentColor(accentText, out var normalizedAccent))
+                {
+                    Current.AccentColor = normalizedAccent;
+                }
+                else if (accentText.Trim().Length > 0)
+                {
+                    warnings.Add("保存的主题色无效，已恢复为默认蓝色。");
+                }
+            }
+
+            if (settings.BackgroundImagePath.ValueKind != JsonValueKind.Undefined
+                && TryReadString(settings.BackgroundImagePath, out var backgroundText))
+            {
+                if (TryNormalizeBackgroundImage(backgroundText, out var normalizedBackground))
+                {
+                    Current.BackgroundImagePath = normalizedBackground;
+                }
+                else if (backgroundText.Trim().Length > 0)
+                {
+                    warnings.Add("保存的背景图不可用（文件不存在或格式不支持），已恢复为纯色背景。");
+                }
+            }
+
+            if (settings.BackgroundImageOpacity.ValueKind != JsonValueKind.Undefined)
+            {
+                if (TryReadDouble(settings.BackgroundImageOpacity, out var backgroundOpacity))
+                {
+                    Current.BackgroundImageOpacity = Math.Clamp(
+                        backgroundOpacity,
+                        AppSettings.MinimumBackgroundImageOpacity,
+                        AppSettings.MaximumBackgroundImageOpacity);
+                }
+                else
+                {
+                    warnings.Add("保存的背景图不透明度无效，已恢复为默认值。");
+                }
+            }
+
+            // 窗口系统背景样式：缺字段走自动；非法值只回退该字段。
+            if (settings.BackdropStyle.ValueKind != JsonValueKind.Undefined)
+            {
+                if (settings.BackdropStyle.ValueKind == JsonValueKind.String
+                    && Enum.TryParse<BackdropStyle>(settings.BackdropStyle.GetString(), ignoreCase: true, out var backdrop)
+                    && Enum.IsDefined(backdrop))
+                {
+                    Current.BackdropStyle = backdrop;
+                }
+                else
+                {
+                    warnings.Add("保存的窗口背景样式无效，已改为“无”。");
+                }
+            }
+
             if (migratedBackend)
             {
                 if (SaveSettings())
@@ -724,6 +967,12 @@ public static class AppSettingsService
             && element.TryGetInt32(out value)
             && value >= minimum
             && value <= maximum;
+    }
+
+    private static bool TryReadDouble(JsonElement element, out double value)
+    {
+        value = default;
+        return element.ValueKind == JsonValueKind.Number && element.TryGetDouble(out value);
     }
 
     private static bool TryReadString(JsonElement element, out string value)
@@ -780,9 +1029,25 @@ public static class AppSettingsService
             ThemePreference.Dark => ApplicationTheme.Dark,
             _ => null
         };
+
+        // 同步所有已打开窗口的 ElementTheme，防止窗口级设置拦截全局主题切换
+        var elementTheme = Current.Theme switch
+        {
+            ThemePreference.Light => ElementTheme.Light,
+            ThemePreference.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default
+        };
+        if (Application.Current is not null)
+        {
+            foreach (Window window in Application.Current.Windows)
+            {
+                ThemeManager.SetRequestedTheme(window, elementTheme);
+            }
+        }
+
         UpdateThemeResources();
     }
-
+    
     private static void OnActualApplicationThemeChanged(ThemeManager sender, object args)
     {
         RunOnApplicationDispatcher(() =>
@@ -828,6 +1093,11 @@ public static class AppSettingsService
 
         if (SystemParameters.HighContrast)
         {
+            resources["Wam.WindowBackgroundBrush"] = SystemColors.WindowBrush;
+            resources["Wam.WindowWallpaperBrush"] = Brushes.Transparent;
+            resources["Wam.PaneAcrylicVisibility"] = Visibility.Collapsed;
+            resources["Wam.PaneTintColor"] = SystemColors.WindowColor;
+            resources["Wam.PaneBackgroundBrush"] = SystemColors.ControlBrush;
             resources["Wam.PageBackgroundBrush"] = SystemColors.WindowBrush;
             resources["Wam.CardBackgroundBrush"] = SystemColors.WindowBrush;
             resources["Wam.CardBorderBrush"] = SystemColors.WindowTextBrush;
@@ -839,26 +1109,240 @@ public static class AppSettingsService
             resources["Wam.SuccessBrush"] = SystemColors.HotTrackBrush;
             resources["Wam.DangerBrush"] = SystemColors.WindowTextBrush;
             resources["Wam.ProgressTrackBrush"] = SystemColors.ControlDarkBrush;
+            resources["Wam.IconPlateBrush"] = SystemColors.ControlBrush;
+            resources["Wam.Acrylic10TintColor"] = SystemColors.WindowColor;
+            resources["Wam.MoveBackgroundBrush"] = SystemColors.WindowBrush;
             return;
         }
 
-        var dark = ThemeManager.Current.ActualApplicationTheme == ApplicationTheme.Dark;
-        resources["Wam.PageBackgroundBrush"] = CreateBrush(dark ? "#181B20" : "#F5F7FA");
+        var dark = Current.Theme switch
+        {
+            ThemePreference.Dark => true,
+            ThemePreference.Light => false,
+            _ => ThemeManager.Current.ActualApplicationTheme == ApplicationTheme.Dark
+        };
+        bool hasCustomWallpaper = !string.IsNullOrWhiteSpace(Current.BackgroundImagePath)
+                                  && File.Exists(Current.BackgroundImagePath);
+
+        // if (hasCustomWallpaper)
+        // {
+        //     // 启用自定义壁纸时：壁纸画在窗口底层，侧边栏优先复用 iNKORE 内置亚克力画刷，否则使用半透明遮罩
+        //     resources["Wam.WindowWallpaperBrush"] = CreatePageBackgroundBrush(dark);
+        //     resources["Wam.PaneBackgroundBrush"] =
+        //         (Application.Current?.TryFindResource("AcrylicInAppFillColorDefaultBrush") as Brush)
+        //         ?? (Application.Current?.TryFindResource("SystemControlAcrylicElementBrush") as Brush)
+        //         ?? CreateBrush(dark ? "#CC181B20" : "#D9F5F7FA");
+        // }
+        // else
+        // {
+        //     // 默认纯色模式：侧边栏保持透明，直接透出 MainWindow 的系统级 Acrylic/Mica 背景
+        //     resources["Wam.WindowWallpaperBrush"] = Brushes.Transparent;
+        //     resources["Wam.PaneBackgroundBrush"] = Brushes.Transparent;
+        // }
+        
+        resources["Wam.WindowWallpaperBrush"] = hasCustomWallpaper
+            ? CreatePageBackgroundBrush(dark)
+            : Brushes.Transparent;
+        resources["Wam.PaneAcrylicVisibility"] = hasCustomWallpaper
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        resources["Wam.PaneTintColor"] = dark
+            ? Color.FromRgb(0x18, 0x1B, 0x20)
+            : Color.FromRgb(0xF5, 0xF7, 0xFA);
+        resources["Wam.PageBackgroundBrush"] = CreatePageBackgroundBrush(dark);
+        // Windows 10 系统级亚克力（Acrylic10）的着色。iNKORE 会把这里的 alpha 再乘 0.8，
+        // 所以取接近不透明的主题底色：既能透出一点桌面/窗口后面的内容，又保证导航栏文字对比度稳定。
+        resources["Wam.Acrylic10TintColor"] = dark
+            ? Color.FromArgb(0xF2, 0x1B, 0x1F, 0x26)
+            : Color.FromArgb(0xF2, 0xF5, 0xF7, 0xFA);
+        // 拖动/缩放期间替换系统亚克力的窗口底色：取亚克力在深色/浅色内容上的中间值，
+        // 让“停用亚克力 → 恢复亚克力”的色彩跳变尽量小。
+        resources["Wam.MoveBackgroundBrush"] = CreateBrush(dark
+            ? Color.FromRgb(0x31, 0x34, 0x39)
+            : Color.FromRgb(0xDC, 0xE0, 0xE1));
         resources["Wam.CardBackgroundBrush"] = CreateBrush(dark ? "#242830" : "#FFFFFF");
         resources["Wam.CardBorderBrush"] = CreateBrush(dark ? "#343A45" : "#E0E5ED");
         resources["Wam.TextPrimaryBrush"] = CreateBrush(dark ? "#F5F7FB" : "#172238");
         resources["Wam.TextSecondaryBrush"] = CreateBrush(dark ? "#AAB5C4" : "#637188");
-        resources["Wam.AccentBrush"] = CreateBrush(dark ? "#81B4FF" : "#2563EB");
-        resources["Wam.AccentSoftBrush"] = CreateBrush(dark ? "#1A3454" : "#EAF1FF");
         resources["Wam.SubtleBackgroundBrush"] = CreateBrush(dark ? "#2D333D" : "#F1F4F9");
         resources["Wam.SuccessBrush"] = CreateBrush(dark ? "#4CC38A" : "#1A7F37");
         resources["Wam.DangerBrush"] = CreateBrush(dark ? "#FF99A4" : "#C42B1C");
         resources["Wam.ProgressTrackBrush"] = CreateBrush(dark ? "#39404C" : "#C9D3E0");
+        // 图标底板：浅色模式下纯白 / 透明的应用图标（如 App Installer）在浅背景上几乎看不见，
+        // 统一垫一层淡淡的灰底当作“图标瓦片”。
+        resources["Wam.IconPlateBrush"] = CreateBrush(dark ? "#2E3540" : "#E3E8F0");
+        ApplyAccentResources(resources, dark);
     }
 
-    private static SolidColorBrush CreateBrush(string color)
+    /// <summary>
+    /// 页面背景：默认是纯色；设置了背景图时返回“主题底色 + 半透明图片”的不透明画刷。
+    /// 图片单独一层是为了让它叠在底色之上（而不是透出窗口底色），这样浅色/深色下都稳定。
+    /// </summary>
+    private static Brush CreatePageBackgroundBrush(bool dark)
     {
-        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+        string path = Current.BackgroundImagePath;
+        double opacity = Math.Clamp(
+            Current.BackgroundImageOpacity,
+            AppSettings.MinimumBackgroundImageOpacity,
+            AppSettings.MaximumBackgroundImageOpacity);
+
+        if (_cachedBackgroundBrush is { } cached
+            && string.Equals(cached.Path, path, StringComparison.OrdinalIgnoreCase)
+            && Math.Abs(cached.Opacity - opacity) < 0.001
+            && cached.Dark == dark)
+        {
+            return cached.Brush;
+        }
+
+        var baseBrush = CreateBrush(dark ? "#181B20" : "#F5F7FA");
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            _cachedBackgroundBrush = (path, opacity, dark, baseBrush);
+            return baseBrush;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.UriSource = new Uri(path, UriKind.Absolute);
+            // 壁纸通常远大于窗口，按 1920 宽解码：省内存，缩放到窗口后依然清晰。
+            bitmap.DecodePixelWidth = 1920;
+            bitmap.EndInit();
+            bitmap.Freeze();
+
+            var bounds = new Rect(0, 0, Math.Max(bitmap.PixelWidth, 16), Math.Max(bitmap.PixelHeight, 9));
+            var drawing = new DrawingGroup();
+            drawing.Children.Add(new GeometryDrawing(baseBrush, null, new RectangleGeometry(bounds)));
+            var imageLayer = new DrawingGroup
+            {
+                Opacity = Math.Clamp(
+                    Current.BackgroundImageOpacity,
+                    AppSettings.MinimumBackgroundImageOpacity,
+                    AppSettings.MaximumBackgroundImageOpacity)
+            };
+            imageLayer.Children.Add(new ImageDrawing(bitmap, bounds));
+            drawing.Children.Add(imageLayer);
+            drawing.Freeze();
+
+            var brush = new DrawingBrush(drawing)
+            {
+                Stretch = Stretch.UniformToFill,
+                AlignmentX = AlignmentX.Center,
+                AlignmentY = AlignmentY.Center,
+                TileMode = TileMode.None,
+                ViewboxUnits = BrushMappingMode.Absolute,
+                Viewbox = bounds
+            };
+            brush.Freeze();
+            return brush;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+                                              or ArgumentException or NotSupportedException
+                                              or System.Security.SecurityException)
+        {
+            AppLogService.Warn(
+                $"加载背景图失败，已回退为纯色背景：{path}，{exception.GetType().Name}：{exception.Message}");
+            return baseBrush;
+        }
+    }
+
+    /// <summary>
+    /// 写入强调色。iNKORE 的 <c>Accent*</c> 画刷是**具体实例**（不跟随 <c>SystemAccentColor</c> 动态变化），
+    /// 只改颜色键按钮不会变色，所以按钮背景、正文强调色、软背景这些键必须一起覆盖。
+    /// </summary>
+    private static void ApplyAccentResources(ResourceDictionary resources, bool dark)
+    {
+        Color accent = ResolveAccentColor();
+        if (_lastAppliedAccent is { } last && last.Accent == accent && last.Dark == dark)
+        {
+            return;
+        }
+        _lastAppliedAccent = (accent, dark);
+        Color textAccent = dark ? Blend(accent, Colors.White, 0.45) : accent;
+        Color buttonBackground = dark ? Blend(accent, Colors.White, 0.30) : accent;
+        Color buttonHover = dark ? Blend(accent, Colors.White, 0.42) : Blend(accent, Colors.White, 0.12);
+        Color buttonPressed = dark ? Blend(accent, Colors.White, 0.20) : Blend(accent, Colors.Black, 0.12);
+        Color soft = dark
+            ? Blend(accent, (Color)ColorConverter.ConvertFromString("#181B20")!, 0.80)
+            : Blend(accent, Colors.White, 0.90);
+        Color light1 = Blend(accent, Colors.White, 0.20);
+        Color light2 = Blend(accent, Colors.White, 0.35);
+        Color light3 = Blend(accent, Colors.White, 0.50);
+        Color dark1 = Blend(accent, Colors.Black, 0.12);
+        Color dark2 = Blend(accent, Colors.Black, 0.24);
+        Color dark3 = Blend(accent, Colors.Black, 0.36);
+
+        var accentBrush = CreateBrush(textAccent);
+        var buttonBrush = CreateBrush(buttonBackground);
+        var onAccentBrush = CreateBrush(IsLightColor(buttonBackground) ? Colors.Black : Colors.White);
+
+        resources["Wam.AccentBrush"] = accentBrush;
+        resources["Wam.AccentSoftBrush"] = CreateBrush(soft);
+
+        resources["SystemAccentColor"] = accent;
+        resources["SystemAccentColorLight1"] = light1;
+        resources["SystemAccentColorLight2"] = light2;
+        resources["SystemAccentColorLight3"] = light3;
+        resources["SystemAccentColorDark1"] = dark1;
+        resources["SystemAccentColorDark2"] = dark2;
+        resources["SystemAccentColorDark3"] = dark3;
+        resources["SystemAccentColorLight1Brush"] = CreateBrush(light1);
+        resources["SystemAccentColorLight2Brush"] = CreateBrush(light2);
+        resources["SystemAccentColorLight3Brush"] = CreateBrush(light3);
+        resources["SystemAccentColorDark1Brush"] = CreateBrush(dark1);
+        resources["SystemAccentColorDark2Brush"] = CreateBrush(dark2);
+        resources["SystemAccentColorDark3Brush"] = CreateBrush(dark3);
+
+        resources["AccentFillColorDefaultBrush"] = buttonBrush;
+        resources["AccentFillColorSecondaryBrush"] = buttonBrush;
+        resources["AccentFillColorTertiaryBrush"] = buttonBrush;
+        resources["AccentFillColorSelectedTextBackgroundBrush"] = buttonBrush;
+        resources["AccentAAFillColorDefaultBrush"] = buttonBrush;
+        resources["AccentButtonBackground"] = buttonBrush;
+        resources["AccentButtonBackgroundPointerOver"] = CreateBrush(buttonHover);
+        resources["AccentButtonBackgroundPressed"] = CreateBrush(buttonPressed);
+        resources["AccentButtonForeground"] = onAccentBrush;
+        resources["AccentButtonForegroundPointerOver"] = onAccentBrush;
+        resources["AccentButtonForegroundPressed"] = onAccentBrush;
+        resources["AccentTextFillColorPrimaryBrush"] = accentBrush;
+        resources["AccentTextFillColorSecondaryBrush"] = accentBrush;
+        resources["AccentTextFillColorTertiaryBrush"] = accentBrush;
+        resources["SystemControlBackgroundAccentBrush"] = buttonBrush;
+        resources["SystemControlForegroundAccentBrush"] = accentBrush;
+        resources["SystemControlHighlightAccentBrush"] = accentBrush;
+        resources["SystemControlDisabledAccentBrush"] = buttonBrush;
+    }
+
+    /// <summary>当前生效的强调色：用户在“外观”里选的优先，否则是内置默认蓝色。</summary>
+    private static Color ResolveAccentColor()
+        => Current.AccentColor.Length > 0 && TryParseColor(Current.AccentColor, out Color configured)
+            ? configured
+            : (Color)ColorConverter.ConvertFromString(DefaultAccentColor)!;
+
+    private const string DefaultAccentColor = "#2563EB";
+
+    /// <summary>按比例把 <paramref name="from"/> 混向 <paramref name="to"/>（0 = 原色，1 = 目标色）。</summary>
+    private static Color Blend(Color from, Color to, double amount)
+    {
+        double ratio = Math.Clamp(amount, 0, 1);
+        return Color.FromRgb(
+            (byte)Math.Round(from.R + ((to.R - from.R) * ratio)),
+            (byte)Math.Round(from.G + ((to.G - from.G) * ratio)),
+            (byte)Math.Round(from.B + ((to.B - from.B) * ratio)));
+    }
+
+    /// <summary>亮色背景上用深色文字，深色背景上用白字——用户挑浅色强调色时文字才不会糊在一起。</summary>
+    private static bool IsLightColor(Color color)
+        => (((0.299 * color.R) + (0.587 * color.G) + (0.114 * color.B)) / 255.0) > 0.62;
+
+    private static SolidColorBrush CreateBrush(string color)
+        => CreateBrush((Color)ColorConverter.ConvertFromString(color));
+
+    private static SolidColorBrush CreateBrush(Color color)
+    {
+        var brush = new SolidColorBrush(color);
         brush.Freeze();
         return brush;
     }
@@ -873,6 +1357,18 @@ public static class AppSettingsService
         public JsonElement CustomProxyUrl { get; set; }
         public JsonElement IgnoreCertificateErrors { get; set; }
         public JsonElement DownloadDirectory { get; set; }
+
+        /// <summary>主题强调色（<c>#RRGGBB</c>），后加字段。</summary>
+        public JsonElement AccentColor { get; set; }
+
+        /// <summary>页面背景图绝对路径，后加字段。</summary>
+        public JsonElement BackgroundImagePath { get; set; }
+
+        /// <summary>背景图不透明度，后加字段。</summary>
+        public JsonElement BackgroundImageOpacity { get; set; }
+
+        /// <summary>窗口系统背景样式（Auto/None/Acrylic/Mica），后加字段。</summary>
+        public JsonElement BackdropStyle { get; set; }
 
         /// <summary>settings.json 由 <see cref="JsonSerializer"/> 直接序列化 <see cref="AppSettings"/>，键名为 PascalCase。</summary>
         public JsonElement BackendBaseUrl { get; set; }

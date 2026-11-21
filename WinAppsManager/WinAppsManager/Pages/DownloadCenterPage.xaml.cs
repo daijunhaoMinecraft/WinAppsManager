@@ -84,35 +84,32 @@ public partial class DownloadCenterPage : Page
         var active = downloads.Count(task => task.IsActive);
         var finished = downloads.Count(task => !task.IsActive);
         bool hasTasks = downloads.Count > 0;
-        int deletableInstallers = downloads.Count(task => task.CanSelectForDeletion);
-        int selectedInstallers = downloads.Count(task => task.CanSelectForDeletion && task.IsSelected);
+        int selectable = downloads.Count(task => task.CanSelect);
+        int selected = downloads.Count(task => task.CanSelect && task.IsSelected);
+        int resumable = downloads.Count(task => task.CanResume);
 
         EmptyState.Visibility = hasTasks ? Visibility.Collapsed : Visibility.Visible;
         DownloadsScrollViewer.Visibility = hasTasks ? Visibility.Visible : Visibility.Collapsed;
         CancelAllButton.Visibility = active > 0 ? Visibility.Visible : Visibility.Collapsed;
         ClearFinishedButton.Visibility = finished > 0 ? Visibility.Visible : Visibility.Collapsed;
-        SelectAllInstallersButton.Visibility = deletableInstallers > 0
+        SelectAllInstallersButton.Visibility = selectable > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
-        DeleteInstallersButton.Visibility = deletableInstallers > 0
+        DeleteInstallersButton.Visibility = selectable > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
-        DeleteInstallersButton.IsEnabled = selectedInstallers > 0;
-        DeleteInstallersButton.Content = selectedInstallers > 0
-            ? $"删除选中安装包 ({selectedInstallers})"
-            : "删除选中安装包";
-        SelectAllInstallersButton.Content = deletableInstallers > 0 &&
-                                           selectedInstallers == deletableInstallers
+        DeleteInstallersButton.IsEnabled = selected > 0;
+        DeleteInstallersButton.Content = selected > 0
+            ? $"删除选中 ({selected})"
+            : "删除选中";
+        SelectAllInstallersButton.Content = selectable > 0 && selected == selectable
             ? "取消全选"
-            : "全选安装包";
+            : "全选";
 
         ActiveSummaryText.Text = !hasTasks
             ? "当前没有下载任务。"
-            : active > 0
-                ? $"{active} 个任务正在下载，{finished} 个已结束。" +
-                  (deletableInstallers > 0 ? $" 可删除安装包 {deletableInstallers} 个。" : string.Empty)
-                : $"{finished} 个已结束的下载任务。" +
-                  (deletableInstallers > 0 ? $" 可删除安装包 {deletableInstallers} 个。" : string.Empty);
+            : $"{active} 个任务正在下载，{finished} 个已结束。" +
+              (resumable > 0 ? $" 其中 {resumable} 个可以继续下载。" : string.Empty);
     }
 
     private void InstallerSelection_OnChanged(object sender, RoutedEventArgs args)
@@ -125,48 +122,71 @@ public partial class DownloadCenterPage : Page
 
     private void SelectAllInstallersButton_OnClick(object sender, RoutedEventArgs args)
     {
-        bool select = Downloads.Any(task => task.CanSelectForDeletion && !task.IsSelected);
-        foreach (var task in Downloads.Where(task => task.CanSelectForDeletion))
+        bool select = Downloads.Any(task => task.CanSelect && !task.IsSelected);
+        foreach (var task in Downloads.Where(task => task.CanSelect))
         {
             task.IsSelected = select;
         }
 
         AppLogService.Info(
-            $"下载中心{(select ? "全选" : "取消全选")}安装包：可删除 {Downloads.Count(task => task.CanSelectForDeletion)} 个。");
+            $"下载中心{(select ? "全选" : "取消全选")}下载任务：可勾选 {Downloads.Count(task => task.CanSelect)} 个。");
         UpdateChrome();
     }
 
-    private void DeleteInstallersButton_OnClick(object sender, RoutedEventArgs args)
+    /// <summary>
+    /// 删除选中的下载任务：正在下载的会先取消（取消会终止连接），已完成的删安装包文件，
+    /// 未完成的连续传分片一起删掉，然后统一移除记录。
+    /// </summary>
+    private async void DeleteInstallersButton_OnClick(object sender, RoutedEventArgs args)
     {
         var selected = Downloads
-            .Where(task => task.CanSelectForDeletion && task.IsSelected)
+            .Where(task => task.CanSelect && task.IsSelected)
             .ToArray();
         if (selected.Length == 0)
         {
             return;
         }
 
-        string fileList = string.Join("\n", selected
-            .Take(10)
-            .Select(task => string.IsNullOrWhiteSpace(task.FileName) ? task.AppName : task.FileName));
+        var activeTasks = selected.Where(task => task.IsActive).ToArray();
+        var fileTasks = selected.Where(task => task.CanOpenInstaller).ToArray();
+
+        string itemList = string.Join("\n", selected.Take(10).Select(DescribeTask));
         if (selected.Length > 10)
         {
-            fileList += $"\n… 以及另外 {selected.Length - 10} 个";
+            itemList += $"\n… 以及另外 {selected.Length - 10} 个";
         }
 
+        string message =
+            $"将移除 {selected.Length} 条下载记录" +
+            (fileTasks.Length > 0 ? $"，永久删除 {fileTasks.Length} 个已下载的安装包" : string.Empty) +
+            (activeTasks.Length > 0 ? $"，并停止 {activeTasks.Length} 个正在进行的下载" : string.Empty) +
+            "；未完成的续传分片也会一起删除，删除后无法恢复：\n\n" + itemList;
+
         Window? owner = Window.GetWindow(this);
-        string message = $"将永久删除以下 {selected.Length} 个安装包文件，删除后无法恢复：\n\n{fileList}";
         MessageBoxResult answer = owner is null
-            ? MessageBox.Show(message, "删除安装包", MessageBoxButton.YesNo,
+            ? MessageBox.Show(message, "删除下载任务", MessageBoxButton.YesNo,
                 MessageBoxImage.Warning, MessageBoxResult.No)
-            : MessageBox.Show(owner, message, "删除安装包", MessageBoxButton.YesNo,
+            : MessageBox.Show(owner, message, "删除下载任务", MessageBoxButton.YesNo,
                 MessageBoxImage.Warning, MessageBoxResult.No);
         if (answer != MessageBoxResult.Yes)
         {
             return;
         }
 
+        if (activeTasks.Length > 0)
+        {
+            foreach (var task in activeTasks)
+            {
+                DownloadCenterService.Cancel(task);
+            }
+
+            await Task.WhenAll(activeTasks.Select(task => task.Completion));
+        }
+
         InstallerDeleteOutcome outcome = DownloadCenterService.DeleteInstallers(selected);
+        AppLogService.Info(
+            $"删除选中下载任务：选中 {selected.Length} 个，删除文件 {outcome.DeletedFiles} 个，" +
+            $"移除记录 {outcome.RemovedRecords} 条，失败 {outcome.Errors.Count} 个。");
         UpdateChrome();
         if (outcome.Errors.Count > 0)
         {
@@ -185,6 +205,10 @@ public partial class DownloadCenterPage : Page
             }
         }
     }
+
+    private static string DescribeTask(DownloadTaskViewModel task) => task.CanOpenInstaller
+        ? $"{task.AppName}（安装包：{task.FileName}）"
+        : $"{task.AppName}（{task.StatusText}）";
 
     private async void CancelAllButton_OnClick(object sender, RoutedEventArgs args)
     {
