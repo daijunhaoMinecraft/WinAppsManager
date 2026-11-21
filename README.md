@@ -57,6 +57,7 @@
 
 ![Image](/Image/DeepClean.png)
 清除残留功能
+
 </div>
 
  - 支持卸载商店应用(也就是 Microsoft Store 上面下载的软件)
