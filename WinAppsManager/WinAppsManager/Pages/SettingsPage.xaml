@@ -47,7 +47,9 @@
                              Description="选择应用的浅色或深色外观，更改立即生效"
                              Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="FontColor"/>
+                    <!-- 背景图标一律使用应用内置的 Fluent 图标字体（ui:FontIcon）：ui:SymbolIcon 依赖
+                         Segoe Fluent Icons / Segoe MDL2 Assets，Windows 7 及精简系统上会显示成方框。 -->
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.TextColor_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <ComboBox x:Name="ThemeModeCombo"
                           Width="205"
@@ -95,7 +97,7 @@
                              Description="导航栏与标题栏的透明效果，更改立即生效"
                              Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="View"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ViewDesktop_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <StackPanel VerticalAlignment="Center">
                     <ComboBox x:Name="BackdropStyleCombo"
@@ -119,7 +121,7 @@
                              Description="应用于主按钮、选中框与进度条，深色模式下自动调整明度"
                              Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Highlight"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Highlight_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -182,7 +184,7 @@
                                  Description="使用本地图片铺满窗口底色（支持 PNG / JPG / BMP / GIF）"
                                  IsExpanded="False">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Pictures"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ImageMultiple_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="BackgroundSummaryText"
@@ -223,7 +225,7 @@
 
             <ui:SettingsCard Header="软件源" Description="可用来源与目录能力由当前服务端动态下发" Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Globe"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Globe_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <StackPanel Orientation="Horizontal">
                     <ComboBox x:Name="AppSourceCombo" Width="210"
@@ -233,7 +235,7 @@
                             Click="OnRefreshServerSources"
                             ToolTip="重新从服务端读取软件源列表"
                             AutomationProperties.Name="重新读取服务端软件源列表">
-                        <ui:SymbolIcon Symbol="Refresh"/>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowClockwise_20_Regular}"/>
                     </Button>
                 </StackPanel>
             </ui:SettingsCard>
@@ -244,7 +246,7 @@
                                  Description="获取软件目录、详情与下载地址的后端 API 端点"
                                  IsExpanded="False">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Link"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Link_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="BackendSummaryText" FontSize="12"
@@ -283,7 +285,7 @@
 
             <ui:SettingsCard Header="下载位置" Description="新下载的安装包将保存到此文件夹" Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Folder"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Folder_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <StackPanel Orientation="Horizontal">
                     <TextBox x:Name="DownloadDirectoryTextBox" Width="230"
@@ -296,7 +298,7 @@
                     <Button x:Name="OpenDownloadDirectoryButton" Margin="6,0,0,0"
                             Click="OnOpenDownloadDirectory" ToolTip="在资源管理器中打开"
                             AutomationProperties.Name="打开下载目录">
-                        <ui:SymbolIcon Symbol="NewWindow"/>
+                        <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.FolderOpen_20_Regular}"/>
                     </Button>
                     <Button x:Name="ResetDownloadDirectoryButton" Content="默认" Margin="6,0,0,0"
                             Click="OnResetDownloadDirectory"
@@ -312,7 +314,7 @@
                                  IsExpanded="False"
                                  Margin="0,0,0,8">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Download"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowDownload_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="DownloadPerfSummaryText" FontSize="12"
@@ -359,7 +361,7 @@
                                  IsExpanded="False"
                                  Margin="0,0,0,8">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Sync"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ArrowSync_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="GitHubMirrorSummaryText" FontSize="12"
@@ -403,7 +405,7 @@
                                  Description="配置下载使用的 HTTP/HTTPS 代理服务器及 TLS 校验策略"
                                  IsExpanded="False">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Permissions"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.ShieldKeyhole_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="ProxySummaryText" FontSize="12"
@@ -465,7 +467,7 @@
             <!-- 本地缓存 -->
             <ui:SettingsCard Header="目录与图标缓存" Margin="0,0,0,8">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Delete"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Delete_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <ui:SettingsCard.Description>
                     <StackPanel>
@@ -489,7 +491,7 @@
                                  Description="管理本地 settings.json 与故障排查日志输出级别"
                                  IsExpanded="False">
                 <ui:SettingsExpander.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Document"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.Document_20_Regular}"/>
                 </ui:SettingsExpander.HeaderIcon>
                 <ui:SettingsExpander.Content>
                     <TextBlock x:Name="LogSummaryText" FontSize="12"
@@ -548,7 +550,7 @@
 
             <ui:SettingsCard Header="WinAppsManager" Description="Windows 应用商店与安装包管理工具">
                 <ui:SettingsCard.HeaderIcon>
-                    <ui:SymbolIcon Symbol="Help"/>
+                    <ui:FontIcon Icon="{x:Static ui:FluentSystemIcons.QuestionCircle_20_Regular}"/>
                 </ui:SettingsCard.HeaderIcon>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <Border Background="{DynamicResource Wam.SubtleBackgroundBrush}"
