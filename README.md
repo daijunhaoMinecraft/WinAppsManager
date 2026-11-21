@@ -17,10 +17,10 @@
 
 <div align="center">
 
-![Image](/Image/Windows7Show.png)
+![Image](/Image/Windows7Show.png)<br/>
 软件列表页面
 
-![Image](/Image/Windows7Show2.png)
+![Image](/Image/Windows7Show2.png)<br/>
 设置页面
 
 </div>
@@ -31,7 +31,7 @@
 
 <div align="center">
 
-![Image](/Image/AppStore.png)
+![Image](/Image/AppStore.png)<br/>
 软件商店页面
 </div>
 
@@ -41,7 +41,7 @@
 
 <div align="center">
 
-![Image](/Image/DownloadCenter.png)
+![Image](/Image/DownloadCenter.png)<br/>
 软件下载界面
 </div>
 
@@ -52,10 +52,10 @@
 
 <div align="center">
 
-![Image](/Image/UninstallApp.png)
+![Image](/Image/UninstallApp.png)<br/>
 卸载软件列表
 
-![Image](/Image/DeepClean.png)
+![Image](/Image/DeepClean.png)<br/>
 清除残留功能
 
 </div>
@@ -67,10 +67,10 @@
 
 <div align="center">
 
-![Image](/Image/AutoRun.png)
+![Image](/Image/AutoRun.png)<br/>
 自启动项管理界面
 
-![Image](/Image/ViewSource.png)
+![Image](/Image/ViewSource.png)<br/>
 预览来源
 </div>
 
@@ -89,7 +89,7 @@ Step 1. 克隆仓库到本地
 ```bash
 git clone https://github.com/daijunhaoMinecraft/WinAppsManager.git
 ```
-![Image](/Image/BuildStep/CloneProject.png)
+![Image](/Image/BuildStep/CloneProject.png)<br/>
 
 Step 2. 构建程序
 ```
@@ -97,7 +97,7 @@ cd WinAppsManager
 cd WinAppsManager
 dotnet build
 ```
-![Image](/Image/BuildStep/BuildProject.png)
+![Image](/Image/BuildStep/BuildProject.png)<br/>
 
 ## License
 
